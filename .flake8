@@ -6,6 +6,7 @@ exclude =
     dist,
     .venv,
     __pycache__,
-    .venv
+    .venv,
+    node_modules,
 max-complexity = 10
 docstring_style=sphinx
