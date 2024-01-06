@@ -45,3 +45,7 @@ class Mosquitto:
     def stop(self):
         self.client.loop_stop()
         self.client.disconnect()
+
+    def subscribe(self):
+        self.client.connect(self.host, self.port)
+        self.client.loop_forever()
