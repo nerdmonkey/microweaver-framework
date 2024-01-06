@@ -15,6 +15,10 @@ paho-mqtt = "^1.6.1"
 pytest = "^7.4.4"
 pytest-mock = "^3.12.0"
 autoflake8 = "^0.4.1"
+flake8 = "^7.0.0"
+black = "^23.12.1"
+isort = "^5.13.2"
+bandit = "^1.7.6"
 
 [build-system]
 requires = ["poetry-core"]
