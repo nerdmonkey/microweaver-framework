@@ -1,5 +1,3 @@
-
-
 class Core:
     def __init__(self, mosquitto):
         self.mosquitto = mosquitto
@@ -10,7 +8,7 @@ class Core:
 
             while True:
                 message = input("Enter message to publish or type 'exit' to quit: ")
-                if message.lower() == 'exit':
+                if message.lower() == "exit":
                     break
                 self.mosquitto.publish(message)
 

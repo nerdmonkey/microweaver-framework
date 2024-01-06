@@ -1,4 +1,3 @@
-
-class BaseAdapter():
-	def __init__(self):
-		pass
+class BaseAdapter:
+    def __init__(self):
+        pass

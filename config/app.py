@@ -1,5 +1,6 @@
 import environment
 
+
 class Setting:
     def __init__(self):
         self.APP_ENVIRONMENT = environment.APP_ENVIRONMENT

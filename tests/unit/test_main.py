@@ -1,19 +1,24 @@
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
+
 from app.core import Core
 from app.services.mosquitto import Mosquitto
 
+
 @pytest.fixture
 def mock_mosquitto(mocker):
-    mocker.patch('app.services.mosquitto.Mosquitto')
+    mocker.patch("app.services.mosquitto.Mosquitto")
+
 
 @pytest.fixture
 def mock_core(mocker):
-    mocker.patch('app.core.Core')
+    mocker.patch("app.core.Core")
+
 
 def test_main(mock_mosquitto, mock_core):
-    with patch('app.core.Core') as MockCore:
-        with patch('app.services.mosquitto.Mosquitto') as MockMosquitto:
+    with patch("app.core.Core") as MockCore:
+        with patch("app.services.mosquitto.Mosquitto") as MockMosquitto:
             # Importing main.py should execute the script
             import main
 

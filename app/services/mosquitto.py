@@ -12,9 +12,11 @@ class Mosquitto:
         # Conditional client setup based on environment
         if APP_ENVIRONMENT == "device":
             from umqtt.simple import MQTTClient as MQTTClient
+
             self.client = MQTTClient(self.client_id, self.host, self.port)
         else:
             import paho.mqtt.client as mqtt
+
             self.client = mqtt.Client(self.client_id)
             self.client.on_connect = self.on_connect
             self.client.on_message = self.on_message
