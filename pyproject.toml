@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "microweaver"
+version = "0.1.0"
+description = "This is a framework for ESP32 microntroller for IoT projects"
+authors = ["Sydel Palinlin <sydel.palinlin@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+paho-mqtt = "^1.6.1"
+
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.4"
+pytest-mock = "^3.12.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
