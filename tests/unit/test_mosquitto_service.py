@@ -2,7 +2,6 @@ from unittest.mock import patch
 
 import pytest
 
-import environment
 from app.services.mosquitto import (
     Mosquitto,
 )  # Adjust this import to your project structure

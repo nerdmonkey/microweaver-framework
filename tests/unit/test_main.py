@@ -1,9 +1,6 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
-from app.core import Core
-from app.services.mosquitto import Mosquitto
 
 
 @pytest.fixture
@@ -20,7 +17,7 @@ def test_main(mock_mosquitto, mock_core):
     with patch("app.core.Core") as MockCore:
         with patch("app.services.mosquitto.Mosquitto") as MockMosquitto:
             # Importing main.py should execute the script
-            import main
+            pass
 
             # Check if Mosquitto and Core are instantiated
             assert MockMosquitto.called, "Mosquitto should be instantiated"
