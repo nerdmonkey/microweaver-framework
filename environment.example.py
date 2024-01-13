@@ -1,3 +1,4 @@
+APP_ENVIRONMENT="local"
 MQTT_BROKER = "localhost"
 MQTT_CLIENT_ID = "microweaver"
 MQTT_PORT = 1883
