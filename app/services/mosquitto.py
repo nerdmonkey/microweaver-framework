@@ -9,7 +9,6 @@ class Mosquitto:
         self.sub_topic = sub_topic
         self.pub_topic = pub_topic
 
-        # Conditional client setup based on environment
         if APP_ENVIRONMENT == "device":
             from umqtt.simple import MQTTClient as MQTTClient
 
