@@ -2,7 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.core import Core  # Replace with your actual import
+from app.core import Core
 
 
 @pytest.fixture

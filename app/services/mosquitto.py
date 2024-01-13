@@ -1,15 +1,25 @@
-from environment import APP_ENVIRONMENT
+import json
+
+from environment import (
+    APP_ENVIRONMENT,
+    MQTT_BROKER,
+    MQTT_CLIENT_ID,
+    MQTT_PORT,
+    MQTT_TOPIC_PUB,
+    MQTT_TOPIC_SUB,
+)
 
 
 class Mosquitto:
-    def __init__(self, client_id, host, port, sub_topic, pub_topic):
-        self.client_id = client_id
-        self.host = host
-        self.port = port
-        self.sub_topic = sub_topic
-        self.pub_topic = pub_topic
+    def __init__(self):
+        self.client_id = MQTT_CLIENT_ID
+        self.host = MQTT_BROKER
+        self.port = MQTT_PORT
+        self.sub_topic = MQTT_TOPIC_SUB
+        self.pub_topic = MQTT_TOPIC_PUB
 
         if APP_ENVIRONMENT == "device":
+            print("Using umqtt client")
             from umqtt.simple import MQTTClient as MQTTClient
 
             self.client = MQTTClient(self.client_id, self.host, self.port)
@@ -29,6 +39,18 @@ class Mosquitto:
             print(f"Failed to connect, return code {rc}")
 
     def on_message(self, client, userdata, msg):
+        payload = json.loads(msg.payload.decode())
+        print(payload)
+
+        if msg.topic == "command/control/motor":
+            print("Received message from motor")
+            self.publish("Received message from motor")
+        elif msg.topic == "data/sensor/temperature":
+            print("Received message from temperature")
+            self.publish("Received message from temperature")
+        else:
+            pass
+
         print(f"Received `{msg.payload.decode()}` from `{msg.topic}` topic")
 
     def on_publish(self, client, userdata, mid):

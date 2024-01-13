@@ -13,16 +13,12 @@ def mock_core(mocker):
     mocker.patch("app.core.Core")
 
 
-def test_main(mock_mosquitto, mock_core):
+def test_main():
     with patch("app.core.Core") as MockCore:
         with patch("app.services.mosquitto.Mosquitto") as MockMosquitto:
-            # Importing main.py should execute the script
-            pass
+            import main
 
-            # Check if Mosquitto and Core are instantiated
-            assert MockMosquitto.called, "Mosquitto should be instantiated"
-            assert MockCore.called, "Core should be instantiated"
-
-            # Create an instance to test method calls
-            mock_core_instance = MockCore.return_value
-            mock_core_instance.run.assert_called_once()
+            assert MockCore.called is True
+            assert MockMosquitto.called is True
+            assert MockCore.return_value.run.called is True
+            assert main.core == MockCore.return_value
