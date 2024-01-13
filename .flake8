@@ -8,5 +8,6 @@ exclude =
     __pycache__,
     .venv,
     node_modules,
+   environment.py,
 max-complexity = 10
 docstring_style=sphinx
