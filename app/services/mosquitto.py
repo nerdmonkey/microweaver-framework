@@ -1,4 +1,5 @@
 import json
+from app.route import handle
 
 from environment import (
     APP_ENVIRONMENT,
@@ -39,25 +40,25 @@ class Mosquitto:
             print(f"Failed to connect, return code {rc}")
 
     def on_message(self, client, userdata, msg):
-        payload = json.loads(msg.payload.decode())
-        print(payload)
+        try:
+            payload = msg.payload.decode()
+            if payload.startswith("{") and payload.endswith("}"):
+                payload = json.loads(payload)
+            else:
+                raise ValueError("Payload is not a json")
 
-        if msg.topic == "command/control/motor":
-            print("Received message from motor")
-            self.publish("Received message from motor")
-        elif msg.topic == "data/sensor/temperature":
-            print("Received message from temperature")
-            self.publish("Received message from temperature")
-        else:
-            pass
+            handle(msg)
+
+        except Exception as e:
+            print(f"An error occurred: {e}")
 
         print(f"Received `{msg.payload.decode()}` from `{msg.topic}` topic")
 
     def on_publish(self, client, userdata, mid):
         print(f"Message {mid} published to {self.pub_topic}")
 
-    def publish(self, message):
-        self.client.publish(self.pub_topic, message)
+    def publish(self, topic, message):
+        self.client.publish(topic, message)
 
     def start(self):
         self.client.connect(self.host, self.port)
