@@ -1,4 +1,4 @@
-from app.services.mosquitto import MosquittoService
+from app.services.publish import PublishService
 
-mqtt_client = MosquittoService()
-mqtt_client.run()
+publish = PublishService()
+publish.run()

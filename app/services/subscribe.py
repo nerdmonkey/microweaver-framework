@@ -1,9 +1,9 @@
 import time
 from umqtt.simple import MQTTClient
 from environment import WIFI_SSID, WIFI_PASSWORD, MQTT_BROKER, MQTT_PORT, MQTT_CLIENT_ID, MQTT_TOPIC_PUB as MQTT_TOPIC
-from app.services.wifi import WiFiService  # Assuming the WiFi service class is saved as wifi_service.py
+from app.services.wifi import WiFiService
 
-class MosquittoService:
+class SubscribeService:
     def __init__(self):
         self.client_id = MQTT_CLIENT_ID
         self.mqtt_broker = MQTT_BROKER
@@ -16,7 +16,7 @@ class MosquittoService:
         self.client = MQTTClient(self.client_id, self.mqtt_broker, self.mqtt_port)
         try:
             print("Connecting to MQTT broker...")
-            self.client.connect()  # Connect to the MQTT broker
+            self.client.connect()
             print("Connected to MQTT Broker at", self.mqtt_broker)
         except Exception as e:
             print("Failed to connect to MQTT broker:", e)
@@ -26,7 +26,7 @@ class MosquittoService:
         if self.client:
             try:
                 print("Publishing message to topic:", self.topic)
-                self.client.publish(self.topic, message.encode())  # Publish message
+                self.client.publish(self.topic, message.encode())
                 print("Message published")
             except Exception as e:
                 print("Failed to publish message:", e)
@@ -53,5 +53,3 @@ class MosquittoService:
                 time.sleep(1)
         finally:
             self.disconnect()
-
-
