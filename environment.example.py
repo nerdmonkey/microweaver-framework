@@ -2,8 +2,8 @@ APP_ENVIRONMENT = "local"
 MQTT_BROKER = "localhost"
 MQTT_CLIENT_ID = "microweaver"
 MQTT_PORT = 1883
-MQTT_TOPIC_PUB = "data/sensor/temperature"
-MQTT_TOPIC_SUB = "command/control/motor"
+MQTT_TOPIC_PUB = "command/control/room/light"
+MQTT_TOPIC_SUB = "data/sensor/room/temperature"
 MQTT_USERNAME = ""
 MQTT_PASSWORD = ""
 
