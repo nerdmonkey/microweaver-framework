@@ -1,72 +1,69 @@
-import json
+import network
+import time
+from umqtt.simple import MQTTClient
+from environment import WIFI_SSID, WIFI_PASSWORD, MQTT_BROKER, MQTT_PORT, MQTT_CLIENT_ID, MQTT_TOPIC_PUB as MQTT_TOPIC
 
-from environment import (
-    APP_ENVIRONMENT,
-    MQTT_BROKER,
-    MQTT_CLIENT_ID,
-    MQTT_PORT,
-    MQTT_TOPIC_PUB,
-    MQTT_TOPIC_SUB,
-)
-
-
-class Mosquitto:
+class MosquittoService:
     def __init__(self):
         self.client_id = MQTT_CLIENT_ID
-        self.host = MQTT_BROKER
-        self.port = MQTT_PORT
-        self.sub_topic = MQTT_TOPIC_SUB
-        self.pub_topic = MQTT_TOPIC_PUB
+        self.mqtt_broker = MQTT_BROKER
+        self.mqtt_port = MQTT_PORT
+        self.topic = MQTT_TOPIC
+        self.client = None
+        self.wlan = network.WLAN(network.STA_IF)
 
-        if APP_ENVIRONMENT == "device":
-            print("Using umqtt client")
-            from umqtt.simple import MQTTClient as MQTTClient
+    def connect_to_wifi(self):
+        self.wlan.active(True)
+        if not self.wlan.isconnected():
+            print('Connecting to network...')
+            self.wlan.connect(WIFI_SSID, WIFI_PASSWORD)
+            while not self.wlan.isconnected():
+                pass
+        print('Network connected!')
+        print('IP Address:', self.wlan.ifconfig()[0])
 
-            self.client = MQTTClient(self.client_id, self.host, self.port)
+    def connect_to_mqtt(self):
+        self.client = MQTTClient(self.client_id, self.mqtt_broker, self.mqtt_port)
+        try:
+            print("Connecting to MQTT broker...")
+            self.client.connect()  # Connect to the MQTT broker
+            print("Connected to MQTT Broker at", self.mqtt_broker)
+        except Exception as e:
+            print("Failed to connect to MQTT broker:", e)
+
+    def publish_message(self, message):
+        if self.client:
+            try:
+                print("Publishing message to topic:", self.topic)
+                self.client.publish(self.topic, message.encode())  # Publish message
+                print("Message published")
+            except Exception as e:
+                print("Failed to publish message:", e)
         else:
-            import paho.mqtt.client as mqtt
+            print("Not connected to MQTT.")
 
-            self.client = mqtt.Client(self.client_id)
-            self.client.on_connect = self.on_connect
-            self.client.on_message = self.on_message
-            self.client.on_publish = self.on_publish
+    def disconnect(self):
+        if self.client:
+            try:
+                self.client.disconnect()
+                print("Disconnected from MQTT Broker")
+            except Exception as e:
+                print("Failed to disconnect from MQTT broker:", e)
 
-    def on_connect(self, client, userdata, flags, rc):
-        if rc == 0:
-            print("Connected to MQTT Broker!")
-            client.subscribe(self.sub_topic)
-        else:
-            print(f"Failed to connect, return code {rc}")
+    def run(self):
+        self.connect_to_wifi()
+        if not self.wlan.isconnected():
+            print("WiFi connection failed. Please check your settings.")
+            return
 
-    def on_message(self, client, userdata, msg):
-        payload = json.loads(msg.payload.decode())
-        print(payload)
+        self.connect_to_mqtt()
+        if self.client is None:
+            print("MQTT connection failed. Please check your settings.")
+            return
 
-        if msg.topic == "command/control/motor":
-            print("Received message from motor")
-            self.publish("Received message from motor")
-        elif msg.topic == "data/sensor/temperature":
-            print("Received message from temperature")
-            self.publish("Received message from temperature")
-        else:
-            pass
-
-        print(f"Received `{msg.payload.decode()}` from `{msg.topic}` topic")
-
-    def on_publish(self, client, userdata, mid):
-        print(f"Message {mid} published to {self.pub_topic}")
-
-    def publish(self, message):
-        self.client.publish(self.pub_topic, message)
-
-    def start(self):
-        self.client.connect(self.host, self.port)
-        self.client.loop_start()
-
-    def stop(self):
-        self.client.loop_stop()
-        self.client.disconnect()
-
-    def subscribe(self):
-        self.client.connect(self.host, self.port)
-        self.client.loop_forever()
+        try:
+            while True:
+                self.publish_message("Hello from Agnes agent")
+                time.sleep(1)
+        finally:
+            self.disconnect()

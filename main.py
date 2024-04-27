@@ -1,6 +1,6 @@
-from app.core import Core
-from app.services.mosquitto import Mosquitto
+from app.services.mosquitto import MosquittoService
 
-mosquitto = Mosquitto()
-core = Core(mosquitto)
-core.run()
+mqtt_client = MosquittoService()
+mqtt_client.run()
+
+
