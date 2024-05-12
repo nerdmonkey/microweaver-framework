@@ -11,6 +11,9 @@ class Setting:
         self.MQTT_TOPIC_SUB = environment.MQTT_TOPIC_SUB
         self.MQTT_USERNAME = environment.MQTT_USERNAME
         self.MQTT_PASSWORD = environment.MQTT_PASSWORD
+        self.WIFI_SSID = environment.WIFI_SSID
+        self.WIFI_PASSWORD = environment.WIFI_PASSWORD
+
 
     def get_settings(self):
         return self
