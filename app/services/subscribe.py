@@ -1,16 +1,19 @@
 import time
 from umqtt.simple import MQTTClient
-from environment import WIFI_SSID, WIFI_PASSWORD, MQTT_BROKER, MQTT_PORT, MQTT_CLIENT_ID, MQTT_TOPIC_PUB as MQTT_TOPIC
+from config.app import Setting
 from app.services.wifi import WiFiService
+
+setting = (Setting()).get_settings()
+
 
 class SubscribeService:
     def __init__(self):
-        self.client_id = MQTT_CLIENT_ID
-        self.mqtt_broker = MQTT_BROKER
-        self.mqtt_port = MQTT_PORT
-        self.topic = MQTT_TOPIC
+        self.client_id = setting.MQTT_CLIENT_ID
+        self.mqtt_broker = setting.MQTT_BROKER
+        self.mqtt_port = setting.MQTT_PORT
+        self.topic = setting.MQTT_TOPIC
         self.client = None
-        self.wifi_service = WiFiService(WIFI_SSID, WIFI_PASSWORD)
+        self.wifi_service = WiFiService(setting.WIFI_SSID, setting.WIFI_PASSWORD)
 
     def connect_to_mqtt(self):
         self.client = MQTTClient(self.client_id, self.mqtt_broker, self.mqtt_port)

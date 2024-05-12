@@ -1,6 +1,7 @@
 import network
 import time
 
+
 class WiFiService:
     def __init__(self, ssid, password):
         self.ssid = ssid

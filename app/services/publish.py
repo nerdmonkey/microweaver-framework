@@ -6,6 +6,7 @@ from app.services.wifi import WiFiService
 
 setting = (Setting()).get_settings()
 
+
 class PublishService:
     def __init__(self):
         self.client_id = setting.MQTT_CLIENT_ID

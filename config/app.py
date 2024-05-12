@@ -14,6 +14,5 @@ class Setting:
         self.WIFI_SSID = environment.WIFI_SSID
         self.WIFI_PASSWORD = environment.WIFI_PASSWORD
 
-
     def get_settings(self):
         return self
