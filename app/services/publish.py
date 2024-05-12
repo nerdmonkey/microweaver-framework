@@ -41,7 +41,7 @@ class PublishService:
             except Exception as e:
                 print("Failed to disconnect from MQTT broker:", e)
 
-    def run(self):
+    def run(self, message="Hello from Agnes agent"):
         if not self.wifi_service.is_connected():
             self.wifi_service.connect()
 
@@ -49,7 +49,7 @@ class PublishService:
 
         try:
             while True:
-                self.publish_message("Hello from Agnes agent")
+                self.publish_message(message)
                 time.sleep(1)
         finally:
             self.disconnect()
