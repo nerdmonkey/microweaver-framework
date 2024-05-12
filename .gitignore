@@ -31,3 +31,4 @@ docker
 .venv
 environment.py
 .pytest_cache
+.vscode/
