@@ -12,6 +12,8 @@ def test_setting_initialization(monkeypatch):
         "MQTT_TOPIC_SUB": "test/sub",
         "MQTT_USERNAME": "test_user",
         "MQTT_PASSWORD": "test_pass",
+        "WIFI_SSID": "test_ssid",
+        "WIFI_PASSWORD": "test_password"
     }
 
     for key, value in test_values.items():
@@ -27,6 +29,8 @@ def test_setting_initialization(monkeypatch):
     assert setting.MQTT_TOPIC_SUB == test_values["MQTT_TOPIC_SUB"]
     assert setting.MQTT_USERNAME == test_values["MQTT_USERNAME"]
     assert setting.MQTT_PASSWORD == test_values["MQTT_PASSWORD"]
+    assert setting.WIFI_SSID == test_values["WIFI_SSID"]
+    assert setting.WIFI_PASSWORD == test_values["WIFI_PASSWORD"]
 
 
 def test_get_settings_method():
