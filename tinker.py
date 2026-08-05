@@ -13,6 +13,7 @@ from serial.tools import list_ports
 
 ROOT = Path(__file__).parent
 DIST = ROOT / "dist"
+BACKUP = ROOT / "backup"
 CONFIG_PATH = ROOT / ".microweaver"
 DEFAULT_BAUD = 115200
 
@@ -275,6 +276,57 @@ def upload(
     print(f"\nUploaded {resolved_path} -> {resolved_port}")
 
 
+@app.command()
+def download(
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Serial port of device (see 'tinker.py port')"
+    ),
+    baud: Optional[int] = typer.Option(None, "--baud", "-b", help="Baud rate"),
+    path: Path = typer.Argument(
+        BACKUP,
+        help="Local destination folder to save device files into "
+        "(relative or absolute path, default: ./backup)",
+    ),
+) -> None:
+    """Download the device's filesystem to a local folder."""
+    if shutil.which("mpremote") is None:
+        print(
+            "ERROR: 'mpremote' not found on PATH. Install it with "
+            "'pip install mpremote'.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    # Resolution order: CLI flag > .microweaver > hardcoded default.
+    config = load_config()
+    resolved_port = port or config.get("port")
+    resolved_baud = baud if baud is not None else int(config.get("baud", DEFAULT_BAUD))
+
+    if resolved_port is None:
+        resolved_port = prompt_for_port()
+        port = resolved_port
+
+    # mpremote's CLI hardcodes 115200 baud (no override flag exists upstream
+    # as of 1.28.0); --baud is accepted for interface parity but has no
+    # effect on the actual transfer today.
+    if resolved_baud != 115200:
+        print(
+            f"NOTE: mpremote ignores --baud (requested {resolved_baud}), "
+            "connection always runs at 115200.",
+            file=sys.stderr,
+        )
+
+    path.mkdir(parents=True, exist_ok=True)
+
+    cmd = ["mpremote", "connect", resolved_port, "fs", "cp", "-r", ":.", str(path)]
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        raise typer.Exit(code=result.returncode)
+
+    save_config(port=port, baud=baud)
+    print(f"\nDownloaded {resolved_port} -> {path}")
+
+
 @config_app.command("show")
 def config_show() -> None:
     """Print current .microweaver defaults."""
@@ -306,7 +358,7 @@ def device_reset(
         None, "--port", "-p", help="Serial port of device"
     ),
 ) -> None:
-    """Hard-reset the device (DTR/RTS pulse) — works even if firmware is stuck."""
+    """Hard-reset the device via esptool — works even if firmware is stuck."""
     config = load_config()
     resolved_port = port or config.get("port")
     if resolved_port is None:
