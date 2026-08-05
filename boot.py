@@ -1,11 +1,7 @@
-import gc
-
 try:
-    import main
+    from _boot import run_bootstrap
 
-    main.start()
+    run_bootstrap()
 except Exception as err:
     print("BOOT: unhandled exception:", err)
     raise
-finally:
-    gc.collect()

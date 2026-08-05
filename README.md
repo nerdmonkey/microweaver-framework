@@ -36,13 +36,14 @@ Before you can start using Microweaver, ensure you have the following prerequisi
    cp device_config.json.example device_config.json
    ```
 
-3. Upload `boot.py`, `main.py`, `device_config.json`, and the `app`/`config` directories to your microcontroller. You can use tools like `ampy`, `rshell`, or `uPyCraft` to upload files.
+3. Upload `boot.py`, `_boot.py`, `main.py`, `device_config.json`, and the `app`/`config` directories to your microcontroller. You can use tools like `ampy`, `rshell`, or `uPyCraft` to upload files.
 
    On boot, the device runs `boot.py`, which imports `main` and calls `main.start()`. `device_config.json` is read at runtime, so WiFi/MQTT credentials can be changed by editing that file and rebooting — no reflash required.
 
 ### Project Structure
 
-- `boot.py` — MicroPython entry point; imports and starts the app, logs any unhandled boot exception.
+- `boot.py` — thin MicroPython entry point; calls `_boot.run_bootstrap()`, logs and re-raises any unhandled boot exception.
+- `_boot.py` — does the actual bootstrap: `gc.collect()`, imports `main`, `gc.collect()` again, then calls `main.start()`. Split from `boot.py` so memory used during import is freed before the app runs.
 - `main.py` — defines `start()`, which wires up and runs the app's services.
 - `config/app.py` — `Setting` class, reads `device_config.json` with sane defaults if the file is missing.
 - `app/services/` — `WiFiService`, `MqttConnection` (shared reconnect/backoff logic), `PublishService`, `SubscribeService`.
