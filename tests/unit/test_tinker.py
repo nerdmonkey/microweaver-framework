@@ -9,7 +9,13 @@ from typer.testing import CliRunner
 
 import tinker
 
-runner = CliRunner()
+try:
+    # Older typer/click just re-export click's CliRunner, which mixes
+    # stdout/stderr unless told otherwise; newer typer ships its own
+    # CliRunner that always separates them and rejects this kwarg.
+    runner = CliRunner(mix_stderr=False)
+except TypeError:
+    runner = CliRunner()
 
 
 class FakePort:
