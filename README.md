@@ -47,7 +47,7 @@ Before you can start using Microweaver, ensure you have the following prerequisi
 - `main.py` — defines `start()`, which wires up and runs the app's services.
 - `config/app.py` — `Setting` class, reads `device_config.json` with sane defaults if the file is missing.
 - `app/services/` — `WiFiService`, `MqttConnection` (shared reconnect/backoff logic), `PublishService`, `SubscribeService`.
-- `app/adapters/{sensors,actuators,displays}/` — extension points for hardware drivers; each should subclass `BaseAdapter` (`app/adapters/base.py`), which provides an `available` property and a `deinit()` hook.
+- `app/adapters/{sensors,actuators,indicators}/` — extension points for hardware drivers; each should subclass `BaseAdapter` (`app/adapters/base.py`), which provides an `available` property and a `deinit()` hook.
 
 ### Running tests
 
@@ -58,7 +58,15 @@ pytest
 
 MicroPython-only modules (`network`, `umqtt.simple`) are stubbed in `tests/conftest.py` so the suite runs on a regular CPython interpreter.
 
-## Contributing
+### Building for deployment
+
+`tinker.py` compiles `app/`, `config/`, `_boot.py`, and `main.py` to `.mpy` bytecode into `dist/` (via `mpy-cross-multi`), copies `boot.py` as plaintext (MicroPython requires it uncompiled), and copies `device_config.json` alongside — tests and dev tooling are excluded from the output.
+
+```shell
+python tinker.py
+```
+
+Flags: `--micropython` (target MicroPython version, default `1.28`), `--march` (target architecture, default `xtensawin` for ESP32), `--no-clean` (skip wiping `dist/` first).
 
 We welcome contributions from the community to improve and expand Microweaver. If you have ideas, bug reports, or feature requests, please open an issue on the GitHub repository or submit a pull request.
 
