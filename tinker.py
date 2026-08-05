@@ -2,6 +2,7 @@
 """Build, upload, and manage microweaver firmware."""
 
 import configparser
+import re
 import shutil
 import subprocess
 import sys
@@ -366,6 +367,92 @@ def device_reset(
 
     hard_reset(resolved_port)
     print(f"Reset {resolved_port}")
+
+
+# esptool's connect banner prints these labels left-padded to 20 chars
+# (f"{'Chip type:':<20}{value}"), regardless of chip; MAC uses the same
+# print_mac() helper so it matches the same shape.
+_ESPTOOL_INFO_PATTERNS = {
+    "Chip": r"Chip type:\s*(.+)",
+    "Features": r"Features:\s*(.+)",
+    "Crystal": r"Crystal frequency:\s*(.+)",
+    "USB mode": r"USB mode:\s*(.+)",
+    "MAC": r"MAC:\s*(.+)",
+    "Flash Manufacturer": r"Manufacturer:\s*(.+)",
+    "Flash Device": r"Device:\s*(.+)",
+    "Flash Size": r"Detected flash size:\s*(.+)",
+}
+
+
+@device_app.command("info")
+def device_info(
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Serial port of device"
+    ),
+) -> None:
+    """Show device hardware (chip/flash/MAC) and firmware (MicroPython) details."""
+    config = load_config()
+    resolved_port = port or config.get("port")
+    if resolved_port is None:
+        resolved_port = prompt_for_port()
+
+    if shutil.which("esptool") is None:
+        print(
+            "ERROR: 'esptool' not found on PATH. Install it with "
+            "'pip install esptool'.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    # flash-id connects at the ROM bootloader level, so it works even if the
+    # firmware/REPL is unresponsive (same reasoning as hard_reset()).
+    result = subprocess.run(
+        ["esptool", "--port", resolved_port, "--after", "hard-reset", "flash-id"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(
+            f"ERROR: could not read chip info:\n{result.stderr.strip()}",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    output = result.stdout + result.stderr
+    rows = []
+    for label, pattern in _ESPTOOL_INFO_PATTERNS.items():
+        match = re.search(pattern, output)
+        if match:
+            rows.append((label, match.group(1).strip()))
+
+    if shutil.which("mpremote") is not None:
+        try:
+            fw_result = subprocess.run(
+                [
+                    "mpremote",
+                    "connect",
+                    resolved_port,
+                    "exec",
+                    "import os; print(os.uname())",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if fw_result.returncode == 0:
+                rows.append(("MicroPython", fw_result.stdout.strip()))
+            else:
+                rows.append(("MicroPython", "unavailable (device unresponsive)"))
+        except subprocess.TimeoutExpired:
+            rows.append(
+                ("MicroPython", "unavailable (timed out, device may be busy)")
+            )
+
+    if not rows:
+        print("No device details could be read.")
+        raise typer.Exit(code=1)
+
+    print_table(["Field", "Value"], rows)
 
 
 @app.command(name="port")
