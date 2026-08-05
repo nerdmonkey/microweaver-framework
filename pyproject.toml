@@ -15,6 +15,7 @@ paho-mqtt = "^1.6.1"
 pytest = "^8.2"
 pytest-mock = "^3.12.0"
 pytest-asyncio = "^1.1.0"
+pytest-cov = "^7.1.0"
 mpy-cross-multi = "^2.0.0"
 autoflake8 = "^0.4.1"
 flake8 = "^7.0.0"
@@ -24,6 +25,20 @@ bandit = "^1.7.6"
 typer = "^0.27.1"
 pyserial = "^3.5"
 esptool = "^5.3.1"
+
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "tests/*",
+    "dist/*",
+    "backup/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+]
 
 [build-system]
 requires = ["poetry-core"]
