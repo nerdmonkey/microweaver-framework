@@ -338,13 +338,27 @@ def config_show() -> None:
     print_table(["Key", "Value"], config.items())
 
 
-@config_app.command("set", no_args_is_help=True)
+@config_app.command("set")
 def config_set(
     port: Optional[str] = typer.Option(None, "--port", "-p", help="Default serial port"),
     baud: Optional[int] = typer.Option(None, "--baud", "-b", help="Default baud rate"),
     path: Optional[Path] = typer.Option(None, "--path", help="Default upload path"),
 ) -> None:
     """Set default port/baud/path in .microweaver."""
+    if port is None and baud is None and path is None:
+        if not sys.stdin.isatty():
+            print("Nothing to set. Pass --port/--baud/--path.", file=sys.stderr)
+            raise typer.Exit(code=1)
+
+        current = load_config()
+        port = typer.prompt("Port", default=current.get("port", ""))
+        baud = typer.prompt(
+            "Baud", default=current.get("baud", str(DEFAULT_BAUD)), type=int
+        )
+        path = typer.prompt("Path", default=current.get("path", str(DIST)))
+        port = port or None
+        path = Path(path) if path else None
+
     saved = save_config(port=port, baud=baud, path=path)
     if not saved:
         print("Nothing to set. Pass --port/--baud/--path.", file=sys.stderr)
