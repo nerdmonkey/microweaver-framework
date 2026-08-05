@@ -2,7 +2,6 @@
 """Build, upload, and manage microweaver firmware."""
 
 import configparser
-import re
 import shutil
 import subprocess
 import sys
@@ -10,6 +9,10 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from esptool.cmds import attach_flash, detect_chip, reset_chip
+from esptool.cmds import _get_flash_info as get_flash_info
+from esptool.logger import log as esptool_log
+from esptool.util import FatalError
 from serial.tools import list_ports
 
 ROOT = Path(__file__).parent
@@ -112,6 +115,19 @@ def prompt_for_port() -> str:
     return ports[choice - 1].device
 
 
+def connect_esp(port_name: str):
+    """Connect to a device via esptool's Python API, raising typer.Exit on failure."""
+    esptool_log.set_verbosity("silent")
+    try:
+        return detect_chip(port=port_name)
+    except FatalError as exc:
+        print(
+            f"ERROR: could not connect to {port_name}:\n{exc}",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+
 def hard_reset(port_name: str) -> None:
     """Reset the board via esptool.
 
@@ -125,21 +141,17 @@ def hard_reset(port_name: str) -> None:
     rather than getting stranded in the ROM download bootloader, which a
     mistimed/wrong-polarity manual pulse can do.
     """
-    if shutil.which("esptool") is None:
+    esp = connect_esp(port_name)
+    try:
+        reset_chip(esp, "hard-reset")
+    except FatalError as exc:
         print(
-            "ERROR: 'esptool' not found on PATH. Install it with "
-            "'pip install esptool'.",
+            f"ERROR: could not reset {port_name}:\n{exc}",
             file=sys.stderr,
         )
         raise typer.Exit(code=1)
-    cmd = ["esptool", "--port", port_name, "--after", "hard-reset", "chip-id"]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(
-            f"ERROR: could not reset {port_name}:\n{result.stderr.strip()}",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
+    finally:
+        esp._port.close()
 
 
 def compile_file(src: Path, dst: Path, mp_version: str, march: str) -> bool:
@@ -319,8 +331,18 @@ def download(
 
     path.mkdir(parents=True, exist_ok=True)
 
+    # mpremote's fs cp has no include/exclude filter, so if the destination
+    # is (or contains) the project root, guard our own config file from
+    # being clobbered by whatever the copy pulls in.
+    guard_path = path / CONFIG_PATH.name
+    guard_backup = guard_path.read_bytes() if guard_path.exists() else None
+
     cmd = ["mpremote", "connect", resolved_port, "fs", "cp", "-r", ":.", str(path)]
     result = subprocess.run(cmd)
+
+    if guard_backup is not None:
+        guard_path.write_bytes(guard_backup)
+
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 
@@ -383,21 +405,6 @@ def device_reset(
     print(f"Reset {resolved_port}")
 
 
-# esptool's connect banner prints these labels left-padded to 20 chars
-# (f"{'Chip type:':<20}{value}"), regardless of chip; MAC uses the same
-# print_mac() helper so it matches the same shape.
-_ESPTOOL_INFO_PATTERNS = {
-    "Chip": r"Chip type:\s*(.+)",
-    "Features": r"Features:\s*(.+)",
-    "Crystal": r"Crystal frequency:\s*(.+)",
-    "USB mode": r"USB mode:\s*(.+)",
-    "MAC": r"MAC:\s*(.+)",
-    "Flash Manufacturer": r"Manufacturer:\s*(.+)",
-    "Flash Device": r"Device:\s*(.+)",
-    "Flash Size": r"Detected flash size:\s*(.+)",
-}
-
-
 @device_app.command("info")
 def device_info(
     port: Optional[str] = typer.Option(
@@ -410,34 +417,37 @@ def device_info(
     if resolved_port is None:
         resolved_port = prompt_for_port()
 
-    if shutil.which("esptool") is None:
-        print(
-            "ERROR: 'esptool' not found on PATH. Install it with "
-            "'pip install esptool'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
-    # flash-id connects at the ROM bootloader level, so it works even if the
-    # firmware/REPL is unresponsive (same reasoning as hard_reset()).
-    result = subprocess.run(
-        ["esptool", "--port", resolved_port, "--after", "hard-reset", "flash-id"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        print(
-            f"ERROR: could not read chip info:\n{result.stderr.strip()}",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
-    output = result.stdout + result.stderr
+    # detect_chip connects at the ROM bootloader level, so it works even if
+    # the firmware/REPL is unresponsive (same reasoning as hard_reset()).
+    esp = connect_esp(resolved_port)
     rows = []
-    for label, pattern in _ESPTOOL_INFO_PATTERNS.items():
-        match = re.search(pattern, output)
-        if match:
-            rows.append((label, match.group(1).strip()))
+    try:
+        rows.append(("Chip", esp.CHIP_NAME))
+        rows.append(("Features", ", ".join(esp.get_chip_features())))
+        rows.append(("Crystal", f"{esp.get_crystal_freq()}MHz"))
+        usb_mode = esp.get_usb_mode()
+        if usb_mode is not None:
+            rows.append(("USB mode", usb_mode))
+
+        eui64 = esp.read_mac("EUI64")
+        mac = eui64 if eui64 else esp.read_mac("BASE_MAC")
+        rows.append(("MAC", ":".join(f"{x:02x}" for x in mac)))
+
+        attach_flash(esp)
+        manufacturer_id, device_id, flash_size = get_flash_info(esp)
+        rows.append(("Flash Manufacturer", f"{manufacturer_id:02x}"))
+        rows.append(("Flash Device", f"{device_id:04x}"))
+        rows.append(("Flash Size", flash_size or "Unknown"))
+
+        reset_chip(esp, "hard-reset")
+    except FatalError as exc:
+        print(
+            f"ERROR: could not read chip info:\n{exc}",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    finally:
+        esp._port.close()
 
     if shutil.which("mpremote") is not None:
         try:
