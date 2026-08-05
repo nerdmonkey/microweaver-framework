@@ -35,3 +35,4 @@ device_config.json
 
 .microweaver
 backup/
+.ipynb_checkpoints/
