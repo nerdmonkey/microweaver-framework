@@ -1,5 +1,6 @@
-import network
 import time
+
+import network
 
 
 class WiFiService:

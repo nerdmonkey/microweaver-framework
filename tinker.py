@@ -3,14 +3,14 @@
 
 import configparser
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import sys
 from pathlib import Path
 from typing import Optional
 
 import typer
-from esptool.cmds import attach_flash, detect_chip, reset_chip
 from esptool.cmds import _get_flash_info as get_flash_info
+from esptool.cmds import attach_flash, detect_chip, reset_chip
 from esptool.logger import log as esptool_log
 from esptool.util import FatalError
 from serial.tools import list_ports
@@ -165,7 +165,7 @@ def compile_file(src: Path, dst: Path, mp_version: str, march: str) -> bool:
         str(dst),
         str(src),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)  # nosec B603
     if result.returncode != 0:
         print(f"ERROR {src}: {result.stderr.strip()}", file=sys.stderr)
         return False
@@ -175,9 +175,7 @@ def compile_file(src: Path, dst: Path, mp_version: str, march: str) -> bool:
 
 @app.command()
 def build(
-    micropython: str = typer.Option(
-        "1.28", help="Target MicroPython version"
-    ),
+    micropython: str = typer.Option("1.28", help="Target MicroPython version"),
     march: str = typer.Option(
         "xtensawin", help="Target architecture (default: xtensawin for ESP32)"
     ),
@@ -281,7 +279,7 @@ def upload(
 
     src = f"{resolved_path}/." if resolved_path.is_dir() else str(resolved_path)
     cmd = ["mpremote", "connect", resolved_port, "fs", "cp", "-r", src, ":"]
-    result = subprocess.run(cmd)
+    result = subprocess.run(cmd)  # nosec B603
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 
@@ -338,7 +336,7 @@ def download(
     guard_backup = guard_path.read_bytes() if guard_path.exists() else None
 
     cmd = ["mpremote", "connect", resolved_port, "fs", "cp", "-r", ":.", str(path)]
-    result = subprocess.run(cmd)
+    result = subprocess.run(cmd)  # nosec B603
 
     if guard_backup is not None:
         guard_path.write_bytes(guard_backup)
@@ -362,7 +360,9 @@ def config_show() -> None:
 
 @config_app.command("set")
 def config_set(
-    port: Optional[str] = typer.Option(None, "--port", "-p", help="Default serial port"),
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Default serial port"
+    ),
     baud: Optional[int] = typer.Option(None, "--baud", "-b", help="Default baud rate"),
     path: Optional[Path] = typer.Option(None, "--path", help="Default upload path"),
 ) -> None:
@@ -451,7 +451,7 @@ def device_info(
 
     if shutil.which("mpremote") is not None:
         try:
-            fw_result = subprocess.run(
+            fw_result = subprocess.run(  # nosec B603 B607
                 [
                     "mpremote",
                     "connect",
@@ -468,9 +468,7 @@ def device_info(
             else:
                 rows.append(("MicroPython", "unavailable (device unresponsive)"))
         except subprocess.TimeoutExpired:
-            rows.append(
-                ("MicroPython", "unavailable (timed out, device may be busy)")
-            )
+            rows.append(("MicroPython", "unavailable (timed out, device may be busy)"))
 
     if not rows:
         print("No device details could be read.")
@@ -501,7 +499,7 @@ def device_ls(
         resolved_port = prompt_for_port()
 
     cmd = ["mpremote", "connect", resolved_port, "fs", "ls", path]
-    result = subprocess.run(cmd)
+    result = subprocess.run(cmd)  # nosec B603
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 
@@ -512,9 +510,7 @@ def device_tree(
         None, "--port", "-p", help="Serial port of device"
     ),
     path: str = typer.Argument(":", help="Device path to show (default: root)"),
-    size: bool = typer.Option(
-        False, "--size", "-s", help="Show file size in bytes"
-    ),
+    size: bool = typer.Option(False, "--size", "-s", help="Show file size in bytes"),
     human: bool = typer.Option(
         False, "--human", "-h", help="Show file size in a more human readable way"
     ),
@@ -539,7 +535,7 @@ def device_tree(
     if human:
         cmd.append("--human")
     cmd += ["tree", path]
-    result = subprocess.run(cmd)
+    result = subprocess.run(cmd)  # nosec B603
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 

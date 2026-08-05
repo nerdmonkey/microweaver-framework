@@ -2,9 +2,9 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+from environment import MQTT_CLIENT_ID
 
 from app.services.mosquitto import Mosquitto
-from environment import MQTT_CLIENT_ID
 
 
 @pytest.fixture(autouse=True)

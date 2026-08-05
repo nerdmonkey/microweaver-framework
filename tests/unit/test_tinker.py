@@ -1,5 +1,4 @@
 import subprocess
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -166,10 +165,8 @@ def test_compile_file_success(tmp_path, mocker):
     src = tmp_path / "main.py"
     src.write_text("print('hi')")
     dst = tmp_path / "out" / "main.mpy"
-    mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
-    )
-    monkeypatch_root = mocker.patch.object(tinker, "ROOT", tmp_path)
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
+    mocker.patch.object(tinker, "ROOT", tmp_path)
     assert tinker.compile_file(src, dst, "1.28", "xtensawin") is True
     assert dst.parent.exists()
 
@@ -269,23 +266,17 @@ def test_upload_path_missing(tmp_path, mocker):
 
 def test_upload_success(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
-    )
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
     src = tmp_path / "dist"
     src.mkdir()
-    result = runner.invoke(
-        tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(src)]
-    )
+    result = runner.invoke(tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(src)])
     assert result.exit_code == 0
     assert tinker.load_config()["port"] == "/dev/ttyUSB0"
 
 
 def test_upload_custom_baud_warns(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
-    )
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
     src = tmp_path / "dist"
     src.mkdir()
     result = runner.invoke(
@@ -298,9 +289,7 @@ def test_upload_custom_baud_warns(tmp_path, mocker):
 
 def test_upload_with_reset_flag(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
-    )
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
     mock_reset = mocker.patch.object(tinker, "hard_reset")
     src = tmp_path / "dist"
     src.mkdir()
@@ -313,9 +302,7 @@ def test_upload_with_reset_flag(tmp_path, mocker):
 
 def test_upload_prompts_for_port_when_missing(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
-    )
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
     mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
     src = tmp_path / "dist"
     src.mkdir()
@@ -341,14 +328,10 @@ def test_upload_uses_config_defaults(tmp_path, mocker):
 
 def test_upload_subprocess_failure(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=2)
-    )
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=2))
     src = tmp_path / "dist"
     src.mkdir()
-    result = runner.invoke(
-        tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(src)]
-    )
+    result = runner.invoke(tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(src)])
     assert result.exit_code == 2
 
 
@@ -366,9 +349,7 @@ def test_download_missing_mpremote(mocker):
 
 def test_download_success(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
-    )
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
     dest = tmp_path / "backup"
     result = runner.invoke(
         tinker.app, ["download", "--port", "/dev/ttyUSB0", str(dest)]
@@ -400,9 +381,7 @@ def test_download_preserves_config_guard(tmp_path, mocker):
 
 def test_download_custom_baud_warns(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
-    )
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
     dest = tmp_path / "backup"
     result = runner.invoke(
         tinker.app,
@@ -413,9 +392,7 @@ def test_download_custom_baud_warns(tmp_path, mocker):
 
 def test_download_prompts_for_port(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
-    )
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
     mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
     dest = tmp_path / "backup"
     result = runner.invoke(tinker.app, ["download", str(dest)])
@@ -425,9 +402,7 @@ def test_download_prompts_for_port(tmp_path, mocker):
 
 def test_download_subprocess_failure(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=3)
-    )
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=3))
     dest = tmp_path / "backup"
     result = runner.invoke(
         tinker.app, ["download", "--port", "/dev/ttyUSB0", str(dest)]
@@ -514,9 +489,7 @@ def test_device_info_success_no_mpremote(mocker):
     esp = _fake_esp()
     mocker.patch.object(tinker, "connect_esp", return_value=esp)
     mocker.patch.object(tinker, "attach_flash")
-    mocker.patch.object(
-        tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB")
-    )
+    mocker.patch.object(tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB"))
     mocker.patch.object(tinker, "reset_chip")
     mocker.patch.object(tinker.shutil, "which", return_value=None)
     result = runner.invoke(tinker.app, ["device", "info", "--port", "/dev/ttyUSB0"])
@@ -530,9 +503,7 @@ def test_device_info_with_usb_mode_and_mpremote(mocker):
     esp.get_usb_mode.return_value = "CDC"
     mocker.patch.object(tinker, "connect_esp", return_value=esp)
     mocker.patch.object(tinker, "attach_flash")
-    mocker.patch.object(
-        tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB")
-    )
+    mocker.patch.object(tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB"))
     mocker.patch.object(tinker, "reset_chip")
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mocker.patch.object(
@@ -550,9 +521,7 @@ def test_device_info_mpremote_unresponsive(mocker):
     esp = _fake_esp()
     mocker.patch.object(tinker, "connect_esp", return_value=esp)
     mocker.patch.object(tinker, "attach_flash")
-    mocker.patch.object(
-        tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB")
-    )
+    mocker.patch.object(tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB"))
     mocker.patch.object(tinker, "reset_chip")
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mocker.patch.object(
@@ -567,9 +536,7 @@ def test_device_info_mpremote_timeout(mocker):
     esp = _fake_esp()
     mocker.patch.object(tinker, "connect_esp", return_value=esp)
     mocker.patch.object(tinker, "attach_flash")
-    mocker.patch.object(
-        tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB")
-    )
+    mocker.patch.object(tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB"))
     mocker.patch.object(tinker, "reset_chip")
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mocker.patch.object(
@@ -613,9 +580,7 @@ def test_device_ls_success(mocker):
 def test_device_ls_prompts_for_port_and_failure(mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
-    mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=1)
-    )
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=1))
     result = runner.invoke(tinker.app, ["device", "ls"])
     assert result.exit_code == 1
 
@@ -645,9 +610,7 @@ def test_device_tree_success_with_flags(mocker):
 
 def test_device_tree_failure(mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=1)
-    )
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=1))
     result = runner.invoke(tinker.app, ["device", "tree", "--port", "/dev/ttyUSB0"])
     assert result.exit_code == 1
 

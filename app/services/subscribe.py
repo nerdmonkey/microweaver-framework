@@ -1,7 +1,6 @@
-from config.app import Setting
-from app.services.wifi import WiFiService
 from app.services.mqtt import MqttConnection
-
+from app.services.wifi import WiFiService
+from config.app import Setting
 
 setting = (Setting()).get_settings()
 
