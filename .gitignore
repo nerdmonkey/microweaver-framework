@@ -32,3 +32,5 @@ docker
 device_config.json
 .pytest_cache
 .vscode/
+
+.microweaver
