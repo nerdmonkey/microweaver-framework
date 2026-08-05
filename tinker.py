@@ -479,6 +479,71 @@ def device_info(
     print_table(["Field", "Value"], rows)
 
 
+@device_app.command("ls")
+def device_ls(
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Serial port of device"
+    ),
+    path: str = typer.Argument(":", help="Device path to list (default: root)"),
+) -> None:
+    """List files and folders on the device."""
+    if shutil.which("mpremote") is None:
+        print(
+            "ERROR: 'mpremote' not found on PATH. Install it with "
+            "'pip install mpremote'.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    config = load_config()
+    resolved_port = port or config.get("port")
+    if resolved_port is None:
+        resolved_port = prompt_for_port()
+
+    cmd = ["mpremote", "connect", resolved_port, "fs", "ls", path]
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        raise typer.Exit(code=result.returncode)
+
+
+@device_app.command("tree")
+def device_tree(
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Serial port of device"
+    ),
+    path: str = typer.Argument(":", help="Device path to show (default: root)"),
+    size: bool = typer.Option(
+        False, "--size", "-s", help="Show file size in bytes"
+    ),
+    human: bool = typer.Option(
+        False, "--human", "-h", help="Show file size in a more human readable way"
+    ),
+) -> None:
+    """Show a tree view of files and folders on the device."""
+    if shutil.which("mpremote") is None:
+        print(
+            "ERROR: 'mpremote' not found on PATH. Install it with "
+            "'pip install mpremote'.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    config = load_config()
+    resolved_port = port or config.get("port")
+    if resolved_port is None:
+        resolved_port = prompt_for_port()
+
+    cmd = ["mpremote", "connect", resolved_port, "fs"]
+    if size:
+        cmd.append("--size")
+    if human:
+        cmd.append("--human")
+    cmd += ["tree", path]
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        raise typer.Exit(code=result.returncode)
+
+
 @app.command(name="port")
 def list_serial_ports() -> None:
     """List available serial ports."""
