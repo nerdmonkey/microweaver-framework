@@ -1,36 +1,64 @@
+import json
+
 from config.app import Setting
 
 
-def test_setting_initialization(monkeypatch):
-    test_values = {
-        "APP_ENVIRONMENT": "test",
-        "MQTT_BROKER": "test_broker",
-        "MQTT_CLIENT_ID": "test_id",
-        "MQTT_PORT": 1884,
-        "MQTT_TOPIC_PUB": "test/pub",
-        "MQTT_TOPIC_SUB": "test/sub",
-        "MQTT_TOPIC_SUB": "test/sub",
-        "MQTT_USERNAME": "test_user",
-        "MQTT_PASSWORD": "test_pass",
-        "WIFI_SSID": "test_ssid",
-        "WIFI_PASSWORD": "test_password"
-    }
+def test_setting_reads_values_from_device_config(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "app_environment": "test",
+                "mqtt_broker": "test_broker",
+                "mqtt_client_id": "test_id",
+                "mqtt_port": 1884,
+                "mqtt_topic_pub": "test/pub",
+                "mqtt_topic_sub": "test/sub",
+                "mqtt_username": "test_user",
+                "mqtt_password": "test_pass",
+                "wifi_ssid": "test_ssid",
+                "wifi_password": "test_password",
+                "wifi_connect_timeout_seconds": 5,
+                "mqtt_reconnect_delay_seconds": 1,
+                "mqtt_max_reconnect_delay_seconds": 10,
+                "mqtt_keepalive_seconds": 60,
+            }
+        )
+    )
 
-    for key, value in test_values.items():
-        monkeypatch.setattr("environment." + key, value)
+    setting = Setting(config_path=str(config_path))
 
-    setting = Setting()
+    assert setting.APP_ENVIRONMENT == "test"
+    assert setting.MQTT_BROKER == "test_broker"
+    assert setting.MQTT_CLIENT_ID == "test_id"
+    assert setting.MQTT_PORT == 1884
+    assert setting.MQTT_TOPIC_PUB == "test/pub"
+    assert setting.MQTT_TOPIC_SUB == "test/sub"
+    assert setting.MQTT_USERNAME == "test_user"
+    assert setting.MQTT_PASSWORD == "test_pass"
+    assert setting.WIFI_SSID == "test_ssid"
+    assert setting.WIFI_PASSWORD == "test_password"
+    assert setting.WIFI_CONNECT_TIMEOUT_SECONDS == 5
+    assert setting.MQTT_RECONNECT_DELAY_SECONDS == 1
+    assert setting.MQTT_MAX_RECONNECT_DELAY_SECONDS == 10
+    assert setting.MQTT_KEEPALIVE_SECONDS == 60
 
-    assert setting.APP_ENVIRONMENT == test_values["APP_ENVIRONMENT"]
-    assert setting.MQTT_BROKER == test_values["MQTT_BROKER"]
-    assert setting.MQTT_CLIENT_ID == test_values["MQTT_CLIENT_ID"]
-    assert setting.MQTT_PORT == test_values["MQTT_PORT"]
-    assert setting.MQTT_TOPIC_PUB == test_values["MQTT_TOPIC_PUB"]
-    assert setting.MQTT_TOPIC_SUB == test_values["MQTT_TOPIC_SUB"]
-    assert setting.MQTT_USERNAME == test_values["MQTT_USERNAME"]
-    assert setting.MQTT_PASSWORD == test_values["MQTT_PASSWORD"]
-    assert setting.WIFI_SSID == test_values["WIFI_SSID"]
-    assert setting.WIFI_PASSWORD == test_values["WIFI_PASSWORD"]
+
+def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
+    missing_path = tmp_path / "does_not_exist.json"
+
+    setting = Setting(config_path=str(missing_path))
+
+    assert setting.APP_ENVIRONMENT == "local"
+    assert setting.MQTT_BROKER == "localhost"
+    assert setting.MQTT_CLIENT_ID == "microweaver"
+    assert setting.MQTT_PORT == 1883
+    assert setting.WIFI_SSID == ""
+    assert setting.WIFI_PASSWORD == ""
+    assert setting.WIFI_CONNECT_TIMEOUT_SECONDS == 20
+    assert setting.MQTT_RECONNECT_DELAY_SECONDS == 2
+    assert setting.MQTT_MAX_RECONNECT_DELAY_SECONDS == 30
+    assert setting.MQTT_KEEPALIVE_SECONDS == 300
 
 
 def test_get_settings_method():

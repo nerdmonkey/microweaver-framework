@@ -29,6 +29,6 @@ docker
 
 
 .venv
-environment.py
+device_config.json
 .pytest_cache
 .vscode/

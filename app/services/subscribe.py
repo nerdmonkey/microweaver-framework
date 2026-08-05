@@ -1,58 +1,50 @@
-import time
-from umqtt.simple import MQTTClient
 from config.app import Setting
 from app.services.wifi import WiFiService
+from app.services.mqtt import MqttConnection
+
 
 setting = (Setting()).get_settings()
 
 
 class SubscribeService:
     def __init__(self):
-        self.client_id = setting.MQTT_CLIENT_ID
-        self.mqtt_broker = setting.MQTT_BROKER
-        self.mqtt_port = setting.MQTT_PORT
-        self.topic = setting.MQTT_TOPIC
+        self.topic = setting.MQTT_TOPIC_SUB
+        self.wifi_service = WiFiService(
+            setting.WIFI_SSID,
+            setting.WIFI_PASSWORD,
+            setting.WIFI_CONNECT_TIMEOUT_SECONDS,
+        )
+        self.connection = MqttConnection(
+            setting.MQTT_CLIENT_ID,
+            setting.MQTT_BROKER,
+            setting.MQTT_PORT,
+            self.wifi_service,
+            setting.MQTT_RECONNECT_DELAY_SECONDS,
+            setting.MQTT_MAX_RECONNECT_DELAY_SECONDS,
+            setting.MQTT_KEEPALIVE_SECONDS,
+        )
         self.client = None
-        self.wifi_service = WiFiService(setting.WIFI_SSID, setting.WIFI_PASSWORD)
+
+    def on_message(self, topic, message):
+        print("Received message on topic:", topic.decode(), "-", message.decode())
 
     def connect_to_mqtt(self):
-        self.client = MQTTClient(self.client_id, self.mqtt_broker, self.mqtt_port)
-        try:
-            print("Connecting to MQTT broker...")
-            self.client.connect()
-            print("Connected to MQTT Broker at", self.mqtt_broker)
-        except Exception as e:
-            print("Failed to connect to MQTT broker:", e)
-            self.client = None
-
-    def publish_message(self, message):
-        if self.client:
-            try:
-                print("Publishing message to topic:", self.topic)
-                self.client.publish(self.topic, message.encode())
-                print("Message published")
-            except Exception as e:
-                print("Failed to publish message:", e)
-        else:
-            print("Not connected to MQTT.")
+        self.client = self.connection.connect()
+        self.client.set_callback(self.on_message)
+        self.client.subscribe(self.topic)
+        print("Subscribed to topic:", self.topic)
 
     def disconnect(self):
-        if self.client:
-            try:
-                self.client.disconnect()
-                print("Disconnected from MQTT Broker")
-            except Exception as e:
-                print("Failed to disconnect from MQTT broker:", e)
+        self.connection.disconnect()
+        self.client = None
 
     def run(self):
-        if not self.wifi_service.is_connected():
-            self.wifi_service.connect()
-
-        self.connect_to_mqtt()
-
-        try:
-            while True:
-                self.publish_message("Hello from Agnes agent")
-                time.sleep(1)
-        finally:
-            self.disconnect()
+        while True:
+            self.connect_to_mqtt()
+            try:
+                while True:
+                    self.client.wait_msg()
+            except Exception as e:
+                print("Connection lost:", e)
+            finally:
+                self.disconnect()

@@ -1,0 +1,16 @@
+{
+    "app_environment": "local",
+    "mqtt_broker": "localhost",
+    "mqtt_client_id": "microweaver",
+    "mqtt_port": 1883,
+    "mqtt_topic_pub": "command/control/room/light",
+    "mqtt_topic_sub": "data/sensor/room/temperature",
+    "mqtt_username": "",
+    "mqtt_password": "",
+    "wifi_ssid": "",
+    "wifi_password": "",
+    "wifi_connect_timeout_seconds": 20,
+    "mqtt_reconnect_delay_seconds": 2,
+    "mqtt_max_reconnect_delay_seconds": 30,
+    "mqtt_keepalive_seconds": 300
+}
