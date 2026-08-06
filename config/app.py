@@ -45,6 +45,8 @@ class Setting:
             "boot_loop_state_path", "boot_state.json"
         )
 
+        self.SAFE_MODE_SLEEP_SECONDS = self._int("safe_mode_sleep_seconds", 5)
+
     def _load(self, path):
         try:
             with open(path, "r") as config_file:
