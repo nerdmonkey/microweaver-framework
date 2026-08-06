@@ -107,6 +107,37 @@ def test_connect_propagates_wlan_connect_exception(mocker):
         service.connect()
 
 
+def test_connect_applies_static_ip_before_connecting(mocker):
+    mock_wlan_cls = mocker.patch("network.WLAN")
+    mock_wlan = mock_wlan_cls.return_value
+    mock_wlan.isconnected.side_effect = [False, False, True]
+    mock_wlan.ifconfig.return_value = ["10.0.0.5"]
+    mocker.patch("time.sleep")
+    mocker.patch("time.time", side_effect=[0, 1])
+
+    static_ip = ("192.168.1.50", "255.255.255.0", "192.168.1.1", "8.8.8.8")
+    service = WiFiService(
+        "ssid", "password", connect_timeout_seconds=10, static_ip=static_ip
+    )
+
+    assert service.connect() is True
+    mock_wlan.ifconfig.assert_any_call(static_ip)
+
+
+def test_connect_skips_static_ip_when_not_configured(mocker):
+    mock_wlan_cls = mocker.patch("network.WLAN")
+    mock_wlan = mock_wlan_cls.return_value
+    mock_wlan.isconnected.side_effect = [False, False, True]
+    mock_wlan.ifconfig.return_value = ["10.0.0.5"]
+    mocker.patch("time.sleep")
+    mocker.patch("time.time", side_effect=[0, 1])
+
+    service = WiFiService("ssid", "password", connect_timeout_seconds=10)
+
+    assert service.connect() is True
+    mock_wlan.ifconfig.assert_called_once_with()
+
+
 def test_is_connected_delegates_to_wlan(mocker):
     mock_wlan_cls = mocker.patch("network.WLAN")
     mock_wlan = mock_wlan_cls.return_value

@@ -20,6 +20,10 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "mqtt_password": "test_pass",
                 "wifi_ssid": "test_ssid",
                 "wifi_password": "test_password",
+                "wifi_ip": "192.168.1.50",
+                "wifi_subnet": "255.255.255.0",
+                "wifi_gateway": "192.168.1.1",
+                "wifi_dns": "8.8.8.8",
                 "wifi_connect_timeout_seconds": 5,
                 "wifi_reconnect_delay_seconds": 3,
                 "wifi_max_reconnect_delay_seconds": 20,
@@ -65,6 +69,10 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.MQTT_PASSWORD == "test_pass"
     assert setting.WIFI_SSID == "test_ssid"
     assert setting.WIFI_PASSWORD == "test_password"
+    assert setting.WIFI_IP == "192.168.1.50"
+    assert setting.WIFI_SUBNET == "255.255.255.0"
+    assert setting.WIFI_GATEWAY == "192.168.1.1"
+    assert setting.WIFI_DNS == "8.8.8.8"
     assert setting.WIFI_CONNECT_TIMEOUT_SECONDS == 5
     assert setting.WIFI_RECONNECT_DELAY_SECONDS == 3
     assert setting.WIFI_MAX_RECONNECT_DELAY_SECONDS == 20
@@ -108,6 +116,10 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.MQTT_TOPIC_SUB == ["data/sensor/room/temperature"]
     assert setting.WIFI_SSID == ""
     assert setting.WIFI_PASSWORD == ""
+    assert setting.WIFI_IP == ""
+    assert setting.WIFI_SUBNET == ""
+    assert setting.WIFI_GATEWAY == ""
+    assert setting.WIFI_DNS == ""
     assert setting.WIFI_CONNECT_TIMEOUT_SECONDS == 20
     assert setting.WIFI_RECONNECT_DELAY_SECONDS == 2
     assert setting.WIFI_MAX_RECONNECT_DELAY_SECONDS == 30

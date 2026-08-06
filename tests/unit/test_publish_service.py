@@ -150,6 +150,41 @@ def test_watchdog_started_when_enabled(mocker):
     assert service.watchdog_service is mock_watchdog
 
 
+def test_wifi_service_built_without_static_ip_by_default(mocker):
+    mock_wifi_cls = mocker.patch("app.services.publish.WiFiService")
+
+    PublishService()
+
+    assert mock_wifi_cls.call_args.args[-1] is None
+
+
+def test_wifi_service_built_with_static_ip_when_fully_configured(mocker):
+    mocker.patch("app.services.publish.setting.WIFI_IP", "192.168.1.50")
+    mocker.patch("app.services.publish.setting.WIFI_SUBNET", "255.255.255.0")
+    mocker.patch("app.services.publish.setting.WIFI_GATEWAY", "192.168.1.1")
+    mocker.patch("app.services.publish.setting.WIFI_DNS", "8.8.8.8")
+    mock_wifi_cls = mocker.patch("app.services.publish.WiFiService")
+
+    PublishService()
+
+    assert mock_wifi_cls.call_args.args[-1] == (
+        "192.168.1.50",
+        "255.255.255.0",
+        "192.168.1.1",
+        "8.8.8.8",
+    )
+
+
+def test_wifi_service_skips_static_ip_when_partially_configured(mocker):
+    mocker.patch("app.services.publish.setting.WIFI_IP", "192.168.1.50")
+    mocker.patch("app.services.publish.setting.WIFI_SUBNET", "255.255.255.0")
+    mock_wifi_cls = mocker.patch("app.services.publish.WiFiService")
+
+    PublishService()
+
+    assert mock_wifi_cls.call_args.args[-1] is None
+
+
 def test_bootloop_guard_disabled_by_default():
     service = PublishService()
 
