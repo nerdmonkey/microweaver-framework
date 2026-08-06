@@ -469,6 +469,136 @@ def test_download_subprocess_failure(tmp_path, mocker):
 
 
 # --------------------------------------------------------------------------
+# watch command
+# --------------------------------------------------------------------------
+
+
+def test_watched_files_includes_sources_and_device_config(fake_project):
+    root, _ = fake_project
+    (root / "device_config.json").write_text("{}")
+    files = tinker._watched_files()
+    assert root / "app" / "mod.py" in files
+    assert root / "config" / "settings.py" in files
+    assert root / "_boot.py" in files
+    assert root / "main.py" in files
+    assert root / "boot.py" in files
+    assert root / "device_config.json" in files
+
+
+def test_watched_files_no_device_config(fake_project):
+    root, _ = fake_project
+    files = tinker._watched_files()
+    assert root / "device_config.json" not in files
+
+
+def test_scan_mtimes_skips_missing_file(tmp_path):
+    present = tmp_path / "present.py"
+    present.write_text("x = 1")
+    missing = tmp_path / "missing.py"
+    snapshot = tinker._scan_mtimes([present, missing])
+    assert present in snapshot
+    assert missing not in snapshot
+
+
+def test_watch_missing_mpremote(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value=None)
+    result = runner.invoke(tinker.app, ["watch"])
+    assert result.exit_code == 1
+    assert "mpremote" in result.stderr
+
+
+def test_watch_no_source_files(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(tinker, "ROOT", tmp_path)
+    mocker.patch.object(tinker, "DIST", tmp_path / "dist")
+    result = runner.invoke(tinker.app, ["watch"])
+    assert result.exit_code == 1
+    assert "no source files found" in result.stderr
+
+
+def test_watch_stops_on_keyboard_interrupt_with_no_change(fake_project, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_sleep = mocker.patch.object(
+        tinker.time, "sleep", side_effect=[None, KeyboardInterrupt()]
+    )
+    mock_build = mocker.patch.object(tinker, "build")
+    mock_upload = mocker.patch.object(tinker, "upload")
+    result = runner.invoke(tinker.app, ["watch"])
+    assert result.exit_code == 0
+    assert "Stopped watching" in result.stdout
+    assert mock_sleep.call_count == 2
+    mock_build.assert_not_called()
+    mock_upload.assert_not_called()
+
+
+def test_watch_rebuilds_and_uploads_on_change(fake_project, mocker):
+    root, dist = fake_project
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+
+    def touch_then_stop(*args, **kwargs):
+        touch_then_stop.calls += 1
+        if touch_then_stop.calls == 1:
+            (root / "app" / "mod.py").write_text("x = 2")
+            return None
+        raise KeyboardInterrupt()
+
+    touch_then_stop.calls = 0
+    mocker.patch.object(tinker.time, "sleep", side_effect=touch_then_stop)
+    mock_build = mocker.patch.object(tinker, "build")
+    mock_upload = mocker.patch.object(tinker, "upload")
+    result = runner.invoke(tinker.app, ["watch", "--port", "/dev/ttyUSB0", "--reset"])
+    assert result.exit_code == 0
+    assert "Change detected, rebuilding..." in result.stdout
+    mock_build.assert_called_once_with(
+        micropython="1.28", march="xtensawin", no_clean=False
+    )
+    mock_upload.assert_called_once_with(
+        port="/dev/ttyUSB0", baud=None, reset=True, path=None
+    )
+
+
+def test_watch_build_failure_skips_upload(fake_project, mocker):
+    root, dist = fake_project
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+
+    def touch_then_stop(*args, **kwargs):
+        touch_then_stop.calls += 1
+        if touch_then_stop.calls == 1:
+            (root / "app" / "mod.py").write_text("x = 2")
+            return None
+        raise KeyboardInterrupt()
+
+    touch_then_stop.calls = 0
+    mocker.patch.object(tinker.time, "sleep", side_effect=touch_then_stop)
+    mocker.patch.object(tinker, "build", side_effect=typer.Exit(code=1))
+    mock_upload = mocker.patch.object(tinker, "upload")
+    result = runner.invoke(tinker.app, ["watch"])
+    assert result.exit_code == 0
+    assert "Build failed, skipping upload." in result.stderr
+    mock_upload.assert_not_called()
+
+
+def test_watch_upload_failure_reported(fake_project, mocker):
+    root, dist = fake_project
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+
+    def touch_then_stop(*args, **kwargs):
+        touch_then_stop.calls += 1
+        if touch_then_stop.calls == 1:
+            (root / "app" / "mod.py").write_text("x = 2")
+            return None
+        raise KeyboardInterrupt()
+
+    touch_then_stop.calls = 0
+    mocker.patch.object(tinker.time, "sleep", side_effect=touch_then_stop)
+    mocker.patch.object(tinker, "build")
+    mocker.patch.object(tinker, "upload", side_effect=typer.Exit(code=1))
+    result = runner.invoke(tinker.app, ["watch"])
+    assert result.exit_code == 0
+    assert "Upload failed." in result.stderr
+
+
+# --------------------------------------------------------------------------
 # config show / set
 # --------------------------------------------------------------------------
 

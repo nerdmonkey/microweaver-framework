@@ -11,6 +11,7 @@
   - [`build`](#build)
   - [`upload`](#upload)
   - [`download`](#download)
+  - [`watch`](#watch)
   - [`port`](#port)
   - [`config show`](#config-show)
   - [`config set`](#config-set)
@@ -160,6 +161,37 @@ python tinker.py download ./backup-2026-08-05
 ```
 
 If the destination folder is (or contains) the project root, `tinker.py` guards its own `.microweaver` file from being overwritten by the copy and restores it afterward.
+
+---
+
+### `watch`
+
+Poll `app/`, `config/`, and the root source files (`_boot.py`, `main.py`, `boot.py`, `device_config.json`) for changes, and automatically re-run `build` + `upload` whenever one changes. Stop with `Ctrl+C`.
+
+```shell
+python tinker.py watch [OPTIONS]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--port`, `-p` | resolved (see [above](#config-resolution-order)) | Serial port |
+| `--baud`, `-b` | `115200` | Baud rate (accepted for parity; see note above) |
+| `--reset` | off | Hard-reset the device before each upload |
+| `--micropython` | `1.28` | Target MicroPython version, passed to each rebuild |
+| `--march` | `xtensawin` | Target architecture, passed to each rebuild |
+| `--interval` | `1.0` | Polling interval in seconds |
+
+Examples:
+
+```shell
+# Watch and auto rebuild+upload on save, auto-detecting the port
+python tinker.py watch
+
+# Watch a specific device, resetting it before each upload
+python tinker.py watch --port /dev/tty.usbserial-0001 --reset
+```
+
+A failed build skips that upload but keeps watching; a failed upload is reported but also keeps watching. Uses the same port/baud resolution as `upload` on every cycle.
 
 ---
 
@@ -356,6 +388,9 @@ python tinker.py device info                    # sanity-check the flash
 python tinker.py build
 python tinker.py upload --reset                  # reset first if the board is unresponsive
 python tinker.py device tree                     # confirm what actually landed on-device
+
+# or, to skip the manual build/upload cycle on every edit:
+python tinker.py watch --reset
 ```
 
 **Inspecting a device you didn't set up:**
