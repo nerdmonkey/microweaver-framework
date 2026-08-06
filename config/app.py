@@ -37,6 +37,14 @@ class Setting:
         self.WATCHDOG_ENABLED = self._bool("watchdog_enabled", False)
         self.WATCHDOG_TIMEOUT_MS = self._int("watchdog_timeout_ms", 8000)
 
+        self.BOOT_LOOP_PROTECTION_ENABLED = self._bool(
+            "boot_loop_protection_enabled", False
+        )
+        self.BOOT_LOOP_MAX_ATTEMPTS = self._int("boot_loop_max_attempts", 5)
+        self.BOOT_LOOP_STATE_PATH = self._value(
+            "boot_loop_state_path", "boot_state.json"
+        )
+
     def _load(self, path):
         try:
             with open(path, "r") as config_file:

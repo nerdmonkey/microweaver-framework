@@ -24,6 +24,9 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "mqtt_keepalive_seconds": 60,
                 "watchdog_enabled": True,
                 "watchdog_timeout_ms": 5000,
+                "boot_loop_protection_enabled": True,
+                "boot_loop_max_attempts": 3,
+                "boot_loop_state_path": "test_boot_state.json",
             }
         )
     )
@@ -46,6 +49,9 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.MQTT_KEEPALIVE_SECONDS == 60
     assert setting.WATCHDOG_ENABLED is True
     assert setting.WATCHDOG_TIMEOUT_MS == 5000
+    assert setting.BOOT_LOOP_PROTECTION_ENABLED is True
+    assert setting.BOOT_LOOP_MAX_ATTEMPTS == 3
+    assert setting.BOOT_LOOP_STATE_PATH == "test_boot_state.json"
 
 
 def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
@@ -65,6 +71,9 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.MQTT_KEEPALIVE_SECONDS == 300
     assert setting.WATCHDOG_ENABLED is False
     assert setting.WATCHDOG_TIMEOUT_MS == 8000
+    assert setting.BOOT_LOOP_PROTECTION_ENABLED is False
+    assert setting.BOOT_LOOP_MAX_ATTEMPTS == 5
+    assert setting.BOOT_LOOP_STATE_PATH == "boot_state.json"
 
 
 def test_get_settings_method():
