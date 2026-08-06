@@ -1,6 +1,7 @@
 import time
 
 from app.services.bootloop import BootLoopGuard
+from app.services.health import HealthCheckService
 from app.services.memory_monitor import MemoryMonitorService
 from app.services.mqtt import MqttConnection
 from app.services.watchdog import WatchdogService
@@ -32,6 +33,13 @@ class SubscribeService:
             self.memory_monitor_service = MemoryMonitorService(
                 setting.MEMORY_MONITOR_THRESHOLD_BYTES, setting.MEMORY_MONITOR_ACTION
             )
+        self.health_check_service = None
+        if setting.HEALTH_CHECK_ENABLED:
+            self.health_check_service = HealthCheckService(
+                interval_seconds=setting.HEALTH_CHECK_INTERVAL_SECONDS
+            )
+            self.health_check_service.register("wifi", self.wifi_service.is_connected)
+            self.health_check_service.register("mqtt", lambda: self.client is not None)
         self.connection = MqttConnection(
             setting.MQTT_CLIENT_ID,
             setting.MQTT_BROKER,
@@ -68,6 +76,8 @@ class SubscribeService:
                         self.watchdog_service.feed()
                     if self.memory_monitor_service:
                         self.memory_monitor_service.check()
+                    if self.health_check_service:
+                        self.health_check_service.poll()
                     self.client.check_msg()
                     time.sleep(1)
             except Exception as e:
