@@ -16,6 +16,10 @@ _SCHEMA = {
     "mqtt_password": {"type": str},
     "wifi_ssid": {"type": str},
     "wifi_password": {"type": str},
+    "wifi_ip": {"type": str},
+    "wifi_subnet": {"type": str},
+    "wifi_gateway": {"type": str},
+    "wifi_dns": {"type": str},
     "wifi_connect_timeout_seconds": {"type": "int", "min": 0},
     "wifi_reconnect_delay_seconds": {"type": "int", "min": 0},
     "wifi_max_reconnect_delay_seconds": {"type": "int", "min": 0},
@@ -74,6 +78,10 @@ class Setting:
         self.MQTT_PASSWORD = self._value("mqtt_password", "")
         self.WIFI_SSID = self._value("wifi_ssid", "")
         self.WIFI_PASSWORD = self._value("wifi_password", "")
+        self.WIFI_IP = self._value("wifi_ip", "")
+        self.WIFI_SUBNET = self._value("wifi_subnet", "")
+        self.WIFI_GATEWAY = self._value("wifi_gateway", "")
+        self.WIFI_DNS = self._value("wifi_dns", "")
 
         self.WIFI_CONNECT_TIMEOUT_SECONDS = self._int(
             "wifi_connect_timeout_seconds", 20

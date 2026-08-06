@@ -12,6 +12,7 @@ class WiFiService:
         reconnect_delay_seconds=2,
         max_reconnect_delay_seconds=30,
         watchdog_service=None,
+        static_ip=None,
     ):
         self.ssid = ssid
         self.password = password
@@ -19,6 +20,7 @@ class WiFiService:
         self.reconnect_delay_seconds = reconnect_delay_seconds
         self.max_reconnect_delay_seconds = max_reconnect_delay_seconds
         self.watchdog_service = watchdog_service
+        self.static_ip = static_ip
         self.wlan = network.WLAN(network.STA_IF)
 
     def connect(self):
@@ -31,6 +33,8 @@ class WiFiService:
                 self.watchdog_service.feed()
 
             self.wlan.active(True)
+            if self.static_ip:
+                self.wlan.ifconfig(self.static_ip)
             print("Connecting to network...")
             self.wlan.connect(self.ssid, self.password)
 

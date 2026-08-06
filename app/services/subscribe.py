@@ -24,6 +24,19 @@ class SubscribeService:
         self.watchdog_service = None
         if setting.WATCHDOG_ENABLED:
             self.watchdog_service = WatchdogService(setting.WATCHDOG_TIMEOUT_MS)
+        wifi_static_ip = None
+        if (
+            setting.WIFI_IP
+            and setting.WIFI_SUBNET
+            and setting.WIFI_GATEWAY
+            and setting.WIFI_DNS
+        ):
+            wifi_static_ip = (
+                setting.WIFI_IP,
+                setting.WIFI_SUBNET,
+                setting.WIFI_GATEWAY,
+                setting.WIFI_DNS,
+            )
         self.wifi_service = WiFiService(
             setting.WIFI_SSID,
             setting.WIFI_PASSWORD,
@@ -31,6 +44,7 @@ class SubscribeService:
             setting.WIFI_RECONNECT_DELAY_SECONDS,
             setting.WIFI_MAX_RECONNECT_DELAY_SECONDS,
             self.watchdog_service,
+            wifi_static_ip,
         )
         self.registry = ServiceRegistry(error_handler=self.error_handler)
         if self.watchdog_service:
