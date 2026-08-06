@@ -124,6 +124,41 @@ def test_connect_feeds_watchdog_on_each_retry(mocker):
     assert watchdog.feed.call_count == 3
 
 
+def test_connect_passes_credentials_when_username_set(mocker):
+    mock_client_cls = mocker.patch("app.services.mqtt.MQTTClient")
+    wifi = make_wifi_service(connected=True)
+
+    connection = MqttConnection(
+        "client", "broker", 1883, wifi, username="alice", password="secret"
+    )
+    connection.connect()
+
+    mock_client_cls.assert_called_once_with(
+        "client", "broker", 1883, keepalive=300, user="alice", password="secret"
+    )
+
+
+def test_connect_omits_credentials_when_username_not_set():
+    wifi = make_wifi_service(connected=True)
+
+    connection = MqttConnection("client", "broker", 1883, wifi)
+
+    assert connection.username is None
+    assert connection.password is None
+
+
+def test_connect_omits_credentials_when_username_empty(mocker):
+    mock_client_cls = mocker.patch("app.services.mqtt.MQTTClient")
+    wifi = make_wifi_service(connected=True)
+
+    connection = MqttConnection(
+        "client", "broker", 1883, wifi, username="", password=""
+    )
+    connection.connect()
+
+    mock_client_cls.assert_called_once_with("client", "broker", 1883, keepalive=300)
+
+
 def test_disconnect_clears_client():
     wifi = make_wifi_service(connected=True)
     connection = MqttConnection("client", "broker", 1883, wifi)

@@ -72,6 +72,8 @@ class PublishService:
             setting.MQTT_MAX_RECONNECT_DELAY_SECONDS,
             setting.MQTT_KEEPALIVE_SECONDS,
             self.watchdog_service,
+            setting.MQTT_USERNAME,
+            setting.MQTT_PASSWORD,
         )
         self.client = None
         self.registry.start_all()

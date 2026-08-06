@@ -14,6 +14,8 @@ class MqttConnection:
         max_reconnect_delay_seconds=30,
         keepalive_seconds=300,
         watchdog_service=None,
+        username=None,
+        password=None,
     ):
         self.client_id = client_id
         self.broker = broker
@@ -23,6 +25,8 @@ class MqttConnection:
         self.max_reconnect_delay_seconds = max_reconnect_delay_seconds
         self.keepalive_seconds = keepalive_seconds
         self.watchdog_service = watchdog_service
+        self.username = username
+        self.password = password
         self.client = None
 
     def connect(self):
@@ -34,11 +38,15 @@ class MqttConnection:
             if self.watchdog_service:
                 self.watchdog_service.feed()
             try:
+                client_kwargs = {"keepalive": self.keepalive_seconds}
+                if self.username:
+                    client_kwargs["user"] = self.username
+                    client_kwargs["password"] = self.password
                 self.client = MQTTClient(
                     self.client_id,
                     self.broker,
                     self.port,
-                    keepalive=self.keepalive_seconds,
+                    **client_kwargs,
                 )
                 self.client.connect()
                 print("Connected to MQTT Broker at", self.broker)
