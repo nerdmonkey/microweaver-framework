@@ -1,6 +1,7 @@
 import time
 
 from app.services.bootloop import BootLoopGuard
+from app.services.error_handler import ErrorHandlerService
 from app.services.health import HealthCheckService
 from app.services.logger import LogService
 from app.services.memory_monitor import MemoryMonitorService
@@ -18,6 +19,7 @@ class PublishService:
     def __init__(self):
         self.topic = setting.MQTT_TOPIC_PUB
         self.log_service = LogService(format=setting.LOG_FORMAT)
+        self.error_handler = ErrorHandlerService(logger=self.log_service)
         self.watchdog_service = None
         if setting.WATCHDOG_ENABLED:
             self.watchdog_service = WatchdogService(setting.WATCHDOG_TIMEOUT_MS)
@@ -29,7 +31,7 @@ class PublishService:
             setting.WIFI_MAX_RECONNECT_DELAY_SECONDS,
             self.watchdog_service,
         )
-        self.registry = ServiceRegistry()
+        self.registry = ServiceRegistry(error_handler=self.error_handler)
         if self.watchdog_service:
             self.registry.register("watchdog", start=self.watchdog_service.start)
         self.bootloop_guard = None
@@ -103,7 +105,9 @@ class PublishService:
                         self.watchdog_service.feed()
                     self.wifi_service.ensure_connected()
                     if self.memory_monitor_service:
-                        self.memory_monitor_service.check()
+                        self.error_handler.guard(
+                            self.memory_monitor_service.check, "memory_monitor"
+                        )
                     if self.health_check_service:
                         self.health_check_service.poll()
                         if self.service_restart_service:
