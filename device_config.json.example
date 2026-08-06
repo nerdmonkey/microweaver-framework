@@ -13,6 +13,7 @@
     "wifi_subnet": "",
     "wifi_gateway": "",
     "wifi_dns": "",
+    "wifi_disable_power_save": false,
     "wifi_connect_timeout_seconds": 20,
     "wifi_reconnect_delay_seconds": 2,
     "wifi_max_reconnect_delay_seconds": 30,

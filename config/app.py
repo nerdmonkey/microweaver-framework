@@ -20,6 +20,7 @@ _SCHEMA = {
     "wifi_subnet": {"type": str},
     "wifi_gateway": {"type": str},
     "wifi_dns": {"type": str},
+    "wifi_disable_power_save": {"type": bool},
     "wifi_connect_timeout_seconds": {"type": "int", "min": 0},
     "wifi_reconnect_delay_seconds": {"type": "int", "min": 0},
     "wifi_max_reconnect_delay_seconds": {"type": "int", "min": 0},
@@ -82,6 +83,7 @@ class Setting:
         self.WIFI_SUBNET = self._value("wifi_subnet", "")
         self.WIFI_GATEWAY = self._value("wifi_gateway", "")
         self.WIFI_DNS = self._value("wifi_dns", "")
+        self.WIFI_DISABLE_POWER_SAVE = self._bool("wifi_disable_power_save", False)
 
         self.WIFI_CONNECT_TIMEOUT_SECONDS = self._int(
             "wifi_connect_timeout_seconds", 20

@@ -45,6 +45,7 @@ class SubscribeService:
             setting.WIFI_MAX_RECONNECT_DELAY_SECONDS,
             self.watchdog_service,
             wifi_static_ip,
+            setting.WIFI_DISABLE_POWER_SAVE,
         )
         self.registry = ServiceRegistry(error_handler=self.error_handler)
         if self.watchdog_service:
