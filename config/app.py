@@ -58,6 +58,9 @@ class Setting:
             "health_check_interval_seconds", 30
         )
 
+        self.SERVICE_RESTART_ENABLED = self._bool("service_restart_enabled", False)
+        self.SERVICE_RESTART_MAX_ATTEMPTS = self._int("service_restart_max_attempts", 3)
+
     def _load(self, path):
         try:
             with open(path, "r") as config_file:
