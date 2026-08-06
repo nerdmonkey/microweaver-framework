@@ -16,3 +16,8 @@ def test_available_reflects_subclass_state():
 def test_deinit_is_a_noop():
     adapter = BaseAdapter()
     assert adapter.deinit() is None
+
+
+def test_setup_is_a_noop():
+    adapter = BaseAdapter()
+    assert adapter.setup() is None

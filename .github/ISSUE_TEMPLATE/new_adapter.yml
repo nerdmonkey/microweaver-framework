@@ -45,6 +45,6 @@ body:
       label: Checklist
       options:
         - label: Subclasses BaseAdapter (app/adapters/base.py)
-        - label: Implements available property and deinit() hook
+        - label: Implements available property and setup()/deinit() lifecycle hooks
         - label: Has unit tests under tests/
         - label: Documented in README / docs/

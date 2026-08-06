@@ -55,7 +55,7 @@ Before you can start using Microweaver, ensure you have the following prerequisi
 - `main.py` — defines `start()`, which wires up and runs the app's services.
 - `config/app.py` — `Setting` class, reads `device_config.json` with sane defaults if the file is missing.
 - `app/services/` — `WiFiService`, `MqttConnection` (shared reconnect/backoff logic), `PublishService`, `SubscribeService`.
-- `app/adapters/{sensors,actuators,indicators}/` — extension points for hardware drivers; each should subclass `BaseAdapter` (`app/adapters/base.py`), which provides an `available` property and a `deinit()` hook.
+- `app/adapters/{sensors,actuators,indicators}/` — extension points for hardware drivers; each should subclass `BaseAdapter` (`app/adapters/base.py`), which defines the frozen adapter contract: an `available` property, and `setup()`/`deinit()` lifecycle hooks.
 
 ### Running tests
 
