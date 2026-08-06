@@ -712,6 +712,114 @@ def test_device_tree_failure(mocker):
     assert result.exit_code == 1
 
 
+def test_device_rm_missing_mpremote(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value=None)
+    result = runner.invoke(tinker.app, ["device", "rm", ":foo.txt"])
+    assert result.exit_code == 1
+    assert "mpremote" in result.stderr
+
+
+def test_device_rm_file(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
+    )
+    result = runner.invoke(
+        tinker.app, ["device", "rm", "--port", "/dev/ttyUSB0", ":foo.txt"]
+    )
+    assert result.exit_code == 0
+    assert mock_run.call_args[0][0] == [
+        "mpremote",
+        "connect",
+        "/dev/ttyUSB0",
+        "fs",
+        "rm",
+        ":foo.txt",
+    ]
+
+
+def test_device_rm_recursive(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["device", "rm", "--port", "/dev/ttyUSB0", "--recursive", ":lib"],
+    )
+    assert result.exit_code == 0
+    assert mock_run.call_args[0][0] == [
+        "mpremote",
+        "connect",
+        "/dev/ttyUSB0",
+        "fs",
+        "--recursive",
+        "rm",
+        ":lib",
+    ]
+
+
+def test_device_rm_dir(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
+    )
+    result = runner.invoke(
+        tinker.app, ["device", "rm", "--port", "/dev/ttyUSB0", "--dir", ":empty"]
+    )
+    assert result.exit_code == 0
+    assert mock_run.call_args[0][0] == [
+        "mpremote",
+        "connect",
+        "/dev/ttyUSB0",
+        "fs",
+        "rmdir",
+        ":empty",
+    ]
+
+
+def test_device_rm_prompts_for_port_and_failure(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=1))
+    result = runner.invoke(tinker.app, ["device", "rm", ":foo.txt"])
+    assert result.exit_code == 1
+
+
+def test_device_mkdir_missing_mpremote(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value=None)
+    result = runner.invoke(tinker.app, ["device", "mkdir", ":lib"])
+    assert result.exit_code == 1
+    assert "mpremote" in result.stderr
+
+
+def test_device_mkdir_success(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
+    )
+    result = runner.invoke(
+        tinker.app, ["device", "mkdir", "--port", "/dev/ttyUSB0", ":lib"]
+    )
+    assert result.exit_code == 0
+    assert mock_run.call_args[0][0] == [
+        "mpremote",
+        "connect",
+        "/dev/ttyUSB0",
+        "fs",
+        "mkdir",
+        ":lib",
+    ]
+
+
+def test_device_mkdir_prompts_for_port_and_failure(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=1))
+    result = runner.invoke(tinker.app, ["device", "mkdir", ":lib"])
+    assert result.exit_code == 1
+
+
 # --------------------------------------------------------------------------
 # port command
 # --------------------------------------------------------------------------
