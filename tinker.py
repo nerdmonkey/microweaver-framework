@@ -405,6 +405,26 @@ def device_reset(
     print(f"Reset {resolved_port}")
 
 
+def _mpremote_field(resolved_port: str, script: str) -> str:
+    """Run `script` on-device via `mpremote exec` and return its last output line.
+
+    Used for opportunistic `device info` rows: any print output before the
+    final line (e.g. a service's own startup logging) is discarded.
+    """
+    try:
+        result = subprocess.run(  # nosec B603 B607
+            ["mpremote", "connect", resolved_port, "exec", script],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip().splitlines()[-1]
+        return "unavailable (device unresponsive)"
+    except subprocess.TimeoutExpired:
+        return "unavailable (timed out, device may be busy)"
+
+
 @device_app.command("info")
 def device_info(
     port: Optional[str] = typer.Option(
@@ -450,25 +470,22 @@ def device_info(
         esp._port.close()
 
     if shutil.which("mpremote") is not None:
-        try:
-            fw_result = subprocess.run(  # nosec B603 B607
-                [
-                    "mpremote",
-                    "connect",
-                    resolved_port,
-                    "exec",
-                    "import os; print(os.uname())",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=10,
+        rows.append(
+            (
+                "MicroPython",
+                _mpremote_field(resolved_port, "import os; print(os.uname())"),
             )
-            if fw_result.returncode == 0:
-                rows.append(("MicroPython", fw_result.stdout.strip()))
-            else:
-                rows.append(("MicroPython", "unavailable (device unresponsive)"))
-        except subprocess.TimeoutExpired:
-            rows.append(("MicroPython", "unavailable (timed out, device may be busy)"))
+        )
+        rows.append(
+            (
+                "Reset Reason",
+                _mpremote_field(
+                    resolved_port,
+                    "from app.services.reset import ResetService; "
+                    "print(ResetService().read())",
+                ),
+            )
+        )
 
     if not rows:
         print("No device details could be read.")

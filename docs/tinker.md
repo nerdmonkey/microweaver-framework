@@ -247,7 +247,7 @@ This bypasses the REPL entirely — unlike `mpremote reset` (which is just `mach
 
 ### `device info`
 
-Show device hardware (chip/flash/MAC, read via `esptool`) and firmware (MicroPython `os.uname()`, read via `mpremote`) details.
+Show device hardware (chip/flash/MAC, read via `esptool`) and firmware (MicroPython `os.uname()` and reset/boot reason, read via `mpremote`) details.
 
 ```shell
 python tinker.py device info [OPTIONS]
@@ -275,9 +275,10 @@ Flash Manufacturer   ef
 Flash Device         4018
 Flash Size           4MB
 MicroPython          (sysname='esp32', nodename='esp32', ...)
+Reset Reason         power_on
 ```
 
-Chip/flash/MAC are read at the ROM bootloader level (same mechanism as `device reset`), so this works even if the firmware itself is unresponsive. The MicroPython row only appears if `mpremote` is installed and the firmware answers within 10 seconds; otherwise it reports `unavailable`.
+Chip/flash/MAC are read at the ROM bootloader level (same mechanism as `device reset`), so this works even if the firmware itself is unresponsive. The MicroPython and Reset Reason rows only appear if `mpremote` is installed and the firmware answers within 10 seconds; otherwise each reports `unavailable (device unresponsive)` or `unavailable (timed out, device may be busy)`. Reset Reason is read on-device via `app.services.reset.ResetService` (`power_on`, `software`, `watchdog`, `deep_sleep`, `sdio`, `intrusion`, `external`, `brownout`, or `unknown`).
 
 ---
 
