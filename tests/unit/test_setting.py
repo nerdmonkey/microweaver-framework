@@ -28,6 +28,9 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "boot_loop_max_attempts": 3,
                 "boot_loop_state_path": "test_boot_state.json",
                 "safe_mode_sleep_seconds": 2,
+                "memory_monitor_enabled": True,
+                "memory_monitor_threshold_bytes": 20000,
+                "memory_monitor_action": "warn",
             }
         )
     )
@@ -54,6 +57,9 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.BOOT_LOOP_MAX_ATTEMPTS == 3
     assert setting.BOOT_LOOP_STATE_PATH == "test_boot_state.json"
     assert setting.SAFE_MODE_SLEEP_SECONDS == 2
+    assert setting.MEMORY_MONITOR_ENABLED is True
+    assert setting.MEMORY_MONITOR_THRESHOLD_BYTES == 20000
+    assert setting.MEMORY_MONITOR_ACTION == "warn"
 
 
 def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
@@ -77,6 +83,9 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.BOOT_LOOP_MAX_ATTEMPTS == 5
     assert setting.BOOT_LOOP_STATE_PATH == "boot_state.json"
     assert setting.SAFE_MODE_SLEEP_SECONDS == 5
+    assert setting.MEMORY_MONITOR_ENABLED is False
+    assert setting.MEMORY_MONITOR_THRESHOLD_BYTES == 10000
+    assert setting.MEMORY_MONITOR_ACTION == "log"
 
 
 def test_get_settings_method():
