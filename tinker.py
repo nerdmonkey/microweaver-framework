@@ -173,6 +173,31 @@ def compile_file(src: Path, dst: Path, mp_version: str, march: str) -> bool:
     return True
 
 
+def _clean_dist() -> bool:
+    """Remove dist/ if it exists. Returns True if anything was removed."""
+    if DIST.exists():
+        shutil.rmtree(DIST)
+        print("Cleaned dist/")
+        return True
+    return False
+
+
+@app.command()
+def clean(
+    backup: bool = typer.Option(
+        False, "--backup", help="Also remove backup/ (default: only dist/)"
+    ),
+) -> None:
+    """Remove build artifacts from dist/ (and optionally backup/)."""
+    cleaned = _clean_dist()
+    if backup and BACKUP.exists():
+        shutil.rmtree(BACKUP)
+        print("Cleaned backup/")
+        cleaned = True
+    if not cleaned:
+        print("Nothing to clean.")
+
+
 @app.command()
 def build(
     micropython: str = typer.Option("1.28", help="Target MicroPython version"),
@@ -184,9 +209,8 @@ def build(
     ),
 ) -> None:
     """Compile firmware .py files to .mpy bytecode in dist/."""
-    if not no_clean and DIST.exists():
-        shutil.rmtree(DIST)
-        print("Cleaned dist/")
+    if not no_clean:
+        _clean_dist()
 
     errors = 0
 
