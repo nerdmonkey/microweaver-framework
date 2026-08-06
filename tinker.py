@@ -46,7 +46,6 @@ VERSION = _read_version()
 
 app = typer.Typer(
     no_args_is_help=True,
-    add_completion=False,
     help="Build, upload, and manage microweaver firmware.",
 )
 config_app = typer.Typer(

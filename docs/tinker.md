@@ -4,6 +4,7 @@
 
 - [Prerequisites](#prerequisites)
 - [Global concepts](#global-concepts)
+  - [Shell completion](#shell-completion)
   - [Config resolution order](#config-resolution-order)
   - [The `.microweaver` config file](#the-microweaver-config-file)
   - [Port auto-detection](#port-auto-detection)
@@ -33,6 +34,16 @@
 `upload`, `download`, `device ls`, and `device tree` check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`.
 
 ## Global concepts
+
+### Shell completion
+
+`tinker.py` is a [Typer](https://typer.tiangolo.com/) CLI, so it ships tab-completion for commands and options (e.g. `--port`, `--baud`, subcommand names) via [`click`](https://click.palletsprojects.com/)/`shellingham`. Install it once per shell:
+
+```shell
+python tinker.py --install-completion
+```
+
+Restart your shell (or source its rc file) afterward. To preview the completion script without installing it, use `--show-completion`.
 
 ### Config resolution order
 
