@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.services.wifi import WiFiService
 
 
@@ -91,6 +93,18 @@ def test_connect_feeds_watchdog_on_each_retry(mocker):
     service.connect()
 
     assert watchdog.feed.call_count == 3
+
+
+def test_connect_propagates_wlan_connect_exception(mocker):
+    mock_wlan_cls = mocker.patch("network.WLAN")
+    mock_wlan = mock_wlan_cls.return_value
+    mock_wlan.isconnected.return_value = False
+    mock_wlan.connect.side_effect = OSError("wifi internal error")
+
+    service = WiFiService("ssid", "password")
+
+    with pytest.raises(OSError, match="wifi internal error"):
+        service.connect()
 
 
 def test_is_connected_delegates_to_wlan(mocker):
