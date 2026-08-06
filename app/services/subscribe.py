@@ -2,6 +2,7 @@ import time
 
 from app.services.bootloop import BootLoopGuard
 from app.services.health import HealthCheckService
+from app.services.logger import LogService
 from app.services.memory_monitor import MemoryMonitorService
 from app.services.mqtt import MqttConnection
 from app.services.service_restart import ServiceRestartService
@@ -15,6 +16,7 @@ setting = (Setting()).get_settings()
 class SubscribeService:
     def __init__(self):
         self.topic = setting.MQTT_TOPIC_SUB
+        self.log_service = LogService(format=setting.LOG_FORMAT)
         self.wifi_service = WiFiService(
             setting.WIFI_SSID,
             setting.WIFI_PASSWORD,
@@ -32,12 +34,15 @@ class SubscribeService:
         self.memory_monitor_service = None
         if setting.MEMORY_MONITOR_ENABLED:
             self.memory_monitor_service = MemoryMonitorService(
-                setting.MEMORY_MONITOR_THRESHOLD_BYTES, setting.MEMORY_MONITOR_ACTION
+                setting.MEMORY_MONITOR_THRESHOLD_BYTES,
+                setting.MEMORY_MONITOR_ACTION,
+                logger=self.log_service,
             )
         self.health_check_service = None
         if setting.HEALTH_CHECK_ENABLED:
             self.health_check_service = HealthCheckService(
-                interval_seconds=setting.HEALTH_CHECK_INTERVAL_SECONDS
+                interval_seconds=setting.HEALTH_CHECK_INTERVAL_SECONDS,
+                logger=self.log_service,
             )
             self.health_check_service.register("wifi", self.wifi_service.is_connected)
             self.health_check_service.register("mqtt", lambda: self.client is not None)

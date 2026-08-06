@@ -1,4 +1,30 @@
+from unittest.mock import MagicMock
+
 from app.services.reset import ResetService
+
+
+def test_read_logs_watchdog_trip(mocker):
+    mock_esp32 = mocker.patch("app.services.reset.esp32")
+    mock_esp32.reset_reason.return_value = mock_esp32.TG0WDT_SYS_RESET
+    logger = MagicMock()
+
+    service = ResetService(logger=logger)
+    service.read()
+
+    logger.log.assert_called_once_with(
+        "watchdog_trip", level="warning", reason="watchdog"
+    )
+
+
+def test_read_logs_non_watchdog_reset(mocker):
+    mock_esp32 = mocker.patch("app.services.reset.esp32")
+    mock_esp32.reset_reason.return_value = mock_esp32.POWERON_RESET
+    logger = MagicMock()
+
+    service = ResetService(logger=logger)
+    service.read()
+
+    logger.log.assert_called_once_with("reset", reason="power_on")
 
 
 def test_read_labels_power_on_reset(mocker):
