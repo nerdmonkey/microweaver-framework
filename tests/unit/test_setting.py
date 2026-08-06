@@ -27,6 +27,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "boot_loop_protection_enabled": True,
                 "boot_loop_max_attempts": 3,
                 "boot_loop_state_path": "test_boot_state.json",
+                "safe_mode_sleep_seconds": 2,
             }
         )
     )
@@ -52,6 +53,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.BOOT_LOOP_PROTECTION_ENABLED is True
     assert setting.BOOT_LOOP_MAX_ATTEMPTS == 3
     assert setting.BOOT_LOOP_STATE_PATH == "test_boot_state.json"
+    assert setting.SAFE_MODE_SLEEP_SECONDS == 2
 
 
 def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
@@ -74,6 +76,7 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.BOOT_LOOP_PROTECTION_ENABLED is False
     assert setting.BOOT_LOOP_MAX_ATTEMPTS == 5
     assert setting.BOOT_LOOP_STATE_PATH == "boot_state.json"
+    assert setting.SAFE_MODE_SLEEP_SECONDS == 5
 
 
 def test_get_settings_method():

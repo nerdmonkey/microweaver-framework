@@ -19,7 +19,7 @@ def test_run_bootstrap_imports_main_and_starts(mocker):
     mock_main.start.assert_called_once_with()
 
 
-def test_run_bootstrap_halts_when_boot_loop_detected(mocker):
+def test_run_bootstrap_enters_safe_mode_when_boot_loop_detected(mocker):
     gc_mock = mocker.patch("_boot.gc")
     mocker.patch("_boot.ResetService")
     guard_cls = mocker.patch("_boot.BootLoopGuard")
@@ -29,5 +29,6 @@ def test_run_bootstrap_halts_when_boot_loop_detected(mocker):
 
     _boot.run_bootstrap()
 
-    assert gc_mock.collect.call_count == 1
+    assert gc_mock.collect.call_count == 2
     mock_main.start.assert_not_called()
+    mock_main.start_safe_mode.assert_called_once_with()
