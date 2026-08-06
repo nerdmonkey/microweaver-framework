@@ -5,6 +5,7 @@ from app.services.health import HealthCheckService
 from app.services.logger import LogService
 from app.services.memory_monitor import MemoryMonitorService
 from app.services.mqtt import MqttConnection
+from app.services.registry import ServiceRegistry
 from app.services.service_restart import ServiceRestartService
 from app.services.watchdog import WatchdogService
 from app.services.wifi import WiFiService
@@ -22,10 +23,11 @@ class SubscribeService:
             setting.WIFI_PASSWORD,
             setting.WIFI_CONNECT_TIMEOUT_SECONDS,
         )
+        self.registry = ServiceRegistry()
         self.watchdog_service = None
         if setting.WATCHDOG_ENABLED:
             self.watchdog_service = WatchdogService(setting.WATCHDOG_TIMEOUT_MS)
-            self.watchdog_service.start()
+            self.registry.register("watchdog", start=self.watchdog_service.start)
         self.bootloop_guard = None
         if setting.BOOT_LOOP_PROTECTION_ENABLED:
             self.bootloop_guard = BootLoopGuard(
@@ -66,6 +68,7 @@ class SubscribeService:
             self.watchdog_service,
         )
         self.client = None
+        self.registry.start_all()
 
     def on_message(self, topic, message):
         print("Received message on topic:", topic.decode(), "-", message.decode())
