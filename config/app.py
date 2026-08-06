@@ -25,6 +25,10 @@ _SCHEMA = {
     "mqtt_ssl": {"type": bool},
     "mqtt_ssl_cert_path": {"type": str},
     "mqtt_ssl_key_path": {"type": str},
+    "mqtt_lwt_topic": {"type": str},
+    "mqtt_lwt_message": {"type": str},
+    "mqtt_lwt_retain": {"type": bool},
+    "mqtt_lwt_qos": {"type": "int", "min": 0, "max": 1},
     "watchdog_enabled": {"type": bool},
     "watchdog_timeout_ms": {"type": "int", "min": 0},
     "boot_loop_protection_enabled": {"type": bool},
@@ -84,6 +88,10 @@ class Setting:
         self.MQTT_SSL = self._bool("mqtt_ssl", False)
         self.MQTT_SSL_CERT_PATH = self._value("mqtt_ssl_cert_path", "")
         self.MQTT_SSL_KEY_PATH = self._value("mqtt_ssl_key_path", "")
+        self.MQTT_LWT_TOPIC = self._value("mqtt_lwt_topic", "")
+        self.MQTT_LWT_MESSAGE = self._value("mqtt_lwt_message", "")
+        self.MQTT_LWT_RETAIN = self._bool("mqtt_lwt_retain", False)
+        self.MQTT_LWT_QOS = self._int("mqtt_lwt_qos", 0)
 
         self.WATCHDOG_ENABLED = self._bool("watchdog_enabled", False)
         self.WATCHDOG_TIMEOUT_MS = self._int("watchdog_timeout_ms", 8000)
