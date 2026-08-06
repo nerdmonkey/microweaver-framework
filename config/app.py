@@ -53,6 +53,11 @@ class Setting:
         )
         self.MEMORY_MONITOR_ACTION = self._value("memory_monitor_action", "log")
 
+        self.HEALTH_CHECK_ENABLED = self._bool("health_check_enabled", False)
+        self.HEALTH_CHECK_INTERVAL_SECONDS = self._int(
+            "health_check_interval_seconds", 30
+        )
+
     def _load(self, path):
         try:
             with open(path, "r") as config_file:

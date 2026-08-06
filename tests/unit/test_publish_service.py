@@ -179,3 +179,43 @@ def test_run_checks_memory_each_publish(mocker):
         service.run(message="hi")
 
     assert memory_monitor.check.call_count == 3
+
+
+def test_health_check_disabled_by_default():
+    service = PublishService()
+
+    assert service.health_check_service is None
+
+
+def test_health_check_created_when_enabled(mocker):
+    mocker.patch("app.services.publish.setting.HEALTH_CHECK_ENABLED", True)
+    mocker.patch("app.services.publish.setting.HEALTH_CHECK_INTERVAL_SECONDS", 15)
+    mock_health_cls = mocker.patch("app.services.publish.HealthCheckService")
+    mock_health = mock_health_cls.return_value
+
+    service = PublishService()
+
+    mock_health_cls.assert_called_once_with(interval_seconds=15)
+    assert service.health_check_service is mock_health
+    assert mock_health.register.call_args_list[0][0][0] == "wifi"
+    assert mock_health.register.call_args_list[1][0][0] == "mqtt"
+
+
+def test_run_polls_health_check_each_publish(mocker):
+    mocker.patch("app.services.publish.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.publish.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mocker.patch(
+        "time.sleep", side_effect=[None, None, ConnectionResetError("dropped")]
+    )
+
+    service = PublishService()
+    health_check = MagicMock()
+    service.health_check_service = health_check
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        service.run(message="hi")
+
+    assert health_check.poll.call_count == 3
