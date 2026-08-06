@@ -54,6 +54,9 @@ class WiFiService:
     def is_connected(self):
         return self.wlan.isconnected()
 
+    def rssi(self):
+        return self.wlan.status("rssi")
+
     def ensure_connected(self):
         if not self.wlan.isconnected():
             self.connect()

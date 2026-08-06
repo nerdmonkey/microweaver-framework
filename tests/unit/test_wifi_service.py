@@ -117,6 +117,17 @@ def test_is_connected_delegates_to_wlan(mocker):
     assert service.is_connected() is True
 
 
+def test_rssi_returns_wlan_status_rssi(mocker):
+    mock_wlan_cls = mocker.patch("network.WLAN")
+    mock_wlan = mock_wlan_cls.return_value
+    mock_wlan.status.return_value = -57
+
+    service = WiFiService("ssid", "password")
+
+    assert service.rssi() == -57
+    mock_wlan.status.assert_called_once_with("rssi")
+
+
 def test_ensure_connected_is_noop_when_already_connected(mocker):
     mock_wlan_cls = mocker.patch("network.WLAN")
     mock_wlan = mock_wlan_cls.return_value
