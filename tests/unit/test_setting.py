@@ -31,6 +31,10 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "memory_monitor_enabled": True,
                 "memory_monitor_threshold_bytes": 20000,
                 "memory_monitor_action": "warn",
+                "health_check_enabled": True,
+                "health_check_interval_seconds": 15,
+                "service_restart_enabled": True,
+                "service_restart_max_attempts": 7,
             }
         )
     )
@@ -60,6 +64,10 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.MEMORY_MONITOR_ENABLED is True
     assert setting.MEMORY_MONITOR_THRESHOLD_BYTES == 20000
     assert setting.MEMORY_MONITOR_ACTION == "warn"
+    assert setting.HEALTH_CHECK_ENABLED is True
+    assert setting.HEALTH_CHECK_INTERVAL_SECONDS == 15
+    assert setting.SERVICE_RESTART_ENABLED is True
+    assert setting.SERVICE_RESTART_MAX_ATTEMPTS == 7
 
 
 def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
@@ -86,6 +94,10 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.MEMORY_MONITOR_ENABLED is False
     assert setting.MEMORY_MONITOR_THRESHOLD_BYTES == 10000
     assert setting.MEMORY_MONITOR_ACTION == "log"
+    assert setting.HEALTH_CHECK_ENABLED is False
+    assert setting.HEALTH_CHECK_INTERVAL_SECONDS == 30
+    assert setting.SERVICE_RESTART_ENABLED is False
+    assert setting.SERVICE_RESTART_MAX_ATTEMPTS == 3
 
 
 def test_get_settings_method():

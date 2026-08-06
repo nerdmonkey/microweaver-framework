@@ -210,3 +210,58 @@ def test_run_polls_health_check_each_poll(mocker):
         service.run()
 
     assert health_check.poll.call_count == 3
+
+
+def test_service_restart_disabled_by_default():
+    service = SubscribeService()
+
+    assert service.service_restart_service is None
+
+
+def test_service_restart_not_created_without_health_check(mocker):
+    mocker.patch("app.services.subscribe.setting.SERVICE_RESTART_ENABLED", True)
+
+    service = SubscribeService()
+
+    assert service.service_restart_service is None
+
+
+def test_service_restart_created_when_enabled(mocker):
+    mocker.patch("app.services.subscribe.setting.HEALTH_CHECK_ENABLED", True)
+    mocker.patch("app.services.subscribe.setting.SERVICE_RESTART_ENABLED", True)
+    mocker.patch("app.services.subscribe.setting.SERVICE_RESTART_MAX_ATTEMPTS", 5)
+    mock_restart_cls = mocker.patch("app.services.subscribe.ServiceRestartService")
+    mock_restart = mock_restart_cls.return_value
+
+    service = SubscribeService()
+
+    mock_restart_cls.assert_called_once_with(max_attempts=5)
+    assert service.service_restart_service is mock_restart
+    assert mock_restart.register.call_args_list[0][0][0] == "wifi"
+    assert mock_restart.register.call_args_list[1][0][0] == "mqtt"
+
+
+def test_run_reconciles_service_restart_each_poll(mocker):
+    mocker.patch("app.services.subscribe.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_client.check_msg.side_effect = [None, None, OSError("dropped")]
+    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mocker.patch("time.sleep")
+
+    service = SubscribeService()
+    health_check = MagicMock()
+    health_check.status = {"wifi": {"healthy": False, "error": "timeout"}}
+    service.health_check_service = health_check
+    service_restart = MagicMock()
+    service.service_restart_service = service_restart
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        service.run()
+
+    assert service_restart.reconcile.call_args_list == [
+        mocker.call(health_check.status),
+        mocker.call(health_check.status),
+        mocker.call(health_check.status),
+    ]
