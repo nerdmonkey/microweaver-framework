@@ -1,0 +1,50 @@
+name: New hardware adapter
+description: Propose or track a new sensor / actuator / indicator adapter
+title: "[Adapter]: "
+labels: ["adapter"]
+body:
+  - type: input
+    id: component
+    attributes:
+      label: Component / part number
+      placeholder: e.g. DHT22, SSD1306, relay module
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - sensor
+        - actuator
+        - indicator
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: interface
+    attributes:
+      label: Interface / protocol
+      placeholder: I2C, SPI, 1-Wire, GPIO, UART...
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Datasheet links, existing MicroPython driver references, quirks to know about.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: Subclasses BaseAdapter (app/adapters/base.py)
+        - label: Implements available property and deinit() hook
+        - label: Has unit tests under tests/
+        - label: Documented in README / docs/

@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in Microweaver isn't working as expected
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug. Include error messages / tracebacks verbatim.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: input
+    id: board
+    attributes:
+      label: Board / microcontroller
+      placeholder: e.g. ESP32-WROOM-32
+    validations:
+      required: true
+
+  - type: input
+    id: micropython-version
+    attributes:
+      label: MicroPython version
+      placeholder: e.g. 1.28
+    validations:
+      required: true
+
+  - type: input
+    id: microweaver-version
+    attributes:
+      label: Microweaver version / commit
+    validations:
+      required: false

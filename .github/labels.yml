@@ -1,0 +1,31 @@
+- name: bug
+  color: "d73a4a"
+  description: Something isn't working
+
+- name: enhancement
+  color: "a2eeef"
+  description: New feature or request
+
+- name: docs
+  color: "0075ca"
+  description: Documentation improvements
+
+- name: adapter
+  color: "5319e7"
+  description: New or updated hardware adapter (sensor/actuator/indicator)
+
+- name: good-first-issue
+  color: "7057ff"
+  description: Good for newcomers
+
+- name: help-wanted
+  color: "008672"
+  description: Extra attention needed / open for contributors
+
+- name: question
+  color: "d876e3"
+  description: Further information is requested
+
+- name: wontfix
+  color: "ffffff"
+  description: This will not be worked on
