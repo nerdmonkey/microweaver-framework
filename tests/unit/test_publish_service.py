@@ -69,6 +69,25 @@ def test_run_feeds_watchdog_each_publish(mocker):
     assert watchdog.feed.call_count == 3
 
 
+def test_run_checks_wifi_drop_each_publish(mocker):
+    mock_wifi_cls = mocker.patch("app.services.publish.WiFiService")
+    mock_wifi = mock_wifi_cls.return_value
+    mock_connection_cls = mocker.patch("app.services.publish.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mocker.patch(
+        "time.sleep", side_effect=[None, None, ConnectionResetError("dropped")]
+    )
+
+    service = PublishService()
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        service.run(message="hi")
+
+    assert mock_wifi.ensure_connected.call_count == 3
+
+
 def test_publish_message_survives_publish_exception():
     service = PublishService()
     service.client = MagicMock()

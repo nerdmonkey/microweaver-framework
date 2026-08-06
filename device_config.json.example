@@ -10,6 +10,8 @@
     "wifi_ssid": "",
     "wifi_password": "",
     "wifi_connect_timeout_seconds": 20,
+    "wifi_reconnect_delay_seconds": 2,
+    "wifi_max_reconnect_delay_seconds": 30,
     "mqtt_reconnect_delay_seconds": 2,
     "mqtt_max_reconnect_delay_seconds": 30,
     "mqtt_keepalive_seconds": 300,

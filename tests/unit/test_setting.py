@@ -21,6 +21,8 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "wifi_ssid": "test_ssid",
                 "wifi_password": "test_password",
                 "wifi_connect_timeout_seconds": 5,
+                "wifi_reconnect_delay_seconds": 3,
+                "wifi_max_reconnect_delay_seconds": 20,
                 "mqtt_reconnect_delay_seconds": 1,
                 "mqtt_max_reconnect_delay_seconds": 10,
                 "mqtt_keepalive_seconds": 60,
@@ -55,6 +57,8 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.WIFI_SSID == "test_ssid"
     assert setting.WIFI_PASSWORD == "test_password"
     assert setting.WIFI_CONNECT_TIMEOUT_SECONDS == 5
+    assert setting.WIFI_RECONNECT_DELAY_SECONDS == 3
+    assert setting.WIFI_MAX_RECONNECT_DELAY_SECONDS == 20
     assert setting.MQTT_RECONNECT_DELAY_SECONDS == 1
     assert setting.MQTT_MAX_RECONNECT_DELAY_SECONDS == 10
     assert setting.MQTT_KEEPALIVE_SECONDS == 60
@@ -86,6 +90,8 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.WIFI_SSID == ""
     assert setting.WIFI_PASSWORD == ""
     assert setting.WIFI_CONNECT_TIMEOUT_SECONDS == 20
+    assert setting.WIFI_RECONNECT_DELAY_SECONDS == 2
+    assert setting.WIFI_MAX_RECONNECT_DELAY_SECONDS == 30
     assert setting.MQTT_RECONNECT_DELAY_SECONDS == 2
     assert setting.MQTT_MAX_RECONNECT_DELAY_SECONDS == 30
     assert setting.MQTT_KEEPALIVE_SECONDS == 300

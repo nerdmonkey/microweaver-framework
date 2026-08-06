@@ -17,6 +17,8 @@ _SCHEMA = {
     "wifi_ssid": {"type": str},
     "wifi_password": {"type": str},
     "wifi_connect_timeout_seconds": {"type": "int", "min": 0},
+    "wifi_reconnect_delay_seconds": {"type": "int", "min": 0},
+    "wifi_max_reconnect_delay_seconds": {"type": "int", "min": 0},
     "mqtt_reconnect_delay_seconds": {"type": "int", "min": 0},
     "mqtt_max_reconnect_delay_seconds": {"type": "int", "min": 0},
     "mqtt_keepalive_seconds": {"type": "int", "min": 0},
@@ -66,6 +68,10 @@ class Setting:
 
         self.WIFI_CONNECT_TIMEOUT_SECONDS = self._int(
             "wifi_connect_timeout_seconds", 20
+        )
+        self.WIFI_RECONNECT_DELAY_SECONDS = self._int("wifi_reconnect_delay_seconds", 2)
+        self.WIFI_MAX_RECONNECT_DELAY_SECONDS = self._int(
+            "wifi_max_reconnect_delay_seconds", 30
         )
         self.MQTT_RECONNECT_DELAY_SECONDS = self._int("mqtt_reconnect_delay_seconds", 2)
         self.MQTT_MAX_RECONNECT_DELAY_SECONDS = self._int(
