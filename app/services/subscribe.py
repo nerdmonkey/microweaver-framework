@@ -1,4 +1,7 @@
+import time
+
 from app.services.mqtt import MqttConnection
+from app.services.watchdog import WatchdogService
 from app.services.wifi import WiFiService
 from config.app import Setting
 
@@ -13,6 +16,10 @@ class SubscribeService:
             setting.WIFI_PASSWORD,
             setting.WIFI_CONNECT_TIMEOUT_SECONDS,
         )
+        self.watchdog_service = None
+        if setting.WATCHDOG_ENABLED:
+            self.watchdog_service = WatchdogService(setting.WATCHDOG_TIMEOUT_MS)
+            self.watchdog_service.start()
         self.connection = MqttConnection(
             setting.MQTT_CLIENT_ID,
             setting.MQTT_BROKER,
@@ -21,6 +28,7 @@ class SubscribeService:
             setting.MQTT_RECONNECT_DELAY_SECONDS,
             setting.MQTT_MAX_RECONNECT_DELAY_SECONDS,
             setting.MQTT_KEEPALIVE_SECONDS,
+            self.watchdog_service,
         )
         self.client = None
 
@@ -42,7 +50,10 @@ class SubscribeService:
             self.connect_to_mqtt()
             try:
                 while True:
-                    self.client.wait_msg()
+                    if self.watchdog_service:
+                        self.watchdog_service.feed()
+                    self.client.check_msg()
+                    time.sleep(1)
             except Exception as e:
                 print("Connection lost:", e)
             finally:

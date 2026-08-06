@@ -22,6 +22,8 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "mqtt_reconnect_delay_seconds": 1,
                 "mqtt_max_reconnect_delay_seconds": 10,
                 "mqtt_keepalive_seconds": 60,
+                "watchdog_enabled": True,
+                "watchdog_timeout_ms": 5000,
             }
         )
     )
@@ -42,6 +44,8 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.MQTT_RECONNECT_DELAY_SECONDS == 1
     assert setting.MQTT_MAX_RECONNECT_DELAY_SECONDS == 10
     assert setting.MQTT_KEEPALIVE_SECONDS == 60
+    assert setting.WATCHDOG_ENABLED is True
+    assert setting.WATCHDOG_TIMEOUT_MS == 5000
 
 
 def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
@@ -59,6 +63,8 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.MQTT_RECONNECT_DELAY_SECONDS == 2
     assert setting.MQTT_MAX_RECONNECT_DELAY_SECONDS == 30
     assert setting.MQTT_KEEPALIVE_SECONDS == 300
+    assert setting.WATCHDOG_ENABLED is False
+    assert setting.WATCHDOG_TIMEOUT_MS == 8000
 
 
 def test_get_settings_method():
