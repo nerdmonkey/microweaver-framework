@@ -17,7 +17,8 @@ setting = (Setting()).get_settings()
 
 class SubscribeService:
     def __init__(self):
-        self.topic = setting.MQTT_TOPIC_SUB
+        self.topics = setting.MQTT_TOPIC_SUB
+        self.message_handlers = {}
         self.log_service = LogService(format=setting.LOG_FORMAT)
         self.error_handler = ErrorHandlerService(logger=self.log_service)
         self.watchdog_service = None
@@ -90,13 +91,18 @@ class SubscribeService:
         self.registry.start_all()
 
     def on_message(self, topic, message):
+        handler = self.message_handlers.get(topic.decode(), self._default_handler)
+        handler(topic, message)
+
+    def _default_handler(self, topic, message):
         print("Received message on topic:", topic.decode(), "-", message.decode())
 
     def connect_to_mqtt(self):
         self.client = self.connection.connect()
         self.client.set_callback(self.on_message)
-        self.client.subscribe(self.topic)
-        print("Subscribed to topic:", self.topic)
+        for topic in self.topics:
+            self.client.subscribe(topic)
+            print("Subscribed to topic:", topic)
 
     def disconnect(self):
         self.connection.disconnect()

@@ -11,7 +11,7 @@ _SCHEMA = {
     "mqtt_client_id": {"type": str},
     "mqtt_port": {"type": "int", "min": 1, "max": 65535},
     "mqtt_topic_pub": {"type": str},
-    "mqtt_topic_sub": {"type": str},
+    "mqtt_topic_sub": {"type": "topics"},
     "mqtt_username": {"type": str},
     "mqtt_password": {"type": str},
     "wifi_ssid": {"type": str},
@@ -67,7 +67,7 @@ class Setting:
         self.MQTT_TOPIC_PUB = self._value(
             "mqtt_topic_pub", "command/control/room/light"
         )
-        self.MQTT_TOPIC_SUB = self._value(
+        self.MQTT_TOPIC_SUB = self._topics(
             "mqtt_topic_sub", "data/sensor/room/temperature"
         )
         self.MQTT_USERNAME = self._value("mqtt_username", "")
@@ -153,6 +153,8 @@ class Setting:
 
         if expected == "int":
             return self._validate_int(key, value, rules)
+        if expected == "topics":
+            return self._validate_topics(key, value)
         if expected is bool:
             if not isinstance(value, bool):
                 return ["{} must be a boolean, got {}".format(key, value)]
@@ -164,6 +166,15 @@ class Setting:
         if choices and value not in choices:
             return ["{} must be one of {}, got {}".format(key, choices, value)]
         return []
+
+    def _validate_topics(self, key, value):
+        if isinstance(value, str):
+            return []
+        if isinstance(value, list):
+            if value and all(isinstance(item, str) for item in value):
+                return []
+            return ["{} list entries must be non-empty strings".format(key)]
+        return ["{} must be a string or list of strings, got {}".format(key, value)]
 
     def _validate_int(self, key, value, rules):
         if not _is_int(value):
@@ -186,6 +197,12 @@ class Setting:
 
     def _int(self, key, default):
         return int(self._value(key, default))
+
+    def _topics(self, key, default):
+        value = self._value(key, default)
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        return [topic.strip() for topic in str(value).split(",") if topic.strip()]
 
     def _bool(self, key, default):
         value = self._config.get(key)

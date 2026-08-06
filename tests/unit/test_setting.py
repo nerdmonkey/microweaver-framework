@@ -60,7 +60,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.MQTT_CLIENT_ID == "test_id"
     assert setting.MQTT_PORT == 1884
     assert setting.MQTT_TOPIC_PUB == "test/pub"
-    assert setting.MQTT_TOPIC_SUB == "test/sub"
+    assert setting.MQTT_TOPIC_SUB == ["test/sub"]
     assert setting.MQTT_USERNAME == "test_user"
     assert setting.MQTT_PASSWORD == "test_pass"
     assert setting.WIFI_SSID == "test_ssid"
@@ -105,6 +105,7 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.MQTT_BROKER == "localhost"
     assert setting.MQTT_CLIENT_ID == "microweaver"
     assert setting.MQTT_PORT == 1883
+    assert setting.MQTT_TOPIC_SUB == ["data/sensor/room/temperature"]
     assert setting.WIFI_SSID == ""
     assert setting.WIFI_PASSWORD == ""
     assert setting.WIFI_CONNECT_TIMEOUT_SECONDS == 20
@@ -201,6 +202,50 @@ def test_setting_raises_on_non_string_field(tmp_path):
     config_path.write_text(json.dumps({"mqtt_broker": 12345}))
 
     with pytest.raises(ConfigError, match="mqtt_broker must be a string"):
+        Setting(config_path=str(config_path))
+
+
+def test_setting_parses_comma_separated_topics(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_topic_sub": "topic/a, topic/b ,topic/c"}))
+
+    setting = Setting(config_path=str(config_path))
+
+    assert setting.MQTT_TOPIC_SUB == ["topic/a", "topic/b", "topic/c"]
+
+
+def test_setting_parses_json_array_topics(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_topic_sub": ["topic/a", "topic/b"]}))
+
+    setting = Setting(config_path=str(config_path))
+
+    assert setting.MQTT_TOPIC_SUB == ["topic/a", "topic/b"]
+
+
+def test_setting_raises_on_empty_topics_list(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_topic_sub": []}))
+
+    with pytest.raises(ConfigError, match="mqtt_topic_sub"):
+        Setting(config_path=str(config_path))
+
+
+def test_setting_raises_on_non_string_topics_list_entry(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_topic_sub": ["topic/a", 5]}))
+
+    with pytest.raises(ConfigError, match="mqtt_topic_sub"):
+        Setting(config_path=str(config_path))
+
+
+def test_setting_raises_on_non_string_non_list_topics(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_topic_sub": 5}))
+
+    with pytest.raises(
+        ConfigError, match="mqtt_topic_sub must be a string or list of strings"
+    ):
         Setting(config_path=str(config_path))
 
 

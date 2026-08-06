@@ -21,7 +21,7 @@ def test_run_reconnects_after_connection_loss(mocker):
         service.run()
 
     mock_client.set_callback.assert_called_once_with(service.on_message)
-    mock_client.subscribe.assert_called_once_with(service.topic)
+    mock_client.subscribe.assert_called_once_with(service.topics[0])
     assert mock_connection.disconnect.call_count == 1
 
 
@@ -46,8 +46,8 @@ def test_run_reconnects_through_repeated_drops(mocker):
 
     assert mock_connection.connect.call_count == 3
     assert mock_connection.disconnect.call_count == 2
-    client_a.subscribe.assert_called_once_with(service.topic)
-    client_b.subscribe.assert_called_once_with(service.topic)
+    client_a.subscribe.assert_called_once_with(service.topics[0])
+    client_b.subscribe.assert_called_once_with(service.topics[0])
 
 
 def test_run_feeds_watchdog_each_poll(mocker):
@@ -67,6 +67,47 @@ def test_run_feeds_watchdog_each_poll(mocker):
         service.run()
 
     assert watchdog.feed.call_count == 3
+
+
+def test_connect_subscribes_to_each_configured_topic(mocker):
+    mocker.patch("app.services.subscribe.WiFiService")
+    mocker.patch(
+        "app.services.subscribe.setting.MQTT_TOPIC_SUB", ["topic/a", "topic/b"]
+    )
+    mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_connection.connect.return_value = mock_client
+
+    service = SubscribeService()
+    service.connect_to_mqtt()
+
+    assert service.topics == ["topic/a", "topic/b"]
+    assert mock_client.subscribe.call_args_list == [
+        mocker.call("topic/a"),
+        mocker.call("topic/b"),
+    ]
+
+
+def test_on_message_routes_to_registered_topic_handler():
+    service = SubscribeService()
+    handler = MagicMock()
+    service.message_handlers["sensors/temp"] = handler
+
+    service.on_message(b"sensors/temp", b"21.5")
+
+    handler.assert_called_once_with(b"sensors/temp", b"21.5")
+
+
+def test_on_message_falls_back_to_default_for_unregistered_topic(capsys):
+    service = SubscribeService()
+    service.message_handlers["sensors/temp"] = MagicMock()
+
+    service.on_message(b"sensors/humidity", b"55")
+
+    out = capsys.readouterr().out
+    assert "sensors/humidity" in out
+    assert "55" in out
 
 
 def test_run_checks_wifi_drop_each_poll(mocker):
