@@ -18,6 +18,8 @@ setting = (Setting()).get_settings()
 class PublishService:
     def __init__(self):
         self.topic = setting.MQTT_TOPIC_PUB
+        self.publish_qos = setting.MQTT_PUBLISH_QOS
+        self.publish_retain = setting.MQTT_PUBLISH_RETAIN
         self.log_service = LogService(format=setting.LOG_FORMAT)
         self.error_handler = ErrorHandlerService(logger=self.log_service)
         self.watchdog_service = None
@@ -96,7 +98,12 @@ class PublishService:
         if self.client:
             try:
                 print("Publishing message to topic:", self.topic)
-                self.client.publish(self.topic, message.encode())
+                self.client.publish(
+                    self.topic,
+                    message.encode(),
+                    qos=self.publish_qos,
+                    retain=self.publish_retain,
+                )
                 print("Message published")
             except Exception as e:
                 print("Failed to publish message:", e)

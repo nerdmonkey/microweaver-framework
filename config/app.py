@@ -29,6 +29,8 @@ _SCHEMA = {
     "mqtt_lwt_message": {"type": str},
     "mqtt_lwt_retain": {"type": bool},
     "mqtt_lwt_qos": {"type": "int", "min": 0, "max": 1},
+    "mqtt_publish_retain": {"type": bool},
+    "mqtt_publish_qos": {"type": "int", "min": 0, "max": 1},
     "watchdog_enabled": {"type": bool},
     "watchdog_timeout_ms": {"type": "int", "min": 0},
     "boot_loop_protection_enabled": {"type": bool},
@@ -92,6 +94,8 @@ class Setting:
         self.MQTT_LWT_MESSAGE = self._value("mqtt_lwt_message", "")
         self.MQTT_LWT_RETAIN = self._bool("mqtt_lwt_retain", False)
         self.MQTT_LWT_QOS = self._int("mqtt_lwt_qos", 0)
+        self.MQTT_PUBLISH_RETAIN = self._bool("mqtt_publish_retain", False)
+        self.MQTT_PUBLISH_QOS = self._int("mqtt_publish_qos", 0)
 
         self.WATCHDOG_ENABLED = self._bool("watchdog_enabled", False)
         self.WATCHDOG_TIMEOUT_MS = self._int("watchdog_timeout_ms", 8000)
