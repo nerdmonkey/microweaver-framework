@@ -23,5 +23,7 @@
     "memory_monitor_threshold_bytes": 10000,
     "memory_monitor_action": "log",
     "health_check_enabled": false,
-    "health_check_interval_seconds": 30
+    "health_check_interval_seconds": 30,
+    "service_restart_enabled": false,
+    "service_restart_max_attempts": 3
 }
