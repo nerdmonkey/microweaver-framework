@@ -36,6 +36,58 @@ def isolate_config(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# --version flag
+# --------------------------------------------------------------------------
+
+
+def test_version_flag_prints_version_and_exits():
+    result = runner.invoke(tinker.app, ["--version"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == f"tinker.py {tinker.VERSION}"
+
+
+def test_read_version_reads_pyproject(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.poetry]\nname = "x"\nversion = "9.9.9"\n'
+    )
+    original = tinker.__file__
+    try:
+        tinker.__file__ = str(tmp_path / "tinker.py")
+        assert tinker._read_version() == "9.9.9"
+    finally:
+        tinker.__file__ = original
+
+
+def test_read_version_missing_pyproject(tmp_path):
+    original = tinker.__file__
+    try:
+        tinker.__file__ = str(tmp_path / "tinker.py")
+        assert tinker._read_version() == "unknown"
+    finally:
+        tinker.__file__ = original
+
+
+def test_read_version_malformed_pyproject(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("not valid toml [[[")
+    original = tinker.__file__
+    try:
+        tinker.__file__ = str(tmp_path / "tinker.py")
+        assert tinker._read_version() == "unknown"
+    finally:
+        tinker.__file__ = original
+
+
+def test_read_version_missing_version_key(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('[tool.poetry]\nname = "x"\n')
+    original = tinker.__file__
+    try:
+        tinker.__file__ = str(tmp_path / "tinker.py")
+        assert tinker._read_version() == "unknown"
+    finally:
+        tinker.__file__ = original
+
+
+# --------------------------------------------------------------------------
 # load_config / save_config
 # --------------------------------------------------------------------------
 

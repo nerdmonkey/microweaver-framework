@@ -6,6 +6,7 @@ import shutil
 import subprocess  # nosec B404
 import sys
 import time
+import tomllib
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +27,23 @@ PACKAGE_DIRS = ["app", "config"]
 ROOT_FILES_COMPILE = ["_boot.py", "main.py"]
 ROOT_FILES_COPY = ["boot.py"]
 
+
+def _read_version() -> str:
+    """Read the project version from pyproject.toml next to this script.
+
+    Not read via importlib.metadata since tinker.py is normally run in
+    place rather than pip-installed as a package.
+    """
+    try:
+        with (Path(__file__).parent / "pyproject.toml").open("rb") as f:
+            data = tomllib.load(f)
+        return data["tool"]["poetry"]["version"]
+    except (OSError, tomllib.TOMLDecodeError, KeyError):
+        return "unknown"
+
+
+VERSION = _read_version()
+
 app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
@@ -37,6 +55,25 @@ config_app = typer.Typer(
 app.add_typer(config_app, name="config")
 device_app = typer.Typer(no_args_is_help=True, help="Interrupt or reset the device.")
 app.add_typer(device_app, name="device")
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        print(f"tinker.py {VERSION}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: Optional[bool] = typer.Option(
+        None,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the tinker.py version and exit.",
+    ),
+) -> None:
+    pass
 
 
 def load_config() -> dict:
