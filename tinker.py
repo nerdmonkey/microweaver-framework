@@ -583,6 +583,76 @@ def device_tree(
         raise typer.Exit(code=result.returncode)
 
 
+@device_app.command("rm")
+def device_rm(
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Serial port of device"
+    ),
+    path: str = typer.Argument(..., help="Device path to remove"),
+    recursive: bool = typer.Option(
+        False,
+        "--recursive",
+        "-r",
+        help="Recursively remove a non-empty directory (fs rm --recursive)",
+    ),
+    dir: bool = typer.Option(
+        False, "--dir", "-d", help="Remove an empty directory (fs rmdir)"
+    ),
+) -> None:
+    """Remove a file or directory on the device."""
+    if shutil.which("mpremote") is None:
+        print(
+            "ERROR: 'mpremote' not found on PATH. Install it with "
+            "'pip install mpremote'.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    config = load_config()
+    resolved_port = port or config.get("port")
+    if resolved_port is None:
+        resolved_port = prompt_for_port()
+
+    cmd = ["mpremote", "connect", resolved_port, "fs"]
+    if recursive:
+        cmd.append("--recursive")
+        cmd += ["rm", path]
+    elif dir:
+        cmd += ["rmdir", path]
+    else:
+        cmd += ["rm", path]
+    result = subprocess.run(cmd)  # nosec B603
+    if result.returncode != 0:
+        raise typer.Exit(code=result.returncode)
+
+
+@device_app.command("mkdir")
+def device_mkdir(
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Serial port of device"
+    ),
+    path: str = typer.Argument(..., help="Device path to create"),
+) -> None:
+    """Create a directory on the device."""
+    if shutil.which("mpremote") is None:
+        print(
+            "ERROR: 'mpremote' not found on PATH. Install it with "
+            "'pip install mpremote'.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    config = load_config()
+    resolved_port = port or config.get("port")
+    if resolved_port is None:
+        resolved_port = prompt_for_port()
+
+    cmd = ["mpremote", "connect", resolved_port, "fs", "mkdir", path]
+    result = subprocess.run(cmd)  # nosec B603
+    if result.returncode != 0:
+        raise typer.Exit(code=result.returncode)
+
+
 @app.command(name="port")
 def list_serial_ports() -> None:
     """List available serial ports."""
