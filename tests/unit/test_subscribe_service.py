@@ -162,7 +162,7 @@ def test_wifi_service_built_without_static_ip_by_default(mocker):
 
     SubscribeService()
 
-    assert mock_wifi_cls.call_args.args[-1] is None
+    assert mock_wifi_cls.call_args.args[-2] is None
 
 
 def test_wifi_service_built_with_static_ip_when_fully_configured(mocker):
@@ -174,7 +174,7 @@ def test_wifi_service_built_with_static_ip_when_fully_configured(mocker):
 
     SubscribeService()
 
-    assert mock_wifi_cls.call_args.args[-1] == (
+    assert mock_wifi_cls.call_args.args[-2] == (
         "192.168.1.50",
         "255.255.255.0",
         "192.168.1.1",
@@ -189,7 +189,24 @@ def test_wifi_service_skips_static_ip_when_partially_configured(mocker):
 
     SubscribeService()
 
-    assert mock_wifi_cls.call_args.args[-1] is None
+    assert mock_wifi_cls.call_args.args[-2] is None
+
+
+def test_wifi_service_built_with_power_save_disabled_by_default(mocker):
+    mock_wifi_cls = mocker.patch("app.services.subscribe.WiFiService")
+
+    SubscribeService()
+
+    assert mock_wifi_cls.call_args.args[-1] is False
+
+
+def test_wifi_service_built_with_power_save_disabled_when_configured(mocker):
+    mocker.patch("app.services.subscribe.setting.WIFI_DISABLE_POWER_SAVE", True)
+    mock_wifi_cls = mocker.patch("app.services.subscribe.WiFiService")
+
+    SubscribeService()
+
+    assert mock_wifi_cls.call_args.args[-1] is True
 
 
 def test_bootloop_guard_disabled_by_default():
