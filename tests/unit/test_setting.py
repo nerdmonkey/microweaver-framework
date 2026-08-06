@@ -1,6 +1,8 @@
 import json
 
-from config.app import Setting
+import pytest
+
+from config.app import ConfigError, Setting
 
 
 def test_setting_reads_values_from_device_config(tmp_path):
@@ -109,3 +111,73 @@ def test_get_settings_method():
     assert (
         retrieved_settings == setting
     ), "get_settings should return the Setting instance"
+
+
+def test_setting_falls_back_to_defaults_when_json_is_unparseable(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text("{not valid json")
+
+    setting = Setting(config_path=str(config_path))
+
+    assert setting.APP_ENVIRONMENT == "local"
+    assert setting.MQTT_PORT == 1883
+
+
+def test_setting_raises_on_wrong_type_field(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_port": "not_a_number"}))
+
+    with pytest.raises(ConfigError, match="mqtt_port must be an integer"):
+        Setting(config_path=str(config_path))
+
+
+def test_setting_raises_on_int_field_above_max(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_port": 70000}))
+
+    with pytest.raises(ConfigError, match="mqtt_port must be <= 65535"):
+        Setting(config_path=str(config_path))
+
+
+def test_setting_raises_on_int_field_below_min(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"safe_mode_sleep_seconds": -1}))
+
+    with pytest.raises(ConfigError, match="safe_mode_sleep_seconds must be >= 0"):
+        Setting(config_path=str(config_path))
+
+
+def test_setting_raises_on_non_boolean_field(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"watchdog_enabled": "yes"}))
+
+    with pytest.raises(ConfigError, match="watchdog_enabled must be a boolean"):
+        Setting(config_path=str(config_path))
+
+
+def test_setting_raises_on_invalid_choice_field(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"log_format": "xml"}))
+
+    with pytest.raises(ConfigError, match="log_format must be one of"):
+        Setting(config_path=str(config_path))
+
+
+def test_setting_raises_on_non_string_field(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_broker": 12345}))
+
+    with pytest.raises(ConfigError, match="mqtt_broker must be a string"):
+        Setting(config_path=str(config_path))
+
+
+def test_setting_collects_multiple_validation_errors(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_port": "bad", "watchdog_enabled": "bad"}))
+
+    with pytest.raises(ConfigError) as exc_info:
+        Setting(config_path=str(config_path))
+
+    message = str(exc_info.value)
+    assert "mqtt_port" in message
+    assert "watchdog_enabled" in message
