@@ -133,3 +133,41 @@ def test_run_confirms_bootloop_guard_after_connect(mocker):
         service.run()
 
     guard.confirm.assert_called_once_with()
+
+
+def test_memory_monitor_disabled_by_default():
+    service = SubscribeService()
+
+    assert service.memory_monitor_service is None
+
+
+def test_memory_monitor_created_when_enabled(mocker):
+    mocker.patch("app.services.subscribe.setting.MEMORY_MONITOR_ENABLED", True)
+    mocker.patch("app.services.subscribe.setting.MEMORY_MONITOR_THRESHOLD_BYTES", 5000)
+    mocker.patch("app.services.subscribe.setting.MEMORY_MONITOR_ACTION", "warn")
+    mock_monitor_cls = mocker.patch("app.services.subscribe.MemoryMonitorService")
+    mock_monitor = mock_monitor_cls.return_value
+
+    service = SubscribeService()
+
+    mock_monitor_cls.assert_called_once_with(5000, "warn")
+    assert service.memory_monitor_service is mock_monitor
+
+
+def test_run_checks_memory_each_poll(mocker):
+    mocker.patch("app.services.subscribe.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_client.check_msg.side_effect = [None, None, OSError("dropped")]
+    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mocker.patch("time.sleep")
+
+    service = SubscribeService()
+    memory_monitor = MagicMock()
+    service.memory_monitor_service = memory_monitor
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        service.run()
+
+    assert memory_monitor.check.call_count == 3

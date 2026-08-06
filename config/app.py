@@ -47,6 +47,12 @@ class Setting:
 
         self.SAFE_MODE_SLEEP_SECONDS = self._int("safe_mode_sleep_seconds", 5)
 
+        self.MEMORY_MONITOR_ENABLED = self._bool("memory_monitor_enabled", False)
+        self.MEMORY_MONITOR_THRESHOLD_BYTES = self._int(
+            "memory_monitor_threshold_bytes", 10000
+        )
+        self.MEMORY_MONITOR_ACTION = self._value("memory_monitor_action", "log")
+
     def _load(self, path):
         try:
             with open(path, "r") as config_file:
