@@ -18,15 +18,19 @@ class SubscribeService:
     def __init__(self):
         self.topic = setting.MQTT_TOPIC_SUB
         self.log_service = LogService(format=setting.LOG_FORMAT)
+        self.watchdog_service = None
+        if setting.WATCHDOG_ENABLED:
+            self.watchdog_service = WatchdogService(setting.WATCHDOG_TIMEOUT_MS)
         self.wifi_service = WiFiService(
             setting.WIFI_SSID,
             setting.WIFI_PASSWORD,
             setting.WIFI_CONNECT_TIMEOUT_SECONDS,
+            setting.WIFI_RECONNECT_DELAY_SECONDS,
+            setting.WIFI_MAX_RECONNECT_DELAY_SECONDS,
+            self.watchdog_service,
         )
         self.registry = ServiceRegistry()
-        self.watchdog_service = None
-        if setting.WATCHDOG_ENABLED:
-            self.watchdog_service = WatchdogService(setting.WATCHDOG_TIMEOUT_MS)
+        if self.watchdog_service:
             self.registry.register("watchdog", start=self.watchdog_service.start)
         self.bootloop_guard = None
         if setting.BOOT_LOOP_PROTECTION_ENABLED:
@@ -92,6 +96,7 @@ class SubscribeService:
                 while True:
                     if self.watchdog_service:
                         self.watchdog_service.feed()
+                    self.wifi_service.ensure_connected()
                     if self.memory_monitor_service:
                         self.memory_monitor_service.check()
                     if self.health_check_service:

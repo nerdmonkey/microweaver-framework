@@ -68,6 +68,24 @@ def test_run_feeds_watchdog_each_poll(mocker):
     assert watchdog.feed.call_count == 3
 
 
+def test_run_checks_wifi_drop_each_poll(mocker):
+    mock_wifi_cls = mocker.patch("app.services.subscribe.WiFiService")
+    mock_wifi = mock_wifi_cls.return_value
+    mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_client.check_msg.side_effect = [None, None, OSError("dropped")]
+    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mocker.patch("time.sleep")
+
+    service = SubscribeService()
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        service.run()
+
+    assert mock_wifi.ensure_connected.call_count == 3
+
+
 def test_on_message_logs_received_payload(capsys):
     service = SubscribeService()
 
