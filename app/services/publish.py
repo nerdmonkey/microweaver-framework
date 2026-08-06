@@ -1,6 +1,7 @@
 import time
 
 from app.services.bootloop import BootLoopGuard
+from app.services.memory_monitor import MemoryMonitorService
 from app.services.mqtt import MqttConnection
 from app.services.watchdog import WatchdogService
 from app.services.wifi import WiFiService
@@ -25,6 +26,11 @@ class PublishService:
         if setting.BOOT_LOOP_PROTECTION_ENABLED:
             self.bootloop_guard = BootLoopGuard(
                 setting.BOOT_LOOP_STATE_PATH, setting.BOOT_LOOP_MAX_ATTEMPTS
+            )
+        self.memory_monitor_service = None
+        if setting.MEMORY_MONITOR_ENABLED:
+            self.memory_monitor_service = MemoryMonitorService(
+                setting.MEMORY_MONITOR_THRESHOLD_BYTES, setting.MEMORY_MONITOR_ACTION
             )
         self.connection = MqttConnection(
             setting.MQTT_CLIENT_ID,
@@ -65,6 +71,8 @@ class PublishService:
                 while True:
                     if self.watchdog_service:
                         self.watchdog_service.feed()
+                    if self.memory_monitor_service:
+                        self.memory_monitor_service.check()
                     self.publish_message(message)
                     time.sleep(1)
             except Exception as e:

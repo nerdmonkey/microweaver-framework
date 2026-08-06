@@ -18,5 +18,8 @@
     "boot_loop_protection_enabled": false,
     "boot_loop_max_attempts": 5,
     "boot_loop_state_path": "boot_state.json",
-    "safe_mode_sleep_seconds": 5
+    "safe_mode_sleep_seconds": 5,
+    "memory_monitor_enabled": false,
+    "memory_monitor_threshold_bytes": 10000,
+    "memory_monitor_action": "log"
 }
