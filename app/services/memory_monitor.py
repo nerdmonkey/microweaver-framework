@@ -2,11 +2,14 @@ import gc
 
 from machine import reset
 
+from app.services.logger import LogService
+
 
 class MemoryMonitorService:
-    def __init__(self, threshold_bytes=10000, action="log"):
+    def __init__(self, threshold_bytes=10000, action="log", logger=None):
         self.threshold_bytes = threshold_bytes
         self.action = action
+        self.logger = logger or LogService()
 
     def free_bytes(self):
         return gc.mem_free()
@@ -16,28 +19,16 @@ class MemoryMonitorService:
         if free >= self.threshold_bytes:
             return False
 
+        level = "warning" if self.action == "warn" else "info"
+        self.logger.log(
+            "memory_warning",
+            level=level,
+            free_bytes=free,
+            threshold_bytes=self.threshold_bytes,
+            action=self.action,
+        )
+
         if self.action == "restart":
-            print(
-                "MEMORY: free heap",
-                free,
-                "bytes below threshold",
-                self.threshold_bytes,
-                "- restarting",
-            )
             reset()
-        elif self.action == "warn":
-            print(
-                "MEMORY WARNING: free heap",
-                free,
-                "bytes below threshold",
-                self.threshold_bytes,
-            )
-        else:
-            print(
-                "MEMORY: free heap",
-                free,
-                "bytes below threshold",
-                self.threshold_bytes,
-            )
 
         return True

@@ -1,5 +1,7 @@
 import esp32
 
+from app.services.logger import LogService
+
 REASON_LABELS = {
     "POWERON_RESET": "power_on",
     "SW_RESET": "software",
@@ -20,13 +22,17 @@ REASON_LABELS = {
 
 
 class ResetService:
-    def __init__(self):
+    def __init__(self, logger=None):
         self.reason = None
+        self.logger = logger or LogService()
 
     def read(self):
         cause = esp32.reset_reason()
         self.reason = self._label(cause)
-        print("Reset reason:", self.reason)
+        if self.reason == "watchdog":
+            self.logger.log("watchdog_trip", level="warning", reason=self.reason)
+        else:
+            self.logger.log("reset", reason=self.reason)
         return self.reason
 
     def _label(self, cause):

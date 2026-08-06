@@ -1,12 +1,15 @@
 import time
 
+from app.services.logger import LogService
+
 
 class HealthCheckService:
-    def __init__(self, checks=None, interval_seconds=30):
+    def __init__(self, checks=None, interval_seconds=30, logger=None):
         self.checks = dict(checks) if checks else {}
         self.interval_seconds = interval_seconds
         self.status = {}
         self._last_polled = None
+        self.logger = logger or LogService()
 
     def register(self, name, check):
         self.checks[name] = check
@@ -21,17 +24,31 @@ class HealthCheckService:
 
         for name, check in self.checks.items():
             try:
+                healthy = bool(check())
                 self.status[name] = {
-                    "healthy": bool(check()),
+                    "healthy": healthy,
                     "error": None,
                     "checked_at": now,
                 }
+                if not healthy:
+                    self.logger.log(
+                        "health_check_failed",
+                        level="warning",
+                        service=name,
+                        error=None,
+                    )
             except Exception as e:
                 self.status[name] = {
                     "healthy": False,
                     "error": str(e),
                     "checked_at": now,
                 }
+                self.logger.log(
+                    "health_check_failed",
+                    level="warning",
+                    service=name,
+                    error=str(e),
+                )
 
         self._last_polled = now
         return self.status
