@@ -1,5 +1,6 @@
 import time
 
+from app.services.bootloop import BootLoopGuard
 from app.services.mqtt import MqttConnection
 from app.services.watchdog import WatchdogService
 from app.services.wifi import WiFiService
@@ -20,6 +21,11 @@ class SubscribeService:
         if setting.WATCHDOG_ENABLED:
             self.watchdog_service = WatchdogService(setting.WATCHDOG_TIMEOUT_MS)
             self.watchdog_service.start()
+        self.bootloop_guard = None
+        if setting.BOOT_LOOP_PROTECTION_ENABLED:
+            self.bootloop_guard = BootLoopGuard(
+                setting.BOOT_LOOP_STATE_PATH, setting.BOOT_LOOP_MAX_ATTEMPTS
+            )
         self.connection = MqttConnection(
             setting.MQTT_CLIENT_ID,
             setting.MQTT_BROKER,
@@ -48,6 +54,8 @@ class SubscribeService:
     def run(self):
         while True:
             self.connect_to_mqtt()
+            if self.bootloop_guard:
+                self.bootloop_guard.confirm()
             try:
                 while True:
                     if self.watchdog_service:
