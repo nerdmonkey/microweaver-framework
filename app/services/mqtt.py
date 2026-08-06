@@ -16,6 +16,8 @@ class MqttConnection:
         watchdog_service=None,
         username=None,
         password=None,
+        ssl=False,
+        ssl_params=None,
     ):
         self.client_id = client_id
         self.broker = broker
@@ -27,6 +29,8 @@ class MqttConnection:
         self.watchdog_service = watchdog_service
         self.username = username
         self.password = password
+        self.ssl = ssl
+        self.ssl_params = ssl_params
         self.client = None
 
     def connect(self):
@@ -42,6 +46,10 @@ class MqttConnection:
                 if self.username:
                     client_kwargs["user"] = self.username
                     client_kwargs["password"] = self.password
+                if self.ssl:
+                    client_kwargs["ssl"] = True
+                    if self.ssl_params:
+                        client_kwargs["ssl_params"] = self.ssl_params
                 self.client = MQTTClient(
                     self.client_id,
                     self.broker,

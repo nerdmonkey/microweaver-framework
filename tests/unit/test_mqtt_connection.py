@@ -159,6 +159,45 @@ def test_connect_omits_credentials_when_username_empty(mocker):
     mock_client_cls.assert_called_once_with("client", "broker", 1883, keepalive=300)
 
 
+def test_connect_passes_ssl_flag_when_enabled(mocker):
+    mock_client_cls = mocker.patch("app.services.mqtt.MQTTClient")
+    wifi = make_wifi_service(connected=True)
+
+    connection = MqttConnection("client", "broker", 1883, wifi, ssl=True)
+    connection.connect()
+
+    mock_client_cls.assert_called_once_with(
+        "client", "broker", 1883, keepalive=300, ssl=True
+    )
+
+
+def test_connect_passes_ssl_params_when_provided(mocker):
+    mock_client_cls = mocker.patch("app.services.mqtt.MQTTClient")
+    wifi = make_wifi_service(connected=True)
+    ssl_params = {"cert": "/certs/client.crt", "key": "/certs/client.key"}
+
+    connection = MqttConnection(
+        "client", "broker", 1883, wifi, ssl=True, ssl_params=ssl_params
+    )
+    connection.connect()
+
+    mock_client_cls.assert_called_once_with(
+        "client", "broker", 1883, keepalive=300, ssl=True, ssl_params=ssl_params
+    )
+
+
+def test_connect_omits_ssl_when_disabled(mocker):
+    mock_client_cls = mocker.patch("app.services.mqtt.MQTTClient")
+    wifi = make_wifi_service(connected=True)
+
+    connection = MqttConnection(
+        "client", "broker", 1883, wifi, ssl_params={"cert": "/certs/client.crt"}
+    )
+    connection.connect()
+
+    mock_client_cls.assert_called_once_with("client", "broker", 1883, keepalive=300)
+
+
 def test_disconnect_clears_client():
     wifi = make_wifi_service(connected=True)
     connection = MqttConnection("client", "broker", 1883, wifi)
