@@ -549,6 +549,73 @@ def test_device_info_mpremote_timeout(mocker):
     assert "timed out" in result.stdout
 
 
+def test_device_info_shows_reset_reason(mocker):
+    esp = _fake_esp()
+    mocker.patch.object(tinker, "connect_esp", return_value=esp)
+    mocker.patch.object(tinker, "attach_flash")
+    mocker.patch.object(tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB"))
+    mocker.patch.object(tinker, "reset_chip")
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        side_effect=[
+            MagicMock(returncode=0, stdout="(sysname='esp32')"),
+            MagicMock(returncode=0, stdout="Reset reason: power_on\npower_on"),
+        ],
+    )
+    result = runner.invoke(tinker.app, ["device", "info", "--port", "/dev/ttyUSB0"])
+    assert result.exit_code == 0
+    assert "Reset Reason" in result.stdout
+    assert "power_on" in result.stdout
+    reset_cmd = mock_run.call_args_list[1][0][0]
+    assert reset_cmd[-1] == (
+        "from app.services.reset import ResetService; print(ResetService().read())"
+    )
+
+
+def test_device_info_reset_reason_unresponsive(mocker):
+    esp = _fake_esp()
+    mocker.patch.object(tinker, "connect_esp", return_value=esp)
+    mocker.patch.object(tinker, "attach_flash")
+    mocker.patch.object(tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB"))
+    mocker.patch.object(tinker, "reset_chip")
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        side_effect=[
+            MagicMock(returncode=0, stdout="(sysname='esp32')"),
+            MagicMock(returncode=1, stdout=""),
+        ],
+    )
+    result = runner.invoke(tinker.app, ["device", "info", "--port", "/dev/ttyUSB0"])
+    assert result.exit_code == 0
+    assert "Reset Reason" in result.stdout
+    assert "unavailable (device unresponsive)" in result.stdout
+
+
+def test_device_info_reset_reason_timeout(mocker):
+    esp = _fake_esp()
+    mocker.patch.object(tinker, "connect_esp", return_value=esp)
+    mocker.patch.object(tinker, "attach_flash")
+    mocker.patch.object(tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB"))
+    mocker.patch.object(tinker, "reset_chip")
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        side_effect=[
+            MagicMock(returncode=0, stdout="(sysname='esp32')"),
+            subprocess.TimeoutExpired(cmd="mpremote", timeout=10),
+        ],
+    )
+    result = runner.invoke(tinker.app, ["device", "info", "--port", "/dev/ttyUSB0"])
+    assert result.exit_code == 0
+    assert "Reset Reason" in result.stdout
+    assert "timed out" in result.stdout
+
+
 def test_device_info_read_failure(mocker):
     esp = _fake_esp()
     mocker.patch.object(tinker, "connect_esp", return_value=esp)
