@@ -12,13 +12,21 @@ Microweaver is a lightweight MicroPython framework designed to simplify the deve
 - Designed to work with MicroPython and ESP32 out of the box.
 - Extensible and customizable for different microcontrollers.
 
+## Supported Hardware
+
+The baseline target board is the **classic ESP32 (WROOM/WROVER)**, running a **Bluetooth-stripped MicroPython firmware build**, with **4MB flash**.
+
+- Stripping Bluetooth from the firmware frees ~400-700KB of flash that would otherwise go unused, since Microweaver's WiFi/MQTT-focused feature set doesn't need it.
+- That freed flash and RAM headroom is the memory budget other milestones (MQTT TLS heap use, provisioning AP+web server, future OTA) are planned against — don't assume a stock (BT-enabled) firmware build on other ESP32 variants leaves the same margin.
+- Other ESP32 variants and MicroPython ports may work, but are not yet validated against this budget.
+
 ## Getting Started
 
 ### Prerequisites
 
 Before you can start using Microweaver, ensure you have the following prerequisites:
 
-- An ESP32 or a supported microcontroller.
+- A classic ESP32 (WROOM/WROVER) with 4MB flash, running a Bluetooth-stripped MicroPython firmware build (see [Supported Hardware](#supported-hardware)).
 - MicroPython installed on your device.
 - A development environment set up for MicroPython programming.
 
