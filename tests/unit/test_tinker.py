@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 from unittest.mock import MagicMock
 
@@ -240,6 +241,63 @@ def test_build_no_clean_skips_rmtree(fake_project, mocker):
     result = runner.invoke(tinker.app, ["build", "--no-clean"])
     assert result.exit_code == 0
     assert marker.exists()
+
+
+# --------------------------------------------------------------------------
+# clean command
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_artifacts(tmp_path, mocker):
+    """dist/ and backup/ dirs redirected under tmp_path, both pre-populated."""
+    dist = tmp_path / "project_dist"
+    backup = tmp_path / "project_backup"
+    dist.mkdir()
+    (dist / "keep.mpy").write_text("compiled")
+    backup.mkdir()
+    (backup / "device.py").write_text("saved")
+    mocker.patch.object(tinker, "DIST", dist)
+    mocker.patch.object(tinker, "BACKUP", backup)
+    return dist, backup
+
+
+def test_clean_removes_dist_only_by_default(fake_artifacts):
+    dist, backup = fake_artifacts
+    result = runner.invoke(tinker.app, ["clean"])
+    assert result.exit_code == 0
+    assert not dist.exists()
+    assert backup.exists()
+    assert "Cleaned dist/" in result.stdout
+    assert "backup/" not in result.stdout
+
+
+def test_clean_removes_backup_with_flag(fake_artifacts):
+    dist, backup = fake_artifacts
+    result = runner.invoke(tinker.app, ["clean", "--backup"])
+    assert result.exit_code == 0
+    assert not dist.exists()
+    assert not backup.exists()
+    assert "Cleaned dist/" in result.stdout
+    assert "Cleaned backup/" in result.stdout
+
+
+def test_clean_nothing_to_clean(tmp_path, mocker):
+    mocker.patch.object(tinker, "DIST", tmp_path / "no_dist")
+    mocker.patch.object(tinker, "BACKUP", tmp_path / "no_backup")
+    result = runner.invoke(tinker.app, ["clean"])
+    assert result.exit_code == 0
+    assert "Nothing to clean." in result.stdout
+
+
+def test_clean_backup_flag_but_only_dist_exists(fake_artifacts):
+    dist, backup = fake_artifacts
+    shutil.rmtree(backup)
+    result = runner.invoke(tinker.app, ["clean", "--backup"])
+    assert result.exit_code == 0
+    assert not dist.exists()
+    assert "Cleaned dist/" in result.stdout
+    assert "Cleaned backup/" not in result.stdout
 
 
 # --------------------------------------------------------------------------
