@@ -652,6 +652,36 @@ def test_device_ls_prompts_for_port_and_failure(mocker):
     assert result.exit_code == 1
 
 
+def test_device_repl_missing_mpremote(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value=None)
+    result = runner.invoke(tinker.app, ["device", "repl"])
+    assert result.exit_code == 1
+    assert "mpremote" in result.stderr
+
+
+def test_device_repl_success(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
+    )
+    result = runner.invoke(tinker.app, ["device", "repl", "--port", "/dev/ttyUSB0"])
+    assert result.exit_code == 0
+    assert mock_run.call_args[0][0] == [
+        "mpremote",
+        "connect",
+        "/dev/ttyUSB0",
+        "repl",
+    ]
+
+
+def test_device_repl_prompts_for_port_and_failure(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=1))
+    result = runner.invoke(tinker.app, ["device", "repl"])
+    assert result.exit_code == 1
+
+
 def test_device_tree_missing_mpremote(mocker):
     mocker.patch.object(tinker.shutil, "which", return_value=None)
     result = runner.invoke(tinker.app, ["device", "tree"])

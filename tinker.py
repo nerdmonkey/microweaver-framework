@@ -521,6 +521,32 @@ def device_ls(
         raise typer.Exit(code=result.returncode)
 
 
+@device_app.command("repl")
+def device_repl(
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Serial port of device"
+    ),
+) -> None:
+    """Open an interactive REPL session on the device."""
+    if shutil.which("mpremote") is None:
+        print(
+            "ERROR: 'mpremote' not found on PATH. Install it with "
+            "'pip install mpremote'.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    config = load_config()
+    resolved_port = port or config.get("port")
+    if resolved_port is None:
+        resolved_port = prompt_for_port()
+
+    cmd = ["mpremote", "connect", resolved_port, "repl"]
+    result = subprocess.run(cmd)  # nosec B603
+    if result.returncode != 0:
+        raise typer.Exit(code=result.returncode)
+
+
 @device_app.command("tree")
 def device_tree(
     port: Optional[str] = typer.Option(
