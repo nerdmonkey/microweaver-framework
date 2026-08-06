@@ -1,6 +1,7 @@
 import gc
 
 from app.services.bootloop import BootLoopGuard
+from app.services.logger import LogService
 from app.services.reset import ResetService
 from config.app import Setting
 
@@ -9,7 +10,7 @@ setting = (Setting()).get_settings()
 
 def run_bootstrap():
     gc.collect()
-    ResetService().read()
+    ResetService(logger=LogService(format=setting.LOG_FORMAT)).read()
 
     guard = BootLoopGuard(
         setting.BOOT_LOOP_STATE_PATH,

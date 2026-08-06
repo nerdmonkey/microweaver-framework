@@ -35,6 +35,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "health_check_interval_seconds": 15,
                 "service_restart_enabled": True,
                 "service_restart_max_attempts": 7,
+                "log_format": "kv",
             }
         )
     )
@@ -68,6 +69,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.HEALTH_CHECK_INTERVAL_SECONDS == 15
     assert setting.SERVICE_RESTART_ENABLED is True
     assert setting.SERVICE_RESTART_MAX_ATTEMPTS == 7
+    assert setting.LOG_FORMAT == "kv"
 
 
 def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
@@ -98,6 +100,7 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.HEALTH_CHECK_INTERVAL_SECONDS == 30
     assert setting.SERVICE_RESTART_ENABLED is False
     assert setting.SERVICE_RESTART_MAX_ATTEMPTS == 3
+    assert setting.LOG_FORMAT == "json"
 
 
 def test_get_settings_method():
