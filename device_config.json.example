@@ -12,5 +12,7 @@
     "wifi_connect_timeout_seconds": 20,
     "mqtt_reconnect_delay_seconds": 2,
     "mqtt_max_reconnect_delay_seconds": 30,
-    "mqtt_keepalive_seconds": 300
+    "mqtt_keepalive_seconds": 300,
+    "watchdog_enabled": false,
+    "watchdog_timeout_ms": 8000
 }
