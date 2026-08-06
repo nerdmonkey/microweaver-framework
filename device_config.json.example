@@ -21,5 +21,7 @@
     "safe_mode_sleep_seconds": 5,
     "memory_monitor_enabled": false,
     "memory_monitor_threshold_bytes": 10000,
-    "memory_monitor_action": "log"
+    "memory_monitor_action": "log",
+    "health_check_enabled": false,
+    "health_check_interval_seconds": 30
 }
