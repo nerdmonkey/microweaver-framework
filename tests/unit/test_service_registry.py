@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 from app.services.registry import ServiceRegistry
 
 
@@ -62,3 +64,50 @@ def test_stop_all_continues_after_a_failing_stop(mocker):
     assert print_spy.call_args_list == [
         mocker.call("Failed to stop service:", "a", "-", mocker.ANY)
     ]
+
+
+def test_start_all_continues_after_a_failing_start(mocker):
+    print_spy = mocker.patch("builtins.print")
+    calls = []
+    registry = ServiceRegistry()
+
+    def failing_start():
+        raise RuntimeError("boom")
+
+    registry.register("a", start=failing_start)
+    registry.register("b", start=lambda: calls.append("b"))
+
+    registry.start_all()
+
+    assert calls == ["b"]
+    assert print_spy.call_args_list == [
+        mocker.call("Failed to start service:", "a", "-", mocker.ANY)
+    ]
+
+
+def test_start_all_routes_failure_through_error_handler_when_given():
+    error_handler = MagicMock()
+    registry = ServiceRegistry(error_handler=error_handler)
+
+    def failing_start():
+        raise RuntimeError("boom")
+
+    registry.register("watchdog", start=failing_start)
+
+    registry.start_all()
+
+    error_handler.guard.assert_called_once_with(failing_start, "service_start:watchdog")
+
+
+def test_stop_all_routes_failure_through_error_handler_when_given():
+    error_handler = MagicMock()
+    registry = ServiceRegistry(error_handler=error_handler)
+
+    def failing_stop():
+        raise RuntimeError("boom")
+
+    registry.register("watchdog", stop=failing_stop)
+
+    registry.stop_all()
+
+    error_handler.guard.assert_called_once_with(failing_stop, "service_stop:watchdog")

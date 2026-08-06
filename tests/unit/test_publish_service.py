@@ -2,6 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from app.services.error_handler import ErrorHandlerService
 from app.services.publish import PublishService
 
 
@@ -198,6 +199,40 @@ def test_run_checks_memory_each_publish(mocker):
         service.run(message="hi")
 
     assert memory_monitor.check.call_count == 3
+
+
+def test_error_handler_is_created():
+    service = PublishService()
+
+    assert isinstance(service.error_handler, ErrorHandlerService)
+    assert service.error_handler.logger is service.log_service
+
+
+def test_registry_is_wired_with_error_handler():
+    service = PublishService()
+
+    assert service.registry.error_handler is service.error_handler
+
+
+def test_run_survives_memory_monitor_exception(mocker):
+    mocker.patch("app.services.publish.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.publish.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mocker.patch("time.sleep", side_effect=[None, ConnectionResetError("dropped")])
+
+    service = PublishService()
+    memory_monitor = MagicMock()
+    memory_monitor.check.side_effect = OSError("mem read failed")
+    service.memory_monitor_service = memory_monitor
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        service.run(message="hi")
+
+    assert memory_monitor.check.call_count == 2
+    assert mock_connection.connect.call_count == 2
+    assert mock_client.publish.call_count == 2
 
 
 def test_health_check_disabled_by_default():
