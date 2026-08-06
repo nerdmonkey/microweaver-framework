@@ -738,6 +738,19 @@ def test_device_info_success_no_mpremote(mocker):
     esp._port.close.assert_called_once()
 
 
+def test_device_info_prompts_for_port(mocker):
+    esp = _fake_esp()
+    mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
+    mocker.patch.object(tinker, "connect_esp", return_value=esp)
+    mocker.patch.object(tinker, "attach_flash")
+    mocker.patch.object(tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB"))
+    mocker.patch.object(tinker, "reset_chip")
+    mocker.patch.object(tinker.shutil, "which", return_value=None)
+    result = runner.invoke(tinker.app, ["device", "info"])
+    assert result.exit_code == 0
+    tinker.connect_esp.assert_called_once_with("/dev/ttyUSB9")
+
+
 def test_device_info_with_usb_mode_and_mpremote(mocker):
     esp = _fake_esp()
     esp.get_usb_mode.return_value = "CDC"
@@ -1004,6 +1017,18 @@ def test_device_tree_failure(mocker):
     mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=1))
     result = runner.invoke(tinker.app, ["device", "tree", "--port", "/dev/ttyUSB0"])
     assert result.exit_code == 1
+
+
+def test_device_tree_prompts_for_port(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
+    mock_run = mocker.patch.object(
+        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
+    )
+    result = runner.invoke(tinker.app, ["device", "tree"])
+    assert result.exit_code == 0
+    cmd = mock_run.call_args[0][0]
+    assert "/dev/ttyUSB9" in cmd
 
 
 def test_device_rm_missing_mpremote(mocker):
