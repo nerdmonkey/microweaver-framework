@@ -106,6 +106,24 @@ def test_connect_backoff_caps_at_max_delay(mocker):
     ]
 
 
+def test_connect_feeds_watchdog_on_each_retry(mocker):
+    mock_client_cls = mocker.patch("app.services.mqtt.MQTTClient")
+    failing_client = MagicMock()
+    failing_client.connect.side_effect = OSError("refused")
+    succeeding_client = MagicMock()
+    mock_client_cls.side_effect = [failing_client, failing_client, succeeding_client]
+    mocker.patch("time.sleep")
+    wifi = make_wifi_service(connected=True)
+    watchdog = MagicMock()
+
+    connection = MqttConnection(
+        "client", "broker", 1883, wifi, watchdog_service=watchdog
+    )
+    connection.connect()
+
+    assert watchdog.feed.call_count == 3
+
+
 def test_disconnect_clears_client():
     wifi = make_wifi_service(connected=True)
     connection = MqttConnection("client", "broker", 1883, wifi)

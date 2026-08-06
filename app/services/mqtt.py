@@ -13,6 +13,7 @@ class MqttConnection:
         reconnect_delay_seconds=2,
         max_reconnect_delay_seconds=30,
         keepalive_seconds=300,
+        watchdog_service=None,
     ):
         self.client_id = client_id
         self.broker = broker
@@ -21,6 +22,7 @@ class MqttConnection:
         self.reconnect_delay_seconds = reconnect_delay_seconds
         self.max_reconnect_delay_seconds = max_reconnect_delay_seconds
         self.keepalive_seconds = keepalive_seconds
+        self.watchdog_service = watchdog_service
         self.client = None
 
     def connect(self):
@@ -29,6 +31,8 @@ class MqttConnection:
 
         delay = self.reconnect_delay_seconds
         while True:
+            if self.watchdog_service:
+                self.watchdog_service.feed()
             try:
                 self.client = MQTTClient(
                     self.client_id,

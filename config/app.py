@@ -34,6 +34,9 @@ class Setting:
         )
         self.MQTT_KEEPALIVE_SECONDS = self._int("mqtt_keepalive_seconds", 300)
 
+        self.WATCHDOG_ENABLED = self._bool("watchdog_enabled", False)
+        self.WATCHDOG_TIMEOUT_MS = self._int("watchdog_timeout_ms", 8000)
+
     def _load(self, path):
         try:
             with open(path, "r") as config_file:
@@ -52,6 +55,12 @@ class Setting:
             return int(self._value(key, default))
         except Exception:
             return default
+
+    def _bool(self, key, default):
+        value = self._config.get(key)
+        if value is None:
+            return default
+        return bool(value)
 
     def get_settings(self):
         return self

@@ -10,8 +10,9 @@ def test_run_reconnects_after_connection_loss(mocker):
     mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
     mock_connection = mock_connection_cls.return_value
     mock_client = MagicMock()
-    mock_client.wait_msg.side_effect = OSError("dropped")
+    mock_client.check_msg.side_effect = OSError("dropped")
     mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mocker.patch("time.sleep")
 
     service = SubscribeService()
 
@@ -28,13 +29,14 @@ def test_run_reconnects_through_repeated_drops(mocker):
     mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
     mock_connection = mock_connection_cls.return_value
     client_a, client_b = MagicMock(), MagicMock()
-    client_a.wait_msg.side_effect = OSError("dropped")
-    client_b.wait_msg.side_effect = ConnectionResetError("dropped again")
+    client_a.check_msg.side_effect = OSError("dropped")
+    client_b.check_msg.side_effect = ConnectionResetError("dropped again")
     mock_connection.connect.side_effect = [
         client_a,
         client_b,
         RuntimeError("stop test"),
     ]
+    mocker.patch("time.sleep")
 
     service = SubscribeService()
 
@@ -47,6 +49,25 @@ def test_run_reconnects_through_repeated_drops(mocker):
     client_b.subscribe.assert_called_once_with(service.topic)
 
 
+def test_run_feeds_watchdog_each_poll(mocker):
+    mocker.patch("app.services.subscribe.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_client.check_msg.side_effect = [None, None, OSError("dropped")]
+    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mocker.patch("time.sleep")
+
+    service = SubscribeService()
+    watchdog = MagicMock()
+    service.watchdog_service = watchdog
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        service.run()
+
+    assert watchdog.feed.call_count == 3
+
+
 def test_on_message_logs_received_payload(capsys):
     service = SubscribeService()
 
@@ -55,3 +76,22 @@ def test_on_message_logs_received_payload(capsys):
     out = capsys.readouterr().out
     assert "sensors/temp" in out
     assert "21.5" in out
+
+
+def test_watchdog_disabled_by_default():
+    service = SubscribeService()
+
+    assert service.watchdog_service is None
+
+
+def test_watchdog_started_when_enabled(mocker):
+    mocker.patch("app.services.subscribe.setting.WATCHDOG_ENABLED", True)
+    mocker.patch("app.services.subscribe.setting.WATCHDOG_TIMEOUT_MS", 4000)
+    mock_watchdog_cls = mocker.patch("app.services.subscribe.WatchdogService")
+    mock_watchdog = mock_watchdog_cls.return_value
+
+    service = SubscribeService()
+
+    mock_watchdog_cls.assert_called_once_with(4000)
+    mock_watchdog.start.assert_called_once_with()
+    assert service.watchdog_service is mock_watchdog
