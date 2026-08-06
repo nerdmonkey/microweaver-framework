@@ -95,3 +95,41 @@ def test_watchdog_started_when_enabled(mocker):
     mock_watchdog_cls.assert_called_once_with(4000)
     mock_watchdog.start.assert_called_once_with()
     assert service.watchdog_service is mock_watchdog
+
+
+def test_bootloop_guard_disabled_by_default():
+    service = SubscribeService()
+
+    assert service.bootloop_guard is None
+
+
+def test_bootloop_guard_created_when_enabled(mocker):
+    mocker.patch("app.services.subscribe.setting.BOOT_LOOP_PROTECTION_ENABLED", True)
+    mocker.patch("app.services.subscribe.setting.BOOT_LOOP_STATE_PATH", "state.json")
+    mocker.patch("app.services.subscribe.setting.BOOT_LOOP_MAX_ATTEMPTS", 3)
+    mock_guard_cls = mocker.patch("app.services.subscribe.BootLoopGuard")
+    mock_guard = mock_guard_cls.return_value
+
+    service = SubscribeService()
+
+    mock_guard_cls.assert_called_once_with("state.json", 3)
+    assert service.bootloop_guard is mock_guard
+
+
+def test_run_confirms_bootloop_guard_after_connect(mocker):
+    mocker.patch("app.services.subscribe.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_client.check_msg.side_effect = OSError("dropped")
+    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mocker.patch("time.sleep")
+
+    service = SubscribeService()
+    guard = MagicMock()
+    service.bootloop_guard = guard
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        service.run()
+
+    guard.confirm.assert_called_once_with()

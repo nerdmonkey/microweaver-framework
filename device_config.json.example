@@ -14,5 +14,8 @@
     "mqtt_max_reconnect_delay_seconds": 30,
     "mqtt_keepalive_seconds": 300,
     "watchdog_enabled": false,
-    "watchdog_timeout_ms": 8000
+    "watchdog_timeout_ms": 8000,
+    "boot_loop_protection_enabled": false,
+    "boot_loop_max_attempts": 5,
+    "boot_loop_state_path": "boot_state.json"
 }
