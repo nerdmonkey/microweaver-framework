@@ -16,11 +16,15 @@ def run_bootstrap():
         setting.BOOT_LOOP_MAX_ATTEMPTS,
         setting.BOOT_LOOP_PROTECTION_ENABLED,
     )
-    if guard.check():
-        print("BOOT: boot-loop detected, halting startup")
-        return
+    boot_loop_detected = guard.check()
 
     import main
 
     gc.collect()
+
+    if boot_loop_detected:
+        print("BOOT: boot-loop detected, entering safe mode")
+        main.start_safe_mode()
+        return
+
     main.start()

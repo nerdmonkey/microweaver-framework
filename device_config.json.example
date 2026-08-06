@@ -17,5 +17,6 @@
     "watchdog_timeout_ms": 8000,
     "boot_loop_protection_enabled": false,
     "boot_loop_max_attempts": 5,
-    "boot_loop_state_path": "boot_state.json"
+    "boot_loop_state_path": "boot_state.json",
+    "safe_mode_sleep_seconds": 5
 }
