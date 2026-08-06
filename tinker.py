@@ -5,6 +5,7 @@ import configparser
 import shutil
 import subprocess  # nosec B404
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -370,6 +371,104 @@ def download(
 
     save_config(port=port, baud=baud)
     print(f"\nDownloaded {resolved_port} -> {path}")
+
+
+def _watched_files() -> list:
+    """Collect the same source files build() compiles/copies, for change detection."""
+    files = []
+    for pkg in PACKAGE_DIRS:
+        files.extend(sorted((ROOT / pkg).rglob("*.py")))
+    for name in ROOT_FILES_COMPILE + ROOT_FILES_COPY:
+        path = ROOT / name
+        if path.exists():
+            files.append(path)
+    config_src = ROOT / "device_config.json"
+    if config_src.exists():
+        files.append(config_src)
+    return files
+
+
+def _scan_mtimes(paths: list) -> dict:
+    """Snapshot each path's mtime, skipping any removed mid-scan."""
+    snapshot = {}
+    for path in paths:
+        try:
+            snapshot[path] = path.stat().st_mtime
+        except FileNotFoundError:
+            continue
+    return snapshot
+
+
+def _rebuild_and_upload(
+    port: Optional[str],
+    baud: Optional[int],
+    reset: bool,
+    micropython: str,
+    march: str,
+) -> None:
+    """Run build() then upload() for watch(), skipping upload if the build failed."""
+    print("\nChange detected, rebuilding...")
+    try:
+        build(micropython=micropython, march=march, no_clean=False)
+    except typer.Exit as exc:
+        if exc.exit_code:
+            print("Build failed, skipping upload.", file=sys.stderr)
+            return
+
+    try:
+        upload(port=port, baud=baud, reset=reset, path=None)
+    except typer.Exit as exc:
+        if exc.exit_code:
+            print("Upload failed.", file=sys.stderr)
+
+
+@app.command()
+def watch(
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Serial port of device (see 'tinker.py port')"
+    ),
+    baud: Optional[int] = typer.Option(None, "--baud", "-b", help="Baud rate"),
+    reset: bool = typer.Option(
+        False, "--reset", help="Hard-reset the device before each upload"
+    ),
+    micropython: str = typer.Option("1.28", help="Target MicroPython version"),
+    march: str = typer.Option(
+        "xtensawin", help="Target architecture (default: xtensawin for ESP32)"
+    ),
+    interval: float = typer.Option(
+        1.0, "--interval", help="Polling interval in seconds"
+    ),
+) -> None:
+    """Watch app/, config/, and root source files; rebuild + upload on change."""
+    if shutil.which("mpremote") is None:
+        print(
+            "ERROR: 'mpremote' not found on PATH. Install it with "
+            "'pip install mpremote'.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    watched = _watched_files()
+    if not watched:
+        print("ERROR: no source files found to watch.", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    print(
+        f"Watching {len(watched)} file(s) in app/, config/, and root sources. "
+        "Press Ctrl+C to stop."
+    )
+    snapshot = _scan_mtimes(watched)
+
+    try:
+        while True:
+            time.sleep(interval)
+            current = _scan_mtimes(_watched_files())
+            if current == snapshot:
+                continue
+            snapshot = current
+            _rebuild_and_upload(port, baud, reset, micropython, march)
+    except KeyboardInterrupt:
+        print("\nStopped watching.")
 
 
 @config_app.command("show")
