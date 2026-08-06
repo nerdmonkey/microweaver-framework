@@ -21,7 +21,9 @@ def test_run_reconnects_after_connection_loss(mocker):
 
     assert mock_connection.connect.call_count == 2
     assert mock_connection.disconnect.call_count == 1
-    mock_client.publish.assert_called_once_with(service.topic, b"hi")
+    mock_client.publish.assert_called_once_with(
+        service.topic, b"hi", qos=0, retain=False
+    )
 
 
 def test_run_reconnects_through_repeated_drops(mocker):
@@ -46,8 +48,8 @@ def test_run_reconnects_through_repeated_drops(mocker):
 
     assert mock_connection.connect.call_count == 3
     assert mock_connection.disconnect.call_count == 2
-    client_a.publish.assert_called_once_with(service.topic, b"hi")
-    client_b.publish.assert_called_once_with(service.topic, b"hi")
+    client_a.publish.assert_called_once_with(service.topic, b"hi", qos=0, retain=False)
+    client_b.publish.assert_called_once_with(service.topic, b"hi", qos=0, retain=False)
 
 
 def test_run_feeds_watchdog_each_publish(mocker):
@@ -96,7 +98,9 @@ def test_publish_message_survives_publish_exception():
 
     service.publish_message("hi")
 
-    service.client.publish.assert_called_once_with(service.topic, b"hi")
+    service.client.publish.assert_called_once_with(
+        service.topic, b"hi", qos=0, retain=False
+    )
 
 
 def test_publish_message_without_client_is_noop():
@@ -104,6 +108,27 @@ def test_publish_message_without_client_is_noop():
     service.client = None
 
     service.publish_message("hi")
+
+
+def test_publish_message_uses_configured_qos_and_retain(mocker):
+    mocker.patch("app.services.publish.setting.MQTT_PUBLISH_QOS", 1)
+    mocker.patch("app.services.publish.setting.MQTT_PUBLISH_RETAIN", True)
+
+    service = PublishService()
+    service.client = MagicMock()
+
+    service.publish_message("hi")
+
+    service.client.publish.assert_called_once_with(
+        service.topic, b"hi", qos=1, retain=True
+    )
+
+
+def test_publish_qos_and_retain_default_to_zero_and_false():
+    service = PublishService()
+
+    assert service.publish_qos == 0
+    assert service.publish_retain is False
 
 
 def test_watchdog_disabled_by_default():
