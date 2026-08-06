@@ -4,6 +4,7 @@ from app.services.bootloop import BootLoopGuard
 from app.services.health import HealthCheckService
 from app.services.memory_monitor import MemoryMonitorService
 from app.services.mqtt import MqttConnection
+from app.services.service_restart import ServiceRestartService
 from app.services.watchdog import WatchdogService
 from app.services.wifi import WiFiService
 from config.app import Setting
@@ -40,6 +41,15 @@ class PublishService:
             )
             self.health_check_service.register("wifi", self.wifi_service.is_connected)
             self.health_check_service.register("mqtt", lambda: self.client is not None)
+        self.service_restart_service = None
+        if setting.SERVICE_RESTART_ENABLED and self.health_check_service:
+            self.service_restart_service = ServiceRestartService(
+                max_attempts=setting.SERVICE_RESTART_MAX_ATTEMPTS
+            )
+            self.service_restart_service.register("wifi", self.wifi_service.connect)
+            self.service_restart_service.register(
+                "mqtt", lambda: self.connect_to_mqtt()
+            )
         self.connection = MqttConnection(
             setting.MQTT_CLIENT_ID,
             setting.MQTT_BROKER,
@@ -83,6 +93,10 @@ class PublishService:
                         self.memory_monitor_service.check()
                     if self.health_check_service:
                         self.health_check_service.poll()
+                        if self.service_restart_service:
+                            self.service_restart_service.reconcile(
+                                self.health_check_service.status
+                            )
                     self.publish_message(message)
                     time.sleep(1)
             except Exception as e:
