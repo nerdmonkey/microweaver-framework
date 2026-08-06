@@ -3,10 +3,8 @@ name: Add to project board
 # Auto-adds new issues and PRs to the repo's GitHub Project (v2) board:
 # https://github.com/users/nerdmonkey/projects/3
 #
-# Setup required before this runs successfully:
-#   1. Create a PAT (classic) with `repo` + `project` scopes and add it as
-#      repo secret ADD_TO_PROJECT_PAT — the default GITHUB_TOKEN can't write to
-#      user/org-level Projects v2.
+# Requires repo secret MICROWEAVER: a PAT (classic) with `repo` + `project`
+# scopes — the default GITHUB_TOKEN can't write to user/org-level Projects v2.
 
 on:
   issues:
@@ -21,4 +19,4 @@ jobs:
       - uses: actions/add-to-project@v1.0.2
         with:
           project-url: https://github.com/users/nerdmonkey/projects/3
-          github-token: ${{ secrets.ADD_TO_PROJECT_PAT }}
+          github-token: ${{ secrets.MICROWEAVER }}
