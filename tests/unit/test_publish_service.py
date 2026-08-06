@@ -157,7 +157,7 @@ def test_memory_monitor_created_when_enabled(mocker):
 
     service = PublishService()
 
-    mock_monitor_cls.assert_called_once_with(5000, "warn")
+    mock_monitor_cls.assert_called_once_with(5000, "warn", logger=service.log_service)
     assert service.memory_monitor_service is mock_monitor
 
 
@@ -195,7 +195,9 @@ def test_health_check_created_when_enabled(mocker):
 
     service = PublishService()
 
-    mock_health_cls.assert_called_once_with(interval_seconds=15)
+    mock_health_cls.assert_called_once_with(
+        interval_seconds=15, logger=service.log_service
+    )
     assert service.health_check_service is mock_health
     assert mock_health.register.call_args_list[0][0][0] == "wifi"
     assert mock_health.register.call_args_list[1][0][0] == "mqtt"
