@@ -29,6 +29,10 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "mqtt_ssl": True,
                 "mqtt_ssl_cert_path": "/certs/client.crt",
                 "mqtt_ssl_key_path": "/certs/client.key",
+                "mqtt_lwt_topic": "device/status",
+                "mqtt_lwt_message": "offline",
+                "mqtt_lwt_retain": True,
+                "mqtt_lwt_qos": 1,
                 "watchdog_enabled": True,
                 "watchdog_timeout_ms": 5000,
                 "boot_loop_protection_enabled": True,
@@ -68,6 +72,10 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.MQTT_SSL is True
     assert setting.MQTT_SSL_CERT_PATH == "/certs/client.crt"
     assert setting.MQTT_SSL_KEY_PATH == "/certs/client.key"
+    assert setting.MQTT_LWT_TOPIC == "device/status"
+    assert setting.MQTT_LWT_MESSAGE == "offline"
+    assert setting.MQTT_LWT_RETAIN is True
+    assert setting.MQTT_LWT_QOS == 1
     assert setting.WATCHDOG_ENABLED is True
     assert setting.WATCHDOG_TIMEOUT_MS == 5000
     assert setting.BOOT_LOOP_PROTECTION_ENABLED is True
@@ -104,6 +112,10 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.MQTT_SSL is False
     assert setting.MQTT_SSL_CERT_PATH == ""
     assert setting.MQTT_SSL_KEY_PATH == ""
+    assert setting.MQTT_LWT_TOPIC == ""
+    assert setting.MQTT_LWT_MESSAGE == ""
+    assert setting.MQTT_LWT_RETAIN is False
+    assert setting.MQTT_LWT_QOS == 0
     assert setting.WATCHDOG_ENABLED is False
     assert setting.WATCHDOG_TIMEOUT_MS == 8000
     assert setting.BOOT_LOOP_PROTECTION_ENABLED is False

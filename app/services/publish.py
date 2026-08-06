@@ -81,6 +81,10 @@ class PublishService:
             setting.MQTT_PASSWORD,
             setting.MQTT_SSL,
             ssl_params or None,
+            setting.MQTT_LWT_TOPIC or None,
+            setting.MQTT_LWT_MESSAGE or None,
+            setting.MQTT_LWT_RETAIN,
+            setting.MQTT_LWT_QOS,
         )
         self.client = None
         self.registry.start_all()

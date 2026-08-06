@@ -18,6 +18,10 @@ class MqttConnection:
         password=None,
         ssl=False,
         ssl_params=None,
+        lwt_topic=None,
+        lwt_message=None,
+        lwt_retain=False,
+        lwt_qos=0,
     ):
         self.client_id = client_id
         self.broker = broker
@@ -31,7 +35,31 @@ class MqttConnection:
         self.password = password
         self.ssl = ssl
         self.ssl_params = ssl_params
+        self.lwt_topic = lwt_topic
+        self.lwt_message = lwt_message
+        self.lwt_retain = lwt_retain
+        self.lwt_qos = lwt_qos
         self.client = None
+
+    def _client_kwargs(self):
+        client_kwargs = {"keepalive": self.keepalive_seconds}
+        if self.username:
+            client_kwargs["user"] = self.username
+            client_kwargs["password"] = self.password
+        if self.ssl:
+            client_kwargs["ssl"] = True
+            if self.ssl_params:
+                client_kwargs["ssl_params"] = self.ssl_params
+        return client_kwargs
+
+    def _apply_last_will(self):
+        if self.lwt_topic:
+            self.client.set_last_will(
+                self.lwt_topic,
+                self.lwt_message,
+                retain=self.lwt_retain,
+                qos=self.lwt_qos,
+            )
 
     def connect(self):
         if not self.wifi_service.is_connected():
@@ -42,20 +70,13 @@ class MqttConnection:
             if self.watchdog_service:
                 self.watchdog_service.feed()
             try:
-                client_kwargs = {"keepalive": self.keepalive_seconds}
-                if self.username:
-                    client_kwargs["user"] = self.username
-                    client_kwargs["password"] = self.password
-                if self.ssl:
-                    client_kwargs["ssl"] = True
-                    if self.ssl_params:
-                        client_kwargs["ssl_params"] = self.ssl_params
                 self.client = MQTTClient(
                     self.client_id,
                     self.broker,
                     self.port,
-                    **client_kwargs,
+                    **self._client_kwargs(),
                 )
+                self._apply_last_will()
                 self.client.connect()
                 print("Connected to MQTT Broker at", self.broker)
                 return self.client

@@ -198,6 +198,40 @@ def test_connect_omits_ssl_when_disabled(mocker):
     mock_client_cls.assert_called_once_with("client", "broker", 1883, keepalive=300)
 
 
+def test_connect_sets_last_will_when_configured(mocker):
+    mock_client_cls = mocker.patch("app.services.mqtt.MQTTClient")
+    mock_client = mock_client_cls.return_value
+    wifi = make_wifi_service(connected=True)
+
+    connection = MqttConnection(
+        "client",
+        "broker",
+        1883,
+        wifi,
+        lwt_topic="device/status",
+        lwt_message="offline",
+        lwt_retain=True,
+        lwt_qos=1,
+    )
+    connection.connect()
+
+    mock_client.set_last_will.assert_called_once_with(
+        "device/status", "offline", retain=True, qos=1
+    )
+    mock_client.connect.assert_called_once_with()
+
+
+def test_connect_omits_last_will_when_not_configured(mocker):
+    mock_client_cls = mocker.patch("app.services.mqtt.MQTTClient")
+    mock_client = mock_client_cls.return_value
+    wifi = make_wifi_service(connected=True)
+
+    connection = MqttConnection("client", "broker", 1883, wifi)
+    connection.connect()
+
+    mock_client.set_last_will.assert_not_called()
+
+
 def test_disconnect_clears_client():
     wifi = make_wifi_service(connected=True)
     connection = MqttConnection("client", "broker", 1883, wifi)
