@@ -63,6 +63,11 @@ class SubscribeService:
             self.service_restart_service.register(
                 "mqtt", lambda: self.connect_to_mqtt()
             )
+        ssl_params = {}
+        if setting.MQTT_SSL_CERT_PATH:
+            ssl_params["cert"] = setting.MQTT_SSL_CERT_PATH
+        if setting.MQTT_SSL_KEY_PATH:
+            ssl_params["key"] = setting.MQTT_SSL_KEY_PATH
         self.connection = MqttConnection(
             setting.MQTT_CLIENT_ID,
             setting.MQTT_BROKER,
@@ -74,6 +79,8 @@ class SubscribeService:
             self.watchdog_service,
             setting.MQTT_USERNAME,
             setting.MQTT_PASSWORD,
+            setting.MQTT_SSL,
+            ssl_params or None,
         )
         self.client = None
         self.registry.start_all()

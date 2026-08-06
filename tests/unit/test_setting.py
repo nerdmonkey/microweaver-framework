@@ -26,6 +26,9 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "mqtt_reconnect_delay_seconds": 1,
                 "mqtt_max_reconnect_delay_seconds": 10,
                 "mqtt_keepalive_seconds": 60,
+                "mqtt_ssl": True,
+                "mqtt_ssl_cert_path": "/certs/client.crt",
+                "mqtt_ssl_key_path": "/certs/client.key",
                 "watchdog_enabled": True,
                 "watchdog_timeout_ms": 5000,
                 "boot_loop_protection_enabled": True,
@@ -62,6 +65,9 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.MQTT_RECONNECT_DELAY_SECONDS == 1
     assert setting.MQTT_MAX_RECONNECT_DELAY_SECONDS == 10
     assert setting.MQTT_KEEPALIVE_SECONDS == 60
+    assert setting.MQTT_SSL is True
+    assert setting.MQTT_SSL_CERT_PATH == "/certs/client.crt"
+    assert setting.MQTT_SSL_KEY_PATH == "/certs/client.key"
     assert setting.WATCHDOG_ENABLED is True
     assert setting.WATCHDOG_TIMEOUT_MS == 5000
     assert setting.BOOT_LOOP_PROTECTION_ENABLED is True
@@ -95,6 +101,9 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.MQTT_RECONNECT_DELAY_SECONDS == 2
     assert setting.MQTT_MAX_RECONNECT_DELAY_SECONDS == 30
     assert setting.MQTT_KEEPALIVE_SECONDS == 300
+    assert setting.MQTT_SSL is False
+    assert setting.MQTT_SSL_CERT_PATH == ""
+    assert setting.MQTT_SSL_KEY_PATH == ""
     assert setting.WATCHDOG_ENABLED is False
     assert setting.WATCHDOG_TIMEOUT_MS == 8000
     assert setting.BOOT_LOOP_PROTECTION_ENABLED is False

@@ -22,6 +22,9 @@ _SCHEMA = {
     "mqtt_reconnect_delay_seconds": {"type": "int", "min": 0},
     "mqtt_max_reconnect_delay_seconds": {"type": "int", "min": 0},
     "mqtt_keepalive_seconds": {"type": "int", "min": 0},
+    "mqtt_ssl": {"type": bool},
+    "mqtt_ssl_cert_path": {"type": str},
+    "mqtt_ssl_key_path": {"type": str},
     "watchdog_enabled": {"type": bool},
     "watchdog_timeout_ms": {"type": "int", "min": 0},
     "boot_loop_protection_enabled": {"type": bool},
@@ -78,6 +81,9 @@ class Setting:
             "mqtt_max_reconnect_delay_seconds", 30
         )
         self.MQTT_KEEPALIVE_SECONDS = self._int("mqtt_keepalive_seconds", 300)
+        self.MQTT_SSL = self._bool("mqtt_ssl", False)
+        self.MQTT_SSL_CERT_PATH = self._value("mqtt_ssl_cert_path", "")
+        self.MQTT_SSL_KEY_PATH = self._value("mqtt_ssl_key_path", "")
 
         self.WATCHDOG_ENABLED = self._bool("watchdog_enabled", False)
         self.WATCHDOG_TIMEOUT_MS = self._int("watchdog_timeout_ms", 8000)
