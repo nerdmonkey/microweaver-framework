@@ -192,6 +192,24 @@ def test_run_checks_memory_each_poll(mocker):
     assert memory_monitor.check.call_count == 3
 
 
+def test_init_wires_wifi_then_mqtt_then_starts_registry(mocker):
+    order = []
+    wifi_cls = mocker.patch("app.services.subscribe.WiFiService")
+    wifi_cls.side_effect = lambda *a, **k: order.append("wifi_service") or MagicMock()
+    connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
+    connection_cls.side_effect = (
+        lambda *a, **k: order.append("mqtt_connection") or MagicMock()
+    )
+    registry_cls = mocker.patch("app.services.subscribe.ServiceRegistry")
+    registry_cls.return_value.start_all.side_effect = lambda: order.append(
+        "registry.start_all"
+    )
+
+    SubscribeService()
+
+    assert order == ["wifi_service", "mqtt_connection", "registry.start_all"]
+
+
 def test_error_handler_is_created():
     service = SubscribeService()
 
