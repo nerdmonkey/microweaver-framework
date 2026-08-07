@@ -11,6 +11,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
         json.dumps(
             {
                 "app_environment": "test",
+                "app_version": "1.2.3",
                 "mqtt_enabled": False,
                 "mqtt_broker": "test_broker",
                 "mqtt_client_id": "test_id",
@@ -66,6 +67,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
     setting = Setting(config_path=str(config_path))
 
     assert setting.APP_ENVIRONMENT == "test"
+    assert setting.APP_VERSION == "1.2.3"
     assert setting.MQTT_ENABLED is False
     assert setting.MQTT_BROKER == "test_broker"
     assert setting.MQTT_CLIENT_ID == "test_id"
@@ -122,6 +124,7 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     setting = Setting(config_path=str(missing_path))
 
     assert setting.APP_ENVIRONMENT == "local"
+    assert setting.APP_VERSION == "0.1.0"
     assert setting.MQTT_ENABLED is True
     assert setting.MQTT_BROKER == "localhost"
     assert setting.MQTT_CLIENT_ID == "microweaver"

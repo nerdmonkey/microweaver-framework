@@ -7,6 +7,7 @@ DEVICE_CONFIG_PATH = "device_config.json"
 
 _SCHEMA = {
     "app_environment": {"type": str},
+    "app_version": {"type": str},
     "mqtt_enabled": {"type": bool},
     "mqtt_broker": {"type": str},
     "mqtt_client_id": {"type": str},
@@ -90,6 +91,7 @@ class Setting:
 
     def _apply_config(self):
         self.APP_ENVIRONMENT = self._value("app_environment", "local")
+        self.APP_VERSION = self._value("app_version", "0.1.0")
         self.MQTT_ENABLED = self._bool("mqtt_enabled", True)
         self.MQTT_BROKER = self._value("mqtt_broker", "localhost")
         self.MQTT_CLIENT_ID = self._value("mqtt_client_id", "microweaver")

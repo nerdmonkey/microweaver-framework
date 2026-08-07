@@ -103,6 +103,7 @@ class PublishService:
             self.health_check_service = HealthCheckService(
                 interval_seconds=setting.HEALTH_CHECK_INTERVAL_SECONDS,
                 logger=self.log_service,
+                app_version=setting.APP_VERSION,
             )
             self.health_check_service.register("wifi", self.wifi_service.is_connected)
             if setting.MQTT_ENABLED:
