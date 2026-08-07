@@ -680,6 +680,59 @@ def device_ls(
         raise typer.Exit(code=result.returncode)
 
 
+@device_app.command("test-adapter")
+def device_test_adapter(
+    module: str = typer.Argument(
+        ...,
+        help=(
+            "Dotted path to an adapter class, e.g. "
+            "app.adapters.sensors.dht22.DHT22Adapter"
+        ),
+    ),
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Serial port of device"
+    ),
+) -> None:
+    """Run one adapter's setup()/read()/deinit() cycle on-device."""
+    if shutil.which("mpremote") is None:
+        print(
+            "ERROR: 'mpremote' not found on PATH. Install it with "
+            "'pip install mpremote'.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    module_path, _, class_name = module.rpartition(".")
+    if not module_path:
+        print(
+            "ERROR: module must be a dotted path to an adapter class, e.g. "
+            "app.adapters.sensors.dht22.DHT22Adapter",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    config = load_config()
+    resolved_port = port or config.get("port")
+    if resolved_port is None:
+        resolved_port = prompt_for_port()
+
+    script = (
+        f"from {module_path} import {class_name}\n"
+        f"adapter = {class_name}()\n"
+        "adapter.setup()\n"
+        "try:\n"
+        "    print(adapter.read() if hasattr(adapter, 'read') "
+        "else 'no read() method')\n"
+        "finally:\n"
+        "    adapter.deinit()\n"
+    )
+
+    cmd = ["mpremote", "connect", resolved_port, "exec", script]
+    result = subprocess.run(cmd)  # nosec B603
+    if result.returncode != 0:
+        raise typer.Exit(code=result.returncode)
+
+
 @device_app.command("repl")
 def device_repl(
     port: Optional[str] = typer.Option(
