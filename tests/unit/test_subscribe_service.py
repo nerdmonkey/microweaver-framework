@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.services.error_handler import ErrorHandlerService
-from app.services.subscribe import SubscribeService
+from app.services.subscribe import SubscribeService, setting
 
 
 def test_run_reconnects_after_connection_loss(mocker):
@@ -434,7 +434,9 @@ def test_health_check_created_when_enabled(mocker):
     service = SubscribeService()
 
     mock_health_cls.assert_called_once_with(
-        interval_seconds=15, logger=service.log_service
+        interval_seconds=15,
+        logger=service.log_service,
+        app_version=setting.APP_VERSION,
     )
     assert service.health_check_service is mock_health
     assert mock_health.register.call_args_list[0][0][0] == "wifi"

@@ -3,13 +3,24 @@ import time
 from app.services.logger import LogService
 
 
+def _parse_version(version):
+    parts = []
+    for part in str(version).split("."):
+        try:
+            parts.append(int(part))
+        except ValueError:
+            parts.append(0)
+    return parts
+
+
 class HealthCheckService:
-    def __init__(self, checks=None, interval_seconds=30, logger=None):
+    def __init__(self, checks=None, interval_seconds=30, logger=None, app_version=""):
         self.checks = dict(checks) if checks else {}
         self.interval_seconds = interval_seconds
         self.status = {}
         self._last_polled = None
         self.logger = logger or LogService()
+        self.app_version = app_version
 
     def register(self, name, check):
         self.checks[name] = check
@@ -55,3 +66,18 @@ class HealthCheckService:
 
     def is_healthy(self):
         return all(entry["healthy"] for entry in self.status.values())
+
+    def report(self):
+        return {
+            "app_version": self.app_version,
+            "healthy": self.is_healthy(),
+            "checks": self.status,
+        }
+
+    def needs_update(self, candidate_version):
+        current = _parse_version(self.app_version)
+        candidate = _parse_version(candidate_version)
+        length = max(len(current), len(candidate))
+        current += [0] * (length - len(current))
+        candidate += [0] * (length - len(candidate))
+        return candidate > current

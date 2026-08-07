@@ -120,3 +120,54 @@ def test_is_healthy_true_when_no_checks_registered():
     service = HealthCheckService()
 
     assert service.is_healthy() is True
+
+
+def test_report_includes_app_version_and_health_summary(mocker):
+    mocker.patch("time.time", return_value=100)
+    service = HealthCheckService(app_version="1.2.3")
+    service.register("wifi", lambda: True)
+    service.poll()
+
+    assert service.report() == {
+        "app_version": "1.2.3",
+        "healthy": True,
+        "checks": {"wifi": {"healthy": True, "error": None, "checked_at": 100}},
+    }
+
+
+def test_app_version_defaults_to_empty_string():
+    service = HealthCheckService()
+
+    assert service.app_version == ""
+
+
+def test_needs_update_true_when_candidate_is_newer():
+    service = HealthCheckService(app_version="1.2.3")
+
+    assert service.needs_update("1.3.0") is True
+
+
+def test_needs_update_false_when_candidate_is_older():
+    service = HealthCheckService(app_version="1.2.3")
+
+    assert service.needs_update("1.2.0") is False
+
+
+def test_needs_update_false_when_candidate_is_equal():
+    service = HealthCheckService(app_version="1.2.3")
+
+    assert service.needs_update("1.2.3") is False
+
+
+def test_needs_update_handles_different_version_lengths():
+    service = HealthCheckService(app_version="1.2")
+
+    assert service.needs_update("1.2.1") is True
+    assert service.needs_update("1.2.0") is False
+
+
+def test_needs_update_treats_non_numeric_segments_as_zero():
+    service = HealthCheckService(app_version="1.2.3-beta")
+
+    assert service.needs_update("1.2.4") is True
+    assert service.needs_update("1.2.0") is False
