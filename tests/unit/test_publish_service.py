@@ -28,6 +28,29 @@ def test_run_reconnects_after_connection_loss(mocker):
     )
 
 
+def test_run_logs_connection_lost_with_trace(mocker):
+    mocker.patch("app.services.publish.setting.MQTT_ENABLED", True)
+    mocker.patch("app.services.publish.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.publish.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mocker.patch("time.sleep", side_effect=ConnectionResetError("dropped"))
+
+    service = PublishService()
+    mocker.patch.object(service.log_service, "log")
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        service.run(message="hi")
+
+    service.log_service.log.assert_called_once_with(
+        "connection_lost",
+        level="error",
+        error="dropped",
+        trace="ConnectionResetError: dropped",
+    )
+
+
 def test_run_reconnects_through_repeated_drops(mocker):
     mocker.patch("app.services.publish.setting.MQTT_ENABLED", True)
     mocker.patch("app.services.publish.WiFiService")

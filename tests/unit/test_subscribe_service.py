@@ -27,6 +27,30 @@ def test_run_reconnects_after_connection_loss(mocker):
     assert mock_connection.disconnect.call_count == 1
 
 
+def test_run_logs_connection_lost_with_trace(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
+    mocker.patch("app.services.subscribe.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_client.check_msg.side_effect = OSError("dropped")
+    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mocker.patch("time.sleep")
+
+    service = SubscribeService()
+    mocker.patch.object(service.log_service, "log")
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        service.run()
+
+    service.log_service.log.assert_called_once_with(
+        "connection_lost",
+        level="error",
+        error="dropped",
+        trace="OSError: dropped",
+    )
+
+
 def test_run_reconnects_through_repeated_drops(mocker):
     mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
     mocker.patch("app.services.subscribe.WiFiService")
@@ -332,6 +356,7 @@ def test_handle_ota_message_logs_and_swallows_apply_update_errors():
         level="error",
         context="ota_update",
         error="boom",
+        trace="RuntimeError: boom",
     )
 
 
