@@ -146,10 +146,29 @@ def test_handle_request_saves_credentials_on_post_save(mocker):
 
     service._handle_request(client)
 
-    setting.save.assert_called_once_with(wifi_ssid="MyWifi", wifi_password="hunter 2")
+    setting.save.assert_called_once_with(
+        wifi_ssid="MyWifi", wifi_password="hunter 2", claim_code=None
+    )
     response = client.send.call_args[0][0]
     assert b"200 OK" in response
     assert b"Credentials saved" in response
+
+
+def test_handle_request_saves_claim_code_when_provided(mocker):
+    service = make_provisioning_service(mocker)
+    setting = MagicMock()
+    service.setting = setting
+    client = MagicMock()
+    client.recv.return_value = (
+        b"POST /save HTTP/1.1\r\nHost: x\r\n\r\n"
+        b"ssid=MyWifi&password=hunter2&claim_code=ABC-123"
+    )
+
+    service._handle_request(client)
+
+    setting.save.assert_called_once_with(
+        wifi_ssid="MyWifi", wifi_password="hunter2", claim_code="ABC-123"
+    )
 
 
 def test_handle_request_rejects_missing_ssid_with_400(mocker):
@@ -190,7 +209,9 @@ def test_save_credentials_strips_ssid_whitespace(mocker):
 
     service._save_credentials({"ssid": "  Padded  ", "password": "pw"})
 
-    setting.save.assert_called_once_with(wifi_ssid="Padded", wifi_password="pw")
+    setting.save.assert_called_once_with(
+        wifi_ssid="Padded", wifi_password="pw", claim_code=None
+    )
 
 
 def test_unquote_decodes_plus_and_percent_escapes(mocker):

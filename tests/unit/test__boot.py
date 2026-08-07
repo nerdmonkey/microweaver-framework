@@ -269,6 +269,78 @@ def test_run_bootstrap_prefers_safe_mode_over_provisioning_when_both_apply(mocke
     mock_main.start.assert_not_called()
 
 
+def test_run_bootstrap_claims_device_when_enabled_and_unclaimed(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
+    mocker.patch.object(_boot.setting, "CLAIM_ENABLED", True)
+    mocker.patch.object(_boot.setting, "DEVICE_ID", "")
+    mocker.patch.object(_boot.setting, "CLAIM_CODE", "CODE123")
+    mocker.patch("_boot.gc")
+    mocker.patch("_boot.ResetService")
+    guard_cls = mocker.patch("_boot.BootLoopGuard")
+    guard_cls.return_value.check.return_value = False
+    mock_main = MagicMock()
+    mocker.patch.dict("sys.modules", {"main": mock_main})
+
+    _boot.run_bootstrap()
+
+    mock_main.start_claim.assert_called_once_with()
+    mock_main.start.assert_called_once_with()
+
+
+def test_run_bootstrap_skips_claim_when_disabled(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
+    mocker.patch.object(_boot.setting, "CLAIM_ENABLED", False)
+    mocker.patch.object(_boot.setting, "DEVICE_ID", "")
+    mocker.patch.object(_boot.setting, "CLAIM_CODE", "CODE123")
+    mocker.patch("_boot.gc")
+    mocker.patch("_boot.ResetService")
+    guard_cls = mocker.patch("_boot.BootLoopGuard")
+    guard_cls.return_value.check.return_value = False
+    mock_main = MagicMock()
+    mocker.patch.dict("sys.modules", {"main": mock_main})
+
+    _boot.run_bootstrap()
+
+    mock_main.start_claim.assert_not_called()
+    mock_main.start.assert_called_once_with()
+
+
+def test_run_bootstrap_skips_claim_when_already_claimed(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
+    mocker.patch.object(_boot.setting, "CLAIM_ENABLED", True)
+    mocker.patch.object(_boot.setting, "DEVICE_ID", "dev-1")
+    mocker.patch.object(_boot.setting, "CLAIM_CODE", "CODE123")
+    mocker.patch("_boot.gc")
+    mocker.patch("_boot.ResetService")
+    guard_cls = mocker.patch("_boot.BootLoopGuard")
+    guard_cls.return_value.check.return_value = False
+    mock_main = MagicMock()
+    mocker.patch.dict("sys.modules", {"main": mock_main})
+
+    _boot.run_bootstrap()
+
+    mock_main.start_claim.assert_not_called()
+    mock_main.start.assert_called_once_with()
+
+
+def test_run_bootstrap_skips_claim_when_no_claim_code(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
+    mocker.patch.object(_boot.setting, "CLAIM_ENABLED", True)
+    mocker.patch.object(_boot.setting, "DEVICE_ID", "")
+    mocker.patch.object(_boot.setting, "CLAIM_CODE", "")
+    mocker.patch("_boot.gc")
+    mocker.patch("_boot.ResetService")
+    guard_cls = mocker.patch("_boot.BootLoopGuard")
+    guard_cls.return_value.check.return_value = False
+    mock_main = MagicMock()
+    mocker.patch.dict("sys.modules", {"main": mock_main})
+
+    _boot.run_bootstrap()
+
+    mock_main.start_claim.assert_not_called()
+    mock_main.start.assert_called_once_with()
+
+
 def test_run_bootstrap_opens_serial_interrupt_window_when_enabled(mocker):
     mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
     mocker.patch.object(_boot.setting, "BOOT_INTERRUPT_WINDOW_SECONDS", 3)
@@ -278,9 +350,13 @@ def test_run_bootstrap_opens_serial_interrupt_window_when_enabled(mocker):
     reset_service_cls = mocker.patch("_boot.ResetService")
     reset_service_cls.return_value.read.side_effect = lambda: order.append("reset.read")
     guard_cls = mocker.patch("_boot.BootLoopGuard")
-    guard_cls.return_value.check.side_effect = lambda: order.append("guard.check") or False
+    guard_cls.return_value.check.side_effect = (
+        lambda: order.append("guard.check") or False
+    )
     mocker.patch.object(
-        _boot.time, "sleep", side_effect=lambda seconds: order.append(f"sleep:{seconds}")
+        _boot.time,
+        "sleep",
+        side_effect=lambda seconds: order.append(f"sleep:{seconds}"),
     )
     mock_main = MagicMock()
     mock_main.start.side_effect = lambda: order.append("main.start")

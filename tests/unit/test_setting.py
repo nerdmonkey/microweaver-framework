@@ -167,6 +167,12 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.LOG_FORMAT == "json"
     assert setting.DHT22_PIN == 4
     assert setting.RELAY_PIN == 5
+    assert setting.CLAIM_ENABLED is False
+    assert setting.CLAIM_URL == ""
+    assert setting.CLAIM_CODE == ""
+    assert setting.DEVICE_ID == ""
+    assert setting.DEVICE_CERT == ""
+    assert setting.DEVICE_KEY == ""
 
 
 def test_get_settings_method():

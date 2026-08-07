@@ -29,6 +29,10 @@ class FactoryResetService:
                 wifi_password="",
                 mqtt_username="",
                 mqtt_password="",
+                claim_code="",
+                device_id="",
+                device_cert="",
+                device_key="",
             )
         self._clear_sentinel()
         print("Factory reset: credentials cleared, re-entering provisioning")

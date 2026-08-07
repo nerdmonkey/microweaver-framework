@@ -51,3 +51,34 @@ def test_start_provisioning_wires_and_runs_provisioning_service(mocker):
         setting=main.setting,
     )
     mock_instance.run.assert_called_once_with()
+
+
+def test_start_claim_wires_wifi_and_registers_with_backend(mocker):
+    mocker.patch("main.setting.WIFI_SSID", "TestNet")
+    mocker.patch("main.setting.WIFI_PASSWORD", "secret")
+    mocker.patch("main.setting.WIFI_CONNECT_TIMEOUT_SECONDS", 20)
+    mocker.patch("main.setting.WIFI_RECONNECT_DELAY_SECONDS", 2)
+    mocker.patch("main.setting.WIFI_MAX_RECONNECT_DELAY_SECONDS", 30)
+    mocker.patch("main.setting.WIFI_DISABLE_POWER_SAVE", False)
+    mocker.patch("main.setting.CLAIM_URL", "https://api.example.com/devices")
+    mocker.patch("main.setting.CLAIM_CODE", "CODE123")
+    mock_wifi_cls = mocker.patch("main.WiFiService")
+    mock_registration_cls = mocker.patch("main.RegistrationService")
+
+    main.start_claim()
+
+    mock_wifi_cls.assert_called_once_with(
+        ssid="TestNet",
+        password="secret",
+        connect_timeout_seconds=20,
+        reconnect_delay_seconds=2,
+        max_reconnect_delay_seconds=30,
+        disable_power_save=False,
+    )
+    mock_wifi_cls.return_value.connect.assert_called_once_with()
+    mock_registration_cls.assert_called_once_with(
+        claim_url="https://api.example.com/devices",
+        claim_code="CODE123",
+        setting=main.setting,
+    )
+    mock_registration_cls.return_value.register.assert_called_once_with()
