@@ -1,5 +1,10 @@
 import time
 
+try:
+    import ujson as json
+except ImportError:
+    import json
+
 from app.services.bootloop import BootLoopGuard
 from app.services.error_handler import ErrorHandlerService
 from app.services.health import HealthCheckService
@@ -20,6 +25,9 @@ class SubscribeService:
     def __init__(self, adapters=None):
         self.topics = list(setting.MQTT_TOPIC_SUB)
         self.message_handlers = {}
+        self.publish_qos = setting.MQTT_PUBLISH_QOS
+        self.publish_retain = setting.MQTT_PUBLISH_RETAIN
+        self.ota_status_topic = setting.OTA_STATUS_TOPIC
         self.log_service = LogService(format=setting.LOG_FORMAT)
         self.error_handler = ErrorHandlerService(logger=self.log_service)
         self.watchdog_service = None
@@ -64,6 +72,7 @@ class SubscribeService:
                 setting.OTA_MANIFEST_URL,
                 setting=setting,
                 state_path=setting.OTA_STATE_PATH,
+                on_status=self._report_ota_status,
             )
             if setting.OTA_TOPIC:
                 self.topics.append(setting.OTA_TOPIC)
@@ -143,6 +152,26 @@ class SubscribeService:
     def _handle_ota_message(self, topic, message):
         print("OTA update triggered via MQTT:", message.decode())
         self.error_handler.guard(self.ota_service.apply_update, "ota_update")
+
+    def _report_ota_status(self, payload):
+        payload.setdefault("app_version", setting.APP_VERSION)
+        self._publish(self.ota_status_topic, json.dumps(payload))
+
+    def _publish(self, topic, message):
+        if self.client:
+            try:
+                print("Publishing message to topic:", topic)
+                self.client.publish(
+                    topic,
+                    message.encode(),
+                    qos=self.publish_qos,
+                    retain=self.publish_retain,
+                )
+                print("Message published")
+            except Exception as e:
+                print("Failed to publish message:", e)
+        else:
+            print("Not connected to MQTT.")
 
     def connect_to_mqtt(self):
         self.client = self.connection.connect()

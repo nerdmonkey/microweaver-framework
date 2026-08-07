@@ -68,5 +68,6 @@
     "ota_enabled": false,
     "ota_manifest_url": "",
     "ota_state_path": "ota_state.json",
-    "ota_topic": "ota/update"
+    "ota_topic": "ota/update",
+    "ota_status_topic": "ota/status"
 }

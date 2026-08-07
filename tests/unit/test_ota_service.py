@@ -563,6 +563,233 @@ def test_confirm_update_returns_none_when_no_pending_state(tmp_path):
     assert service.confirm_update() is None
 
 
+def test_apply_update_reports_downloading_then_applied_status(mocker, tmp_path):
+    target = tmp_path / "main.py"
+    manifest = {
+        "version": "1.3.0",
+        "files": {
+            str(target): {
+                "url": "https://api.example.com/main.py",
+                "sha256": CONTENT_SHA256,
+            }
+        },
+    }
+    setting = MagicMock()
+    setting.APP_VERSION = "1.2.3"
+    on_status = MagicMock()
+    service = OtaService(
+        manifest_url="https://api.example.com/manifest.json",
+        setting=setting,
+        state_path=str(tmp_path / "ota_state.json"),
+        on_status=on_status,
+    )
+    mocker.patch.object(service, "check_for_update", return_value=manifest)
+
+    def fake_download(url, path, expected_sha256=None):
+        with open(path, "w") as f:
+            f.write("new content")
+        return True
+
+    mocker.patch.object(service, "download_file", side_effect=fake_download)
+
+    service.apply_update()
+
+    assert on_status.call_args_list == [
+        mocker.call({"status": "downloading", "version": "1.3.0"}),
+        mocker.call({"status": "applied", "version": "1.3.0"}),
+    ]
+
+
+def test_apply_update_reports_failed_status_on_missing_checksum(mocker, tmp_path):
+    target = tmp_path / "main.py"
+    manifest = {
+        "version": "1.3.0",
+        "files": {str(target): "https://api.example.com/main.py"},
+    }
+    on_status = MagicMock()
+    service = OtaService(
+        manifest_url="https://api.example.com/manifest.json",
+        state_path=str(tmp_path / "ota_state.json"),
+        on_status=on_status,
+    )
+    mocker.patch.object(service, "check_for_update", return_value=manifest)
+
+    service.apply_update()
+
+    assert on_status.call_args_list == [
+        mocker.call({"status": "downloading", "version": "1.3.0"}),
+        mocker.call(
+            {
+                "status": "failed",
+                "version": "1.3.0",
+                "error": "missing checksum for " + str(target),
+            }
+        ),
+    ]
+
+
+def test_apply_update_reports_failed_status_on_download_failure(mocker, tmp_path):
+    target = tmp_path / "main.py"
+    manifest = {
+        "version": "1.3.0",
+        "files": {
+            str(target): {
+                "url": "https://api.example.com/main.py",
+                "sha256": CONTENT_SHA256,
+            }
+        },
+    }
+    on_status = MagicMock()
+    service = OtaService(
+        manifest_url="https://api.example.com/manifest.json",
+        state_path=str(tmp_path / "ota_state.json"),
+        on_status=on_status,
+    )
+    mocker.patch.object(service, "check_for_update", return_value=manifest)
+    mocker.patch.object(service, "download_file", return_value=False)
+
+    service.apply_update()
+
+    assert on_status.call_args_list == [
+        mocker.call({"status": "downloading", "version": "1.3.0"}),
+        mocker.call(
+            {
+                "status": "failed",
+                "version": "1.3.0",
+                "error": "failed to stage " + str(target),
+            }
+        ),
+    ]
+
+
+def test_apply_update_without_status_callback_does_not_raise(mocker, tmp_path):
+    target = tmp_path / "main.py"
+    manifest = {
+        "version": "1.3.0",
+        "files": {
+            str(target): {
+                "url": "https://api.example.com/main.py",
+                "sha256": CONTENT_SHA256,
+            }
+        },
+    }
+    service = OtaService(
+        manifest_url="https://api.example.com/manifest.json",
+        state_path=str(tmp_path / "ota_state.json"),
+    )
+    mocker.patch.object(service, "check_for_update", return_value=manifest)
+
+    def fake_download(url, path, expected_sha256=None):
+        with open(path, "w") as f:
+            f.write("new content")
+        return True
+
+    mocker.patch.object(service, "download_file", side_effect=fake_download)
+
+    assert service.apply_update() is True
+
+
+def test_status_callback_exception_is_printed_not_raised(mocker, tmp_path, capsys):
+    target = tmp_path / "main.py"
+    manifest = {
+        "version": "1.3.0",
+        "files": {
+            str(target): {
+                "url": "https://api.example.com/main.py",
+                "sha256": CONTENT_SHA256,
+            }
+        },
+    }
+    on_status = MagicMock(side_effect=RuntimeError("mqtt down"))
+    service = OtaService(
+        manifest_url="https://api.example.com/manifest.json",
+        state_path=str(tmp_path / "ota_state.json"),
+        on_status=on_status,
+    )
+    mocker.patch.object(service, "check_for_update", return_value=manifest)
+
+    def fake_download(url, path, expected_sha256=None):
+        with open(path, "w") as f:
+            f.write("new content")
+        return True
+
+    mocker.patch.object(service, "download_file", side_effect=fake_download)
+
+    result = service.apply_update()
+
+    assert result is True
+    out = capsys.readouterr().out
+    assert "OTA status report failed:" in out
+
+
+def test_rollback_reports_rolled_back_status(mocker, tmp_path):
+    target = tmp_path / "main.py"
+    manifest = {
+        "version": "1.3.0",
+        "files": {
+            str(target): {
+                "url": "https://api.example.com/main.py",
+                "sha256": CONTENT_SHA256,
+            }
+        },
+    }
+    setting = MagicMock()
+    setting.APP_VERSION = "1.2.3"
+    on_status = MagicMock()
+    service = OtaService(
+        setting=setting,
+        state_path=str(tmp_path / "ota_state.json"),
+        on_status=on_status,
+    )
+    target.write_text("old content")
+
+    def fake_download(url, path, expected_sha256=None):
+        with open(path, "w") as f:
+            f.write("new content")
+        return True
+
+    mocker.patch.object(service, "check_for_update", return_value=manifest)
+    mocker.patch.object(service, "download_file", side_effect=fake_download)
+    service.apply_update()
+    on_status.reset_mock()
+
+    service.rollback()
+
+    on_status.assert_called_once_with({"status": "rolled_back", "version": "1.2.3"})
+
+
+def test_confirm_update_reports_confirmed_status(mocker, tmp_path):
+    target = tmp_path / "main.py"
+    manifest = {
+        "version": "1.3.0",
+        "files": {
+            str(target): {
+                "url": "https://api.example.com/main.py",
+                "sha256": CONTENT_SHA256,
+            }
+        },
+    }
+    on_status = MagicMock()
+    service = OtaService(
+        state_path=str(tmp_path / "ota_state.json"),
+        on_status=on_status,
+    )
+
+    def fake_download(url, path, expected_sha256=None):
+        with open(path, "w") as f:
+            f.write("new content")
+        return True
+
+    mocker.patch.object(service, "check_for_update", return_value=manifest)
+    mocker.patch.object(service, "download_file", side_effect=fake_download)
+    service.apply_update()
+    on_status.reset_mock()
+
+    service.confirm_update()
+
+    on_status.assert_called_once_with({"status": "confirmed", "version": "1.3.0"})
+
+
 def test_confirm_update_removes_backup_and_clears_state(mocker, tmp_path):
     target = tmp_path / "main.py"
     manifest = {
