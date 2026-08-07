@@ -49,10 +49,13 @@ def test_clear_removes_file(tmp_path):
     assert service.read() is None
 
 
-def test_clear_is_noop_when_file_missing(tmp_path):
+def test_clear_failure_is_printed_not_raised(tmp_path, capsys):
     service = make_service(tmp_path)
 
     service.clear()
+
+    out = capsys.readouterr().out
+    assert "Failed to clear crash log" in out
 
 
 def test_write_failure_is_printed_not_raised(tmp_path, capsys):

@@ -33,5 +33,5 @@ class CrashLogService:
     def clear(self):
         try:
             os.remove(self.path)
-        except Exception:
-            pass
+        except Exception as e:
+            print("Failed to clear crash log:", e)
