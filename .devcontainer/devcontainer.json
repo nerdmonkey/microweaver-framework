@@ -1,0 +1,21 @@
+{
+  "name": "microweaver-framework",
+  "build": {
+    "context": "..",
+    "dockerfile": "../Dockerfile"
+  },
+  "workspaceFolder": "/workspace",
+  "remoteUser": "root",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.black-formatter"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/workspace/.venv/bin/python"
+      }
+    }
+  },
+  "postCreateCommand": "poetry install --no-root"
+}
