@@ -176,6 +176,8 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.DEVICE_ID == ""
     assert setting.DEVICE_CERT == ""
     assert setting.DEVICE_KEY == ""
+    assert setting.OTA_ENABLED is False
+    assert setting.OTA_MANIFEST_URL == ""
 
 
 def test_get_settings_method():

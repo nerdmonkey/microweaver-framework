@@ -64,5 +64,7 @@
     "claim_code": "",
     "device_id": "",
     "device_cert": "",
-    "device_key": ""
+    "device_key": "",
+    "ota_enabled": false,
+    "ota_manifest_url": ""
 }
