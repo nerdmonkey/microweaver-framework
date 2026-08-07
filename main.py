@@ -2,7 +2,9 @@ from app.adapters.actuators.relay import RelayAdapter
 from app.adapters.sensors.dht22 import DHT22Adapter
 from app.services.provisioning import ProvisioningService
 from app.services.publish import PublishService
+from app.services.registration import RegistrationService
 from app.services.safe_mode import SafeModeService
+from app.services.wifi import WiFiService
 from config.app import Setting
 
 setting = (Setting()).get_settings()
@@ -31,6 +33,24 @@ def start_provisioning():
         setting=setting,
     )
     provisioning.run()
+
+
+def start_claim():
+    wifi = WiFiService(
+        ssid=setting.WIFI_SSID,
+        password=setting.WIFI_PASSWORD,
+        connect_timeout_seconds=setting.WIFI_CONNECT_TIMEOUT_SECONDS,
+        reconnect_delay_seconds=setting.WIFI_RECONNECT_DELAY_SECONDS,
+        max_reconnect_delay_seconds=setting.WIFI_MAX_RECONNECT_DELAY_SECONDS,
+        disable_power_save=setting.WIFI_DISABLE_POWER_SAVE,
+    )
+    wifi.connect()
+    registration = RegistrationService(
+        claim_url=setting.CLAIM_URL,
+        claim_code=setting.CLAIM_CODE,
+        setting=setting,
+    )
+    registration.register()
 
 
 if __name__ == "__main__":

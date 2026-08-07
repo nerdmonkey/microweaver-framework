@@ -63,4 +63,8 @@ def run_bootstrap():
         main.start_provisioning()
         return
 
+    if setting.CLAIM_ENABLED and not setting.DEVICE_ID and setting.CLAIM_CODE:
+        print("BOOT: device not yet claimed, registering with backend")
+        main.start_claim()
+
     main.start()

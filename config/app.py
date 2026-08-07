@@ -63,6 +63,12 @@ _SCHEMA = {
     "factory_reset_pin": {"type": "int", "min": -1, "max": 39},
     "factory_reset_hold_seconds": {"type": "int", "min": 0},
     "factory_reset_sentinel_path": {"type": str},
+    "claim_enabled": {"type": bool},
+    "claim_url": {"type": str},
+    "claim_code": {"type": str},
+    "device_id": {"type": str},
+    "device_cert": {"type": str},
+    "device_key": {"type": str},
 }
 
 
@@ -173,6 +179,13 @@ class Setting:
         self.FACTORY_RESET_SENTINEL_PATH = self._value(
             "factory_reset_sentinel_path", "reprovision.flag"
         )
+
+        self.CLAIM_ENABLED = self._bool("claim_enabled", False)
+        self.CLAIM_URL = self._value("claim_url", "")
+        self.CLAIM_CODE = self._value("claim_code", "")
+        self.DEVICE_ID = self._value("device_id", "")
+        self.DEVICE_CERT = self._value("device_cert", "")
+        self.DEVICE_KEY = self._value("device_key", "")
 
     def _load(self, path):
         try:

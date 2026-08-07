@@ -99,10 +99,13 @@ class ProvisioningService:
     def _save_credentials(self, fields):
         ssid = fields.get("ssid", "").strip()
         password = fields.get("password", "")
+        claim_code = fields.get("claim_code", "").strip()
         if not ssid:
             raise ValueError("ssid is required")
         if self.setting:
-            self.setting.save(wifi_ssid=ssid, wifi_password=password)
+            self.setting.save(
+                wifi_ssid=ssid, wifi_password=password, claim_code=claim_code or None
+            )
         print("Provisioning saved credentials for ssid:", ssid)
 
     def _parse_request_line(self, request):
@@ -144,6 +147,8 @@ class ProvisioningService:
             '<form method="POST" action="/save">'
             '<select name="ssid">{options}</select><br>'
             '<input type="password" name="password" placeholder="Password"><br>'
+            '<input type="text" name="claim_code" placeholder="Claim code (optional)">'
+            "<br>"
             '<button type="submit">Save</button>'
             "</form></body></html>"
         ).format(options=options)
