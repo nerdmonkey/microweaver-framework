@@ -72,6 +72,8 @@ _SCHEMA = {
     "device_id": {"type": str},
     "device_cert": {"type": str},
     "device_key": {"type": str},
+    "ota_enabled": {"type": bool},
+    "ota_manifest_url": {"type": str},
 }
 
 
@@ -192,6 +194,9 @@ class Setting:
         self.DEVICE_ID = self._value("device_id", "")
         self.DEVICE_CERT = self._value("device_cert", "")
         self.DEVICE_KEY = self._value("device_key", "")
+
+        self.OTA_ENABLED = self._bool("ota_enabled", False)
+        self.OTA_MANIFEST_URL = self._value("ota_manifest_url", "")
 
     def _load(self, path):
         try:
