@@ -1,7 +1,5 @@
 from unittest.mock import MagicMock
 
-import pytest
-
 from app.services.wifi import WiFiService
 
 
@@ -29,7 +27,10 @@ def test_connect_waits_until_connected(mocker):
     assert service.connect() is True
     mock_wlan.connect.assert_called_once_with("ssid", "password")
     assert mock_wlan.disconnect.call_count == 1
-    assert mock_wlan.active.call_args_list[:2] == [mocker.call(False), mocker.call(True)]
+    assert mock_wlan.active.call_args_list[:2] == [
+        mocker.call(False),
+        mocker.call(True),
+    ]
 
 
 def test_connect_retries_with_exponential_backoff(mocker):

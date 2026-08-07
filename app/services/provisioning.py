@@ -19,7 +19,7 @@ class ProvisioningService:
     def __init__(
         self,
         ap_ssid="Microweaver-Setup",
-        ap_password="",
+        ap_password="",  # nosec B107 - open AP by default, not a real credential
         ap_ip="192.168.4.1",
         port=80,
         setting=None,
@@ -77,7 +77,7 @@ class ProvisioningService:
         self.start()
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server.bind(("0.0.0.0", self.port))
+        self.server.bind(("0.0.0.0", self.port))  # nosec B104 - local AP-only server
         self.server.listen(1)
         self.server.settimeout(ACCEPT_TIMEOUT_SECONDS)
         print("Provisioning server listening on port", self.port)
@@ -156,7 +156,7 @@ class ProvisioningService:
         sta.active(True)
         try:
             sta.disconnect()
-        except Exception:
+        except Exception:  # nosec B110 - best-effort reset before a fresh test
             pass
         try:
             sta.connect(ssid, password)

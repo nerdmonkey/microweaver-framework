@@ -35,7 +35,7 @@ class WiFiService:
     def _reset_interface(self):
         try:
             self.wlan.disconnect()
-        except Exception:
+        except Exception:  # nosec B110 - best-effort reset before reconfiguring
             pass
         self.wlan.active(False)
         time.sleep(1)
