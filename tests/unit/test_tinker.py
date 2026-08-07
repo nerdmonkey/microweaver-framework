@@ -400,8 +400,11 @@ def test_upload_custom_baud_warns(tmp_path, mocker):
 
 def test_upload_with_reset_flag(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
+    mock_run = mocker.patch.object(
+        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
+    )
     mock_reset = mocker.patch.object(tinker, "hard_reset")
+    mocker.patch.object(tinker.time, "sleep")
     src = tmp_path / "dist"
     src.mkdir()
     result = runner.invoke(
@@ -409,6 +412,55 @@ def test_upload_with_reset_flag(tmp_path, mocker):
     )
     assert result.exit_code == 0
     mock_reset.assert_called_once_with("/dev/ttyUSB0")
+    assert mock_run.call_count == 1
+
+
+def test_upload_retries_after_reset_race(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        side_effect=[MagicMock(returncode=1), MagicMock(returncode=0)],
+    )
+    mocker.patch.object(tinker, "hard_reset")
+    mock_sleep = mocker.patch.object(tinker.time, "sleep")
+    src = tmp_path / "dist"
+    src.mkdir()
+    result = runner.invoke(
+        tinker.app, ["upload", "--port", "/dev/ttyUSB0", "--reset", str(src)]
+    )
+    assert result.exit_code == 0
+    assert mock_run.call_count == 2
+    assert "retrying" in result.stderr
+    assert mock_sleep.call_count == 2
+
+
+def test_upload_exhausts_retries_after_reset(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess, "run", return_value=MagicMock(returncode=1)
+    )
+    mocker.patch.object(tinker, "hard_reset")
+    mocker.patch.object(tinker.time, "sleep")
+    src = tmp_path / "dist"
+    src.mkdir()
+    result = runner.invoke(
+        tinker.app, ["upload", "--port", "/dev/ttyUSB0", "--reset", str(src)]
+    )
+    assert result.exit_code == 1
+    assert mock_run.call_count == tinker.UPLOAD_RETRY_ATTEMPTS
+
+
+def test_upload_without_reset_does_not_retry(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess, "run", return_value=MagicMock(returncode=1)
+    )
+    src = tmp_path / "dist"
+    src.mkdir()
+    result = runner.invoke(tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(src)])
+    assert result.exit_code == 1
+    assert mock_run.call_count == 1
 
 
 def test_upload_prompts_for_port_when_missing(tmp_path, mocker):

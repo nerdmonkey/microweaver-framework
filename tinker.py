@@ -25,6 +25,8 @@ DIST = ROOT / "dist"
 BACKUP = ROOT / "backup"
 CONFIG_PATH = ROOT / ".microweaver"
 DEFAULT_BAUD = 115200
+UPLOAD_RESET_SETTLE_SECONDS = 1.5
+UPLOAD_RETRY_ATTEMPTS = 4
 
 PACKAGE_DIRS = ["app", "config"]
 ROOT_FILES_COMPILE = ["_boot.py", "main.py"]
@@ -286,6 +288,33 @@ def build(
     print("\nDone. Output: dist/")
 
 
+def _run_upload_cmd(
+    cmd: list[str], attempts: int
+) -> "subprocess.CompletedProcess[bytes]":
+    """Run the mpremote fs cp command, retrying 'could not enter raw repl'.
+
+    A hard reset races mpremote's raw-REPL handshake against the board
+    rebooting. If the device has no WiFi credentials configured it also
+    boots into provisioning mode - starting its own AP and HTTP server -
+    which keeps the serial port busy longer than a normal boot, so this
+    failure right after --reset is usually transient rather than fatal.
+    Retry with a linear backoff (longer waits on later attempts) before
+    giving up.
+    """
+    result = subprocess.run(cmd)  # nosec B603
+    for attempt in range(2, attempts + 1):
+        if result.returncode == 0:
+            break
+        print(
+            f"NOTE: upload failed (raw-REPL race after reset), "
+            f"retrying ({attempt}/{attempts})...",
+            file=sys.stderr,
+        )
+        time.sleep(UPLOAD_RESET_SETTLE_SECONDS * (attempt - 1))
+        result = subprocess.run(cmd)  # nosec B603
+    return result
+
+
 @app.command()
 def upload(
     port: Optional[str] = typer.Option(
@@ -340,10 +369,12 @@ def upload(
     if reset:
         print(f"Resetting {resolved_port}...")
         hard_reset(resolved_port)
+        time.sleep(UPLOAD_RESET_SETTLE_SECONDS)
 
     src = f"{resolved_path}/." if resolved_path.is_dir() else str(resolved_path)
     cmd = ["mpremote", "connect", resolved_port, "fs", "cp", "-r", src, ":"]
-    result = subprocess.run(cmd)  # nosec B603
+    attempts = UPLOAD_RETRY_ATTEMPTS if reset else 1
+    result = _run_upload_cmd(cmd, attempts)
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 
