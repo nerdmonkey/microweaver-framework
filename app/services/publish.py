@@ -11,6 +11,7 @@ from app.services.error_handler import ErrorHandlerService, format_exception
 from app.services.health import HealthCheckService
 from app.services.logger import LogService
 from app.services.memory_monitor import MemoryMonitorService
+from app.services.metrics import MetricsService
 from app.services.mqtt import MqttConnection
 from app.services.ota import OtaService
 from app.services.poll_scheduler import PollScheduler
@@ -34,8 +35,11 @@ class PublishService:
         self.crash_log = CrashLogService(
             setting.CRASH_LOG_PATH, setting.CRASH_LOG_ENABLED
         )
+        self.metrics_service = MetricsService()
         self.error_handler = ErrorHandlerService(
-            logger=self.log_service, crash_log=self.crash_log
+            logger=self.log_service,
+            crash_log=self.crash_log,
+            metrics=self.metrics_service,
         )
         self.watchdog_service = None
         if setting.WATCHDOG_ENABLED:
@@ -130,6 +134,7 @@ class PublishService:
                 interval_seconds=setting.HEALTH_CHECK_INTERVAL_SECONDS,
                 logger=self.log_service,
                 app_version=setting.APP_VERSION,
+                metrics=self.metrics_service,
             )
             self.health_check_service.register("wifi", self.wifi_service.is_connected)
             if setting.MQTT_ENABLED:
@@ -188,8 +193,10 @@ class PublishService:
                     retain=self.publish_retain,
                 )
                 print("Message published")
+                self.metrics_service.record_publish()
             except Exception as e:
                 print("Failed to publish message:", e)
+                self.metrics_service.record_error()
         else:
             print("Not connected to MQTT.")
 
@@ -238,5 +245,6 @@ class PublishService:
                     error=str(e),
                     trace=format_exception(e),
                 )
+                self.metrics_service.record_error()
             finally:
                 self.disconnect()

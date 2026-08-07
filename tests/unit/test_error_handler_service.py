@@ -132,3 +132,35 @@ def test_guard_does_not_touch_crash_log_when_none_given():
     result = service.guard(failing, "mqtt_connect")
 
     assert result is None
+
+
+def test_guard_records_metrics_error_on_exception():
+    metrics = MagicMock()
+    service = ErrorHandlerService(logger=MagicMock(), metrics=metrics)
+
+    def failing():
+        raise OSError("broker down")
+
+    service.guard(failing, "mqtt_connect")
+
+    metrics.record_error.assert_called_once_with()
+
+
+def test_guard_does_not_record_metrics_on_success():
+    metrics = MagicMock()
+    service = ErrorHandlerService(logger=MagicMock(), metrics=metrics)
+
+    service.guard(lambda: 1, "some_context")
+
+    metrics.record_error.assert_not_called()
+
+
+def test_guard_does_not_touch_metrics_when_none_given():
+    service = ErrorHandlerService(logger=MagicMock())
+
+    def failing():
+        raise OSError("broker down")
+
+    result = service.guard(failing, "mqtt_connect")
+
+    assert result is None

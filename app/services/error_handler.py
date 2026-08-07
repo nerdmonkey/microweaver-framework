@@ -30,9 +30,10 @@ class ErrorHandlerService:
     each implement ad hoc for their own narrow purpose.
     """
 
-    def __init__(self, logger=None, crash_log=None):
+    def __init__(self, logger=None, crash_log=None, metrics=None):
         self.logger = logger or LogService()
         self.crash_log = crash_log
+        self.metrics = metrics
 
     def guard(self, fn, context, *args, **kwargs):
         try:
@@ -50,4 +51,6 @@ class ErrorHandlerService:
                 self.crash_log.write(
                     "unhandled_exception", context=context, error=str(e), trace=trace
                 )
+            if self.metrics:
+                self.metrics.record_error()
             return None

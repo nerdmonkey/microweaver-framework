@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.services.error_handler import ErrorHandlerService
+from app.services.metrics import MetricsService
 from app.services.publish import PublishService, setting
 
 
@@ -411,6 +412,7 @@ def test_error_handler_is_created():
     assert isinstance(service.error_handler, ErrorHandlerService)
     assert service.error_handler.logger is service.log_service
     assert service.error_handler.crash_log is service.crash_log
+    assert service.error_handler.metrics is service.metrics_service
 
 
 def test_crash_log_created_from_settings(mocker):
@@ -547,6 +549,7 @@ def test_health_check_created_when_enabled(mocker):
         interval_seconds=15,
         logger=service.log_service,
         app_version=setting.APP_VERSION,
+        metrics=service.metrics_service,
     )
     assert service.health_check_service is mock_health
     assert mock_health.register.call_args_list[0][0][0] == "wifi"
@@ -719,3 +722,57 @@ def test_publish_health_report_publishes_report_json(mocker):
         qos=service.publish_qos,
         retain=service.publish_retain,
     )
+
+
+def test_metrics_service_is_created():
+    service = PublishService()
+
+    assert isinstance(service.metrics_service, MetricsService)
+
+
+def test_publish_message_records_metrics_on_success():
+    service = PublishService()
+    service.client = MagicMock()
+
+    service.publish_message("hi")
+
+    assert service.metrics_service.messages_published == 1
+    assert service.metrics_service.errors == 0
+
+
+def test_publish_message_records_error_on_publish_exception():
+    service = PublishService()
+    service.client = MagicMock()
+    service.client.publish.side_effect = OSError("broker unreachable")
+
+    service.publish_message("hi")
+
+    assert service.metrics_service.messages_published == 0
+    assert service.metrics_service.errors == 1
+
+
+def test_publish_message_without_client_records_no_metrics():
+    service = PublishService()
+    service.client = None
+
+    service.publish_message("hi")
+
+    assert service.metrics_service.messages_published == 0
+    assert service.metrics_service.errors == 0
+
+
+def test_run_records_metrics_error_on_connection_lost(mocker):
+    mocker.patch("app.services.publish.setting.MQTT_ENABLED", True)
+    mocker.patch("app.services.publish.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.publish.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mocker.patch("time.sleep", side_effect=ConnectionResetError("dropped"))
+
+    service = PublishService()
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        service.run(message="hi")
+
+    assert service.metrics_service.errors == 1

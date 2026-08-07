@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BootLoopGuard`'s `boot_state.json` pattern) before the device resets. `ResetService`
   reads and logs it as `crash_log_recovered` on the next boot, then clears it, so the log
   leading up to a reset survives for post-mortem retrieval.
+- `MetricsService` tracks uptime plus published/received message and error counters,
+  incremented by `PublishService`/`SubscribeService` on every publish, inbound message,
+  and unhandled exception, and surfaced in `HealthCheckService.report()`'s `metrics` key
+  alongside the existing health payload.
 
 ## [0.1.0] - 2026-08-08
 
