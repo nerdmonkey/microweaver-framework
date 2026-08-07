@@ -7,6 +7,16 @@ try:
 except ImportError:
     import json
 
+try:
+    import uhashlib as hashlib
+except ImportError:
+    import hashlib
+
+try:
+    import ubinascii as binascii
+except ImportError:
+    import binascii
+
 STAGED_SUFFIX = ".ota_new"
 BACKUP_SUFFIX = ".ota_bak"
 
@@ -57,7 +67,7 @@ class OtaService:
         print("OTA payload written:", path)
         return True
 
-    def download_file(self, url, path):
+    def download_file(self, url, path, expected_sha256=None):
         try:
             response = urequests.get(url)
         except Exception as e:
@@ -72,6 +82,11 @@ class OtaService:
         finally:
             response.close()
 
+        if expected_sha256 and not self._verify_checksum(path, expected_sha256):
+            print("OTA checksum mismatch, rejecting payload:", path)
+            self._remove(path)
+            return False
+
         print("OTA file written:", path)
         return True
 
@@ -82,9 +97,15 @@ class OtaService:
             return False
 
         staged = {}
-        for path, url in manifest.get("files", {}).items():
+        for path, file_meta in manifest.get("files", {}).items():
+            url, expected_sha256 = self._file_url_and_checksum(file_meta)
+            if not expected_sha256:
+                print("OTA update aborted: missing checksum for", path)
+                self._remove_all(staged.values())
+                return False
+
             staged_path = path + STAGED_SUFFIX
-            if not self.download_file(url, staged_path):
+            if not self.download_file(url, staged_path, expected_sha256):
                 print("OTA update aborted: failed to stage", path)
                 self._remove_all(staged.values())
                 return False
@@ -144,6 +165,29 @@ class OtaService:
 
         self._clear_state()
         print("OTA update confirmed, version:", state.get("version"))
+
+    def _file_url_and_checksum(self, file_meta):
+        if isinstance(file_meta, dict):
+            return file_meta.get("url"), file_meta.get("sha256")
+        return file_meta, None
+
+    def _verify_checksum(self, path, expected_sha256):
+        actual = self._sha256_hex(path)
+        return actual is not None and actual.lower() == expected_sha256.lower()
+
+    def _sha256_hex(self, path):
+        try:
+            digest = hashlib.sha256()
+            with open(path, "rb") as source:
+                while True:
+                    chunk = source.read(512)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+            return binascii.hexlify(digest.digest()).decode()
+        except Exception as e:
+            print("OTA checksum computation failed:", path, e)
+            return None
 
     def _remove_all(self, paths):
         for path in paths:
