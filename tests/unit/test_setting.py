@@ -63,6 +63,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "ota_enabled": True,
                 "ota_manifest_url": "https://api.example.com/manifest.json",
                 "ota_state_path": "test_ota_state.json",
+                "ota_topic": "test/ota/update",
             }
         )
     )
@@ -122,6 +123,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.OTA_ENABLED is True
     assert setting.OTA_MANIFEST_URL == "https://api.example.com/manifest.json"
     assert setting.OTA_STATE_PATH == "test_ota_state.json"
+    assert setting.OTA_TOPIC == "test/ota/update"
 
 
 def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
@@ -185,6 +187,7 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.OTA_ENABLED is False
     assert setting.OTA_MANIFEST_URL == ""
     assert setting.OTA_STATE_PATH == "ota_state.json"
+    assert setting.OTA_TOPIC == "ota/update"
 
 
 def test_get_settings_method():

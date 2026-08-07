@@ -18,7 +18,7 @@ setting = (Setting()).get_settings()
 
 class SubscribeService:
     def __init__(self, adapters=None):
-        self.topics = setting.MQTT_TOPIC_SUB
+        self.topics = list(setting.MQTT_TOPIC_SUB)
         self.message_handlers = {}
         self.log_service = LogService(format=setting.LOG_FORMAT)
         self.error_handler = ErrorHandlerService(logger=self.log_service)
@@ -65,6 +65,9 @@ class SubscribeService:
                 setting=setting,
                 state_path=setting.OTA_STATE_PATH,
             )
+            if setting.OTA_TOPIC:
+                self.topics.append(setting.OTA_TOPIC)
+                self.message_handlers[setting.OTA_TOPIC] = self._handle_ota_message
         self.memory_monitor_service = None
         if setting.MEMORY_MONITOR_ENABLED:
             self.memory_monitor_service = MemoryMonitorService(
@@ -136,6 +139,10 @@ class SubscribeService:
 
     def _default_handler(self, topic, message):
         print("Received message on topic:", topic.decode(), "-", message.decode())
+
+    def _handle_ota_message(self, topic, message):
+        print("OTA update triggered via MQTT:", message.decode())
+        self.error_handler.guard(self.ota_service.apply_update, "ota_update")
 
     def connect_to_mqtt(self):
         self.client = self.connection.connect()
