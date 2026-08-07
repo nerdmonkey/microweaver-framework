@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock
 
-from app.services.error_handler import ErrorHandlerService
+from app.services.error_handler import ErrorHandlerService, format_exception
 
 
 def test_guard_returns_function_result_on_success():
@@ -46,6 +46,7 @@ def test_guard_logs_exception_with_context():
         level="error",
         context="mqtt_connect",
         error="broker down",
+        trace="OSError: broker down",
     )
 
 
@@ -67,5 +68,30 @@ def test_uses_default_logger_when_none_given(mocker):
 
     assert service.logger is mock_logger
     mock_logger.log.assert_called_once_with(
-        "unhandled_exception", level="error", context="ctx", error="boom"
+        "unhandled_exception",
+        level="error",
+        context="ctx",
+        error="boom",
+        trace="RuntimeError: boom",
     )
+
+
+def test_format_exception_uses_sys_print_exception_when_available(mocker):
+    def fake_print_exception(exc, buf):
+        buf.write("Traceback (most recent call last):\nOSError: broker down")
+
+    mocker.patch(
+        "app.services.error_handler.sys.print_exception",
+        create=True,
+        side_effect=fake_print_exception,
+    )
+
+    result = format_exception(OSError("broker down"))
+
+    assert result == "Traceback (most recent call last):\nOSError: broker down"
+
+
+def test_format_exception_falls_back_when_sys_print_exception_unavailable():
+    result = format_exception(OSError("broker down"))
+
+    assert result == "OSError: broker down"

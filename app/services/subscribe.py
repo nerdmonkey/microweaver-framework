@@ -6,7 +6,7 @@ except ImportError:
     import json
 
 from app.services.bootloop import BootLoopGuard
-from app.services.error_handler import ErrorHandlerService
+from app.services.error_handler import ErrorHandlerService, format_exception
 from app.services.health import HealthCheckService
 from app.services.logger import LogService
 from app.services.memory_monitor import MemoryMonitorService
@@ -241,6 +241,11 @@ class SubscribeService:
                     self._run_tick()
                     time.sleep(1)
             except Exception as e:
-                print("Connection lost:", e)
+                self.log_service.log(
+                    "connection_lost",
+                    level="error",
+                    error=str(e),
+                    trace=format_exception(e),
+                )
             finally:
                 self.disconnect()

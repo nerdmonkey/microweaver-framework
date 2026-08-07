@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   periodically to a dedicated MQTT topic (`health_report_enabled`,
   `health_report_interval_seconds`, `health_report_topic`) so a fleet dashboard can see
   live device health.
+- `ErrorHandlerService.guard()` and the `PublishService`/`SubscribeService` run loops now
+  log a full stack trace (`sys.print_exception` on-device, exception type + args as a host
+  fallback) alongside every unhandled exception, so field crashes are debuggable without a
+  live serial session.
 
 ## [0.1.0] - 2026-08-08
 

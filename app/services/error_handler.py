@@ -1,4 +1,23 @@
+import io
+import sys
+
 from app.services.logger import LogService
+
+
+def format_exception(e):
+    """Render a full stack trace for e, falling back when unavailable.
+
+    MicroPython has no `traceback` module; `sys.print_exception` is its
+    equivalent, writing to any stream-like object including `io.StringIO`.
+    CPython's `sys` has no `print_exception`, so tests (and any future
+    non-MicroPython host) fall back to just the exception type and args.
+    """
+    try:
+        buf = io.StringIO()
+        sys.print_exception(e, buf)
+        return buf.getvalue().strip()
+    except AttributeError:
+        return "{}: {}".format(type(e).__name__, e)
 
 
 class ErrorHandlerService:
@@ -23,5 +42,6 @@ class ErrorHandlerService:
                 level="error",
                 context=context,
                 error=str(e),
+                trace=format_exception(e),
             )
             return None
