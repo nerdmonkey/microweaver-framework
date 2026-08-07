@@ -2,6 +2,8 @@ import socket
 
 import network
 
+ACCEPT_TIMEOUT_SECONDS = 1.0
+
 
 class ProvisioningService:
     def __init__(
@@ -58,10 +60,17 @@ class ProvisioningService:
         self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server.bind(("0.0.0.0", self.port))
         self.server.listen(1)
+        self.server.settimeout(ACCEPT_TIMEOUT_SECONDS)
         print("Provisioning server listening on port", self.port)
         try:
             while True:
-                client, _addr = self.server.accept()
+                try:
+                    client, _addr = self.server.accept()
+                except OSError:
+                    # accept() timed out with no client connecting - loop
+                    # back so the interpreter gets a chance to process a
+                    # Ctrl-C / raw-REPL request instead of blocking forever.
+                    continue
                 self._handle_request(client)
         finally:
             self.stop()

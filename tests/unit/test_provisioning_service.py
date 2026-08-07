@@ -2,7 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.services.provisioning import ProvisioningService
+from app.services.provisioning import ACCEPT_TIMEOUT_SECONDS, ProvisioningService
 
 
 def make_provisioning_service(mocker, **kwargs):
@@ -104,9 +104,34 @@ def test_run_serves_form_then_saves_and_stops_on_disconnect(mocker):
 
     server.bind.assert_called_once_with(("0.0.0.0", 8080))
     server.listen.assert_called_once_with(1)
+    server.settimeout.assert_called_once_with(ACCEPT_TIMEOUT_SECONDS)
     client.send.assert_called_once()
     assert b"Microweaver WiFi Setup" in client.send.call_args[0][0]
     client.close.assert_called_once_with()
+    server.close.assert_called_once_with()
+
+
+def test_run_ignores_accept_timeout_and_keeps_polling(mocker):
+    mock_network = mocker.patch("app.services.provisioning.network")
+    mock_socket = mocker.patch("app.services.provisioning.socket")
+    mock_network.WLAN.return_value.scan.return_value = []
+    server = mock_socket.socket.return_value
+    client = MagicMock()
+    server.accept.side_effect = [
+        OSError("timed out"),
+        OSError("timed out"),
+        (client, ("10.0.0.5", 5000)),
+        RuntimeError("stop test"),
+    ]
+    client.recv.return_value = b"GET / HTTP/1.1\r\nHost: 192.168.4.1\r\n\r\n"
+
+    service = ProvisioningService(port=8080)
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        service.run()
+
+    assert server.accept.call_count == 4
+    client.send.assert_called_once()
     server.close.assert_called_once_with()
 
 
