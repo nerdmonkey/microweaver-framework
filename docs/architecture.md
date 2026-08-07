@@ -110,7 +110,7 @@ The only structural difference between the two: `PublishService`'s inner loop pu
 
 ## BaseAdapter contract
 
-`BaseAdapter` (`app/adapters/base.py`) is the frozen contract every sensor/actuator/indicator driver subclasses, extending `app/adapters/{sensors,actuators,indicators}/`:
+`BaseAdapter` (`app/adapters/base.py`) is the frozen contract every sensor/actuator/indicator driver subclasses, extending `app/adapters/{sensors,actuators,indicators}/`. For a full walkthrough of writing, config-wiring, registering, and testing a new adapter, see [adapters.md](adapters.md).
 
 ```python
 class BaseAdapter:
