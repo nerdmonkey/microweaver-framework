@@ -29,10 +29,10 @@
 | Tool | Required for | Install |
 |---|---|---|
 | `mpy-cross-multi` | `build` | bundled with the project's build deps |
-| `mpremote` | `upload`, `download`, `device info` (firmware read), `device ls`, `device tree`, `device test-adapter` | `pip install mpremote` |
+| `mpremote` | `upload`, `download`, `device info` (firmware read), `device tree`, `device test-adapter` | `pip install mpremote` |
 | `esptool` (Python API) | `device reset`, `device info` (chip read) | installed as a project dependency, no separate CLI install needed |
 
-`upload`, `download`, `device ls`, `device tree`, and `device test-adapter` check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`.
+`upload`, `download`, `device tree`, and `device test-adapter` check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`. `device ls` talks to the device directly over a raw-REPL serial connection ([`DeviceTransport`](../device_transport.py)) and does not require `mpremote` on `PATH`.
 
 ## Global concepts
 
@@ -332,7 +332,7 @@ Chip/flash/MAC are read at the ROM bootloader level (same mechanism as `device r
 
 ### `device ls`
 
-List files and folders on the device via `mpremote fs ls`.
+List files and folders on the device over a direct raw-REPL serial connection (does not require `mpremote`). Enters raw REPL without a soft reset - interrupting (ctrl-C) whatever is currently running already leaves the board at a clean idle prompt, so listing files has no reason to also reboot it (and, for firmware whose `main.py` runs forever, a soft reset would hang the handshake indefinitely). Opening the serial port can still trigger a board auto-reset on some ESP32 boards, racing the handshake against the reboot; on failure this retries up to `UPLOAD_RETRY_ATTEMPTS` times with the same linear backoff `upload --reset` uses, before falling back to the `device reset` hint.
 
 ```shell
 python tinker.py device ls [OPTIONS] [PATH]
