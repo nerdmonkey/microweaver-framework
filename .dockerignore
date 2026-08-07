@@ -1,0 +1,10 @@
+.git
+.venv
+.tox
+.pytest_cache
+__pycache__
+*.pyc
+.coverage
+dist
+backup
+device_config.json

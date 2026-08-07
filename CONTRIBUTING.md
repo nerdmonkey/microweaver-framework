@@ -20,6 +20,17 @@ cd microweaver-framework
 pip install -r requirements.txt   # pytest, pytest-mock, pytest-cov, black, flake8, isort
 ```
 
+Prefer a container? Open the repo in VS Code with the Dev Containers extension
+("Reopen in Container") to get Python 3.11, Poetry, and the full dev group
+(pytest, black, flake8, isort, mpy-cross-multi, esptool, pyserial) pre-installed —
+see `.devcontainer/devcontainer.json` and `Dockerfile`. Without VS Code, build
+and run the same image directly:
+
+```shell
+docker build -t microweaver-dev .
+docker run --rm -it -v "$(pwd)":/workspace microweaver-dev
+```
+
 ## Service pattern
 
 New hardware/network functionality belongs in `app/services/` as a small
