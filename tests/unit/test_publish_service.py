@@ -244,6 +244,50 @@ def test_run_confirms_bootloop_guard_after_connect(mocker):
     guard.confirm.assert_called_once_with()
 
 
+def test_ota_service_disabled_by_default():
+    service = PublishService()
+
+    assert service.ota_service is None
+
+
+def test_ota_service_created_when_enabled(mocker):
+    mocker.patch("app.services.publish.setting.OTA_ENABLED", True)
+    mocker.patch(
+        "app.services.publish.setting.OTA_MANIFEST_URL", "https://example.com/m.json"
+    )
+    mocker.patch("app.services.publish.setting.OTA_STATE_PATH", "ota_state.json")
+    mock_ota_cls = mocker.patch("app.services.publish.OtaService")
+    mock_ota = mock_ota_cls.return_value
+
+    service = PublishService()
+
+    mock_ota_cls.assert_called_once_with(
+        "https://example.com/m.json",
+        setting=setting,
+        state_path="ota_state.json",
+    )
+    assert service.ota_service is mock_ota
+
+
+def test_run_confirms_ota_update_after_connect(mocker):
+    mocker.patch("app.services.publish.setting.MQTT_ENABLED", True)
+    mocker.patch("app.services.publish.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.publish.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mocker.patch("time.sleep", side_effect=ConnectionResetError("dropped"))
+
+    service = PublishService()
+    ota_service = MagicMock()
+    service.ota_service = ota_service
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        service.run(message="hi")
+
+    ota_service.confirm_update.assert_called_once_with()
+
+
 def test_memory_monitor_disabled_by_default():
     service = PublishService()
 

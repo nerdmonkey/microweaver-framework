@@ -151,8 +151,9 @@ def test_apply_update_returns_false_when_no_update_available(mocker):
     assert result is False
 
 
-def test_apply_update_downloads_files_and_saves_version(mocker, tmp_path):
+def test_apply_update_stages_files_then_swaps_and_saves_version(mocker, tmp_path):
     target = tmp_path / "main.py"
+    target.write_text("old content")
     manifest = {
         "version": "1.3.0",
         "files": {str(target): "https://api.example.com/main.py"},
@@ -160,36 +161,96 @@ def test_apply_update_downloads_files_and_saves_version(mocker, tmp_path):
     setting = MagicMock()
     setting.APP_VERSION = "1.2.3"
     service = OtaService(
-        manifest_url="https://api.example.com/manifest.json", setting=setting
+        manifest_url="https://api.example.com/manifest.json",
+        setting=setting,
+        state_path=str(tmp_path / "ota_state.json"),
     )
     mocker.patch.object(service, "check_for_update", return_value=manifest)
-    mock_download = mocker.patch.object(service, "download_file", return_value=True)
+
+    def fake_download(url, path):
+        with open(path, "w") as f:
+            f.write("new content")
+        return True
+
+    mock_download = mocker.patch.object(
+        service, "download_file", side_effect=fake_download
+    )
 
     result = service.apply_update()
 
     assert result is True
     mock_download.assert_called_once_with(
-        "https://api.example.com/main.py", str(target)
+        "https://api.example.com/main.py", str(target) + ".ota_new"
     )
+    assert target.read_text() == "new content"
+    assert (tmp_path / "main.py.ota_bak").read_text() == "old content"
+    assert not (tmp_path / "main.py.ota_new").exists()
     setting.save.assert_called_once_with(app_version="1.3.0")
 
 
-def test_apply_update_aborts_when_file_download_fails(mocker):
+def test_apply_update_backs_up_only_pre_existing_files(mocker, tmp_path):
+    target = tmp_path / "new_file.py"
     manifest = {
         "version": "1.3.0",
-        "files": {"main.py": "https://api.example.com/main.py"},
+        "files": {str(target): "https://api.example.com/new_file.py"},
     }
     setting = MagicMock()
     setting.APP_VERSION = "1.2.3"
     service = OtaService(
-        manifest_url="https://api.example.com/manifest.json", setting=setting
+        manifest_url="https://api.example.com/manifest.json",
+        setting=setting,
+        state_path=str(tmp_path / "ota_state.json"),
     )
     mocker.patch.object(service, "check_for_update", return_value=manifest)
-    mocker.patch.object(service, "download_file", return_value=False)
+
+    def fake_download(url, path):
+        with open(path, "w") as f:
+            f.write("new content")
+        return True
+
+    mocker.patch.object(service, "download_file", side_effect=fake_download)
+
+    result = service.apply_update()
+
+    assert result is True
+    assert target.read_text() == "new content"
+    assert not (tmp_path / "new_file.py.ota_bak").exists()
+
+
+def test_apply_update_aborts_and_cleans_staged_files_when_download_fails(
+    mocker, tmp_path
+):
+    staged_ok = tmp_path / "a.py"
+    manifest = {
+        "version": "1.3.0",
+        "files": {
+            str(staged_ok): "https://api.example.com/a.py",
+            str(tmp_path / "b.py"): "https://api.example.com/b.py",
+        },
+    }
+    setting = MagicMock()
+    setting.APP_VERSION = "1.2.3"
+    service = OtaService(
+        manifest_url="https://api.example.com/manifest.json",
+        setting=setting,
+        state_path=str(tmp_path / "ota_state.json"),
+    )
+    mocker.patch.object(service, "check_for_update", return_value=manifest)
+
+    def fake_download(url, path):
+        if path.endswith("a.py.ota_new"):
+            with open(path, "w") as f:
+                f.write("staged")
+            return True
+        return False
+
+    mocker.patch.object(service, "download_file", side_effect=fake_download)
 
     result = service.apply_update()
 
     assert result is False
+    assert not (tmp_path / "a.py.ota_new").exists()
+    assert not staged_ok.exists()
     setting.save.assert_not_called()
 
 
@@ -199,10 +260,186 @@ def test_apply_update_without_setting_still_applies(mocker, tmp_path):
         "version": "1.3.0",
         "files": {str(target): "https://api.example.com/main.py"},
     }
-    service = OtaService(manifest_url="https://api.example.com/manifest.json")
+    service = OtaService(
+        manifest_url="https://api.example.com/manifest.json",
+        state_path=str(tmp_path / "ota_state.json"),
+    )
     mocker.patch.object(service, "check_for_update", return_value=manifest)
-    mocker.patch.object(service, "download_file", return_value=True)
+
+    def fake_download(url, path):
+        with open(path, "w") as f:
+            f.write("new content")
+        return True
+
+    mocker.patch.object(service, "download_file", side_effect=fake_download)
 
     result = service.apply_update()
 
     assert result is True
+    assert target.read_text() == "new content"
+
+
+def test_rollback_returns_false_when_no_pending_state(tmp_path):
+    service = OtaService(state_path=str(tmp_path / "ota_state.json"))
+
+    assert service.rollback() is False
+
+
+def test_rollback_prints_and_continues_when_restore_rename_fails(
+    mocker, tmp_path, capsys
+):
+    target = tmp_path / "main.py"
+    manifest = {
+        "version": "1.3.0",
+        "files": {str(target): "https://api.example.com/main.py"},
+    }
+    service = OtaService(state_path=str(tmp_path / "ota_state.json"))
+    target.write_text("old content")
+
+    def fake_download(url, path):
+        with open(path, "w") as f:
+            f.write("new content")
+        return True
+
+    mocker.patch.object(service, "check_for_update", return_value=manifest)
+    mocker.patch.object(service, "download_file", side_effect=fake_download)
+    service.apply_update()
+    (tmp_path / "main.py.ota_bak").unlink()
+
+    result = service.rollback()
+
+    assert result is True
+    out = capsys.readouterr().out
+    assert "OTA rollback failed for" in out
+
+
+def test_write_state_failure_is_printed_not_raised(mocker, tmp_path, capsys):
+    target = tmp_path / "main.py"
+    manifest = {
+        "version": "1.3.0",
+        "files": {str(target): "https://api.example.com/main.py"},
+    }
+    service = OtaService(state_path=str(tmp_path / "missing_dir" / "ota_state.json"))
+
+    def fake_download(url, path):
+        with open(path, "w") as f:
+            f.write("new content")
+        return True
+
+    mocker.patch.object(service, "check_for_update", return_value=manifest)
+    mocker.patch.object(service, "download_file", side_effect=fake_download)
+
+    result = service.apply_update()
+
+    assert result is True
+    out = capsys.readouterr().out
+    assert "Failed to persist OTA state:" in out
+
+
+def test_confirm_update_ignores_already_removed_backup(mocker, tmp_path):
+    target = tmp_path / "main.py"
+    manifest = {
+        "version": "1.3.0",
+        "files": {str(target): "https://api.example.com/main.py"},
+    }
+    service = OtaService(state_path=str(tmp_path / "ota_state.json"))
+    target.write_text("old content")
+
+    def fake_download(url, path):
+        with open(path, "w") as f:
+            f.write("new content")
+        return True
+
+    mocker.patch.object(service, "check_for_update", return_value=manifest)
+    mocker.patch.object(service, "download_file", side_effect=fake_download)
+    service.apply_update()
+    (tmp_path / "main.py.ota_bak").unlink()
+
+    service.confirm_update()
+
+    assert not (tmp_path / "ota_state.json").exists()
+
+
+def test_rollback_restores_backed_up_file_and_removes_new_one(mocker, tmp_path):
+    target = tmp_path / "main.py"
+    manifest = {
+        "version": "1.3.0",
+        "files": {str(target): "https://api.example.com/main.py"},
+    }
+    setting = MagicMock()
+    setting.APP_VERSION = "1.2.3"
+    service = OtaService(setting=setting, state_path=str(tmp_path / "ota_state.json"))
+    target.write_text("old content")
+
+    def fake_download(url, path):
+        with open(path, "w") as f:
+            f.write("new content")
+        return True
+
+    mocker.patch.object(service, "check_for_update", return_value=manifest)
+    mocker.patch.object(service, "download_file", side_effect=fake_download)
+    service.apply_update()
+
+    result = service.rollback()
+
+    assert result is True
+    assert target.read_text() == "old content"
+    assert not (tmp_path / "main.py.ota_bak").exists()
+    assert not (tmp_path / "ota_state.json").exists()
+    setting.save.assert_called_with(app_version="1.2.3")
+
+
+def test_rollback_removes_newly_introduced_file_without_backup(mocker, tmp_path):
+    target = tmp_path / "new_file.py"
+    manifest = {
+        "version": "1.3.0",
+        "files": {str(target): "https://api.example.com/new_file.py"},
+    }
+    service = OtaService(state_path=str(tmp_path / "ota_state.json"))
+
+    def fake_download(url, path):
+        with open(path, "w") as f:
+            f.write("new content")
+        return True
+
+    mocker.patch.object(service, "check_for_update", return_value=manifest)
+    mocker.patch.object(service, "download_file", side_effect=fake_download)
+    service.apply_update()
+
+    result = service.rollback()
+
+    assert result is True
+    assert not target.exists()
+
+
+def test_confirm_update_returns_none_when_no_pending_state(tmp_path):
+    service = OtaService(state_path=str(tmp_path / "ota_state.json"))
+
+    assert service.confirm_update() is None
+
+
+def test_confirm_update_removes_backup_and_clears_state(mocker, tmp_path):
+    target = tmp_path / "main.py"
+    manifest = {
+        "version": "1.3.0",
+        "files": {str(target): "https://api.example.com/main.py"},
+    }
+    setting = MagicMock()
+    setting.APP_VERSION = "1.2.3"
+    service = OtaService(setting=setting, state_path=str(tmp_path / "ota_state.json"))
+    target.write_text("old content")
+
+    def fake_download(url, path):
+        with open(path, "w") as f:
+            f.write("new content")
+        return True
+
+    mocker.patch.object(service, "check_for_update", return_value=manifest)
+    mocker.patch.object(service, "download_file", side_effect=fake_download)
+    service.apply_update()
+
+    service.confirm_update()
+
+    assert target.read_text() == "new content"
+    assert not (tmp_path / "main.py.ota_bak").exists()
+    assert not (tmp_path / "ota_state.json").exists()

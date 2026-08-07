@@ -341,6 +341,66 @@ def test_run_bootstrap_skips_claim_when_no_claim_code(mocker):
     mock_main.start.assert_called_once_with()
 
 
+def test_run_bootstrap_skips_ota_service_when_disabled(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
+    mocker.patch.object(_boot.setting, "OTA_ENABLED", False)
+    mocker.patch("_boot.gc")
+    mocker.patch("_boot.ResetService")
+    guard_cls = mocker.patch("_boot.BootLoopGuard")
+    guard_cls.return_value.check.return_value = False
+    ota_cls = mocker.patch("_boot.OtaService")
+    mocker.patch.dict("sys.modules", {"main": MagicMock()})
+
+    _boot.run_bootstrap()
+
+    ota_cls.assert_not_called()
+
+
+def test_run_bootstrap_rolls_back_and_restarts_on_boot_loop(mocker):
+    mocker.patch.object(_boot.setting, "OTA_ENABLED", True)
+    mocker.patch.object(_boot.setting, "OTA_MANIFEST_URL", "https://example.com/m.json")
+    mocker.patch.object(_boot.setting, "OTA_STATE_PATH", "ota_state.json")
+    mocker.patch("_boot.gc")
+    mocker.patch("_boot.ResetService")
+    guard_cls = mocker.patch("_boot.BootLoopGuard")
+    guard_cls.return_value.check.return_value = True
+    ota_cls = mocker.patch("_boot.OtaService")
+    ota_cls.return_value.rollback.return_value = True
+    machine_mock = mocker.patch("_boot.machine")
+    mock_main = MagicMock()
+    mocker.patch.dict("sys.modules", {"main": mock_main})
+
+    _boot.run_bootstrap()
+
+    ota_cls.assert_called_once_with(
+        "https://example.com/m.json",
+        setting=_boot.setting,
+        state_path="ota_state.json",
+    )
+    ota_cls.return_value.rollback.assert_called_once_with()
+    machine_mock.reset.assert_called_once_with()
+    mock_main.start_safe_mode.assert_not_called()
+
+
+def test_run_bootstrap_enters_safe_mode_when_ota_rollback_has_nothing_pending(mocker):
+    mocker.patch.object(_boot.setting, "OTA_ENABLED", True)
+    mocker.patch("_boot.gc")
+    mocker.patch("_boot.ResetService")
+    guard_cls = mocker.patch("_boot.BootLoopGuard")
+    guard_cls.return_value.check.return_value = True
+    ota_cls = mocker.patch("_boot.OtaService")
+    ota_cls.return_value.rollback.return_value = False
+    machine_mock = mocker.patch("_boot.machine")
+    mock_main = MagicMock()
+    mocker.patch.dict("sys.modules", {"main": mock_main})
+
+    _boot.run_bootstrap()
+
+    ota_cls.return_value.rollback.assert_called_once_with()
+    machine_mock.reset.assert_not_called()
+    mock_main.start_safe_mode.assert_called_once_with()
+
+
 def test_run_bootstrap_opens_serial_interrupt_window_when_enabled(mocker):
     mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
     mocker.patch.object(_boot.setting, "BOOT_INTERRUPT_WINDOW_SECONDS", 3)

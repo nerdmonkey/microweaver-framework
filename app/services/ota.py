@@ -1,10 +1,21 @@
+import os
+
 import urequests
+
+try:
+    import ujson as json
+except ImportError:
+    import json
+
+STAGED_SUFFIX = ".ota_new"
+BACKUP_SUFFIX = ".ota_bak"
 
 
 class OtaService:
-    def __init__(self, manifest_url="", setting=None):
+    def __init__(self, manifest_url="", setting=None, state_path="ota_state.json"):
         self.manifest_url = manifest_url
         self.setting = setting
+        self.state_path = state_path
 
     def check_for_update(self):
         if not self.manifest_url:
@@ -70,13 +81,100 @@ class OtaService:
             print("OTA: no update available")
             return False
 
+        staged = {}
         for path, url in manifest.get("files", {}).items():
-            if not self.download_file(url, path):
-                print("OTA update aborted: failed to download", path)
+            staged_path = path + STAGED_SUFFIX
+            if not self.download_file(url, staged_path):
+                print("OTA update aborted: failed to stage", path)
+                self._remove_all(staged.values())
                 return False
+            staged[path] = staged_path
+
+        backups = {}
+        for path, staged_path in staged.items():
+            if self._exists(path):
+                os.rename(path, path + BACKUP_SUFFIX)
+                backups[path] = True
+            else:
+                backups[path] = False
+            os.rename(staged_path, path)
+
+        self._write_state(
+            {
+                "version": manifest["version"],
+                "previous_version": self.setting.APP_VERSION if self.setting else None,
+                "files": backups,
+            }
+        )
 
         if self.setting:
             self.setting.save(app_version=manifest["version"])
 
         print("OTA update applied, version:", manifest["version"])
         return True
+
+    def rollback(self):
+        state = self._read_state()
+        if not state:
+            return False
+
+        for path, had_backup in state.get("files", {}).items():
+            self._remove(path)
+            if had_backup:
+                try:
+                    os.rename(path + BACKUP_SUFFIX, path)
+                except Exception as e:
+                    print("OTA rollback failed for", path, e)
+
+        if self.setting:
+            self.setting.save(app_version=state.get("previous_version"))
+
+        self._clear_state()
+        print("OTA rollback complete, restored version:", state.get("previous_version"))
+        return True
+
+    def confirm_update(self):
+        state = self._read_state()
+        if not state:
+            return
+
+        for path, had_backup in state.get("files", {}).items():
+            if had_backup:
+                self._remove(path + BACKUP_SUFFIX)
+
+        self._clear_state()
+        print("OTA update confirmed, version:", state.get("version"))
+
+    def _remove_all(self, paths):
+        for path in paths:
+            self._remove(path)
+
+    def _exists(self, path):
+        try:
+            os.stat(path)
+            return True
+        except OSError:
+            return False
+
+    def _remove(self, path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    def _read_state(self):
+        try:
+            with open(self.state_path, "r") as state_file:
+                return json.load(state_file)
+        except Exception:
+            return None
+
+    def _write_state(self, state):
+        try:
+            with open(self.state_path, "w") as state_file:
+                json.dump(state, state_file)
+        except Exception as e:
+            print("Failed to persist OTA state:", e)
+
+    def _clear_state(self):
+        self._remove(self.state_path)

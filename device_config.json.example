@@ -66,5 +66,6 @@
     "device_cert": "",
     "device_key": "",
     "ota_enabled": false,
-    "ota_manifest_url": ""
+    "ota_manifest_url": "",
+    "ota_state_path": "ota_state.json"
 }

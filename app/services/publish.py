@@ -6,6 +6,7 @@ from app.services.health import HealthCheckService
 from app.services.logger import LogService
 from app.services.memory_monitor import MemoryMonitorService
 from app.services.mqtt import MqttConnection
+from app.services.ota import OtaService
 from app.services.registry import ServiceRegistry
 from app.services.service_restart import ServiceRestartService
 from app.services.watchdog import WatchdogService
@@ -57,6 +58,13 @@ class PublishService:
         if setting.BOOT_LOOP_PROTECTION_ENABLED:
             self.bootloop_guard = BootLoopGuard(
                 setting.BOOT_LOOP_STATE_PATH, setting.BOOT_LOOP_MAX_ATTEMPTS
+            )
+        self.ota_service = None
+        if setting.OTA_ENABLED:
+            self.ota_service = OtaService(
+                setting.OTA_MANIFEST_URL,
+                setting=setting,
+                state_path=setting.OTA_STATE_PATH,
             )
         self.memory_monitor_service = None
         if setting.MEMORY_MONITOR_ENABLED:
@@ -170,6 +178,8 @@ class PublishService:
                 self.connect_to_mqtt()
             if self.bootloop_guard:
                 self.bootloop_guard.confirm()
+            if self.ota_service:
+                self.ota_service.confirm_update()
             try:
                 while True:
                     self._run_tick(message)
