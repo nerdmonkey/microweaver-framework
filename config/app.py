@@ -56,6 +56,10 @@ _SCHEMA = {
     "provisioning_ap_password": {"type": str},
     "provisioning_ap_ip": {"type": str},
     "provisioning_port": {"type": "int", "min": 1, "max": 65535},
+    "factory_reset_enabled": {"type": bool},
+    "factory_reset_pin": {"type": "int", "min": -1, "max": 39},
+    "factory_reset_hold_seconds": {"type": "int", "min": 0},
+    "factory_reset_sentinel_path": {"type": str},
 }
 
 
@@ -154,6 +158,13 @@ class Setting:
         self.PROVISIONING_AP_PASSWORD = self._value("provisioning_ap_password", "")
         self.PROVISIONING_AP_IP = self._value("provisioning_ap_ip", "192.168.4.1")
         self.PROVISIONING_PORT = self._int("provisioning_port", 80)
+
+        self.FACTORY_RESET_ENABLED = self._bool("factory_reset_enabled", False)
+        self.FACTORY_RESET_PIN = self._int("factory_reset_pin", -1)
+        self.FACTORY_RESET_HOLD_SECONDS = self._int("factory_reset_hold_seconds", 3)
+        self.FACTORY_RESET_SENTINEL_PATH = self._value(
+            "factory_reset_sentinel_path", "reprovision.flag"
+        )
 
     def _load(self, path):
         try:

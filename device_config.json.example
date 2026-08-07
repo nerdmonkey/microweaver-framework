@@ -48,5 +48,9 @@
     "provisioning_ap_ssid": "Microweaver-Setup",
     "provisioning_ap_password": "",
     "provisioning_ap_ip": "192.168.4.1",
-    "provisioning_port": 80
+    "provisioning_port": 80,
+    "factory_reset_enabled": false,
+    "factory_reset_pin": -1,
+    "factory_reset_hold_seconds": 3,
+    "factory_reset_sentinel_path": "reprovision.flag"
 }

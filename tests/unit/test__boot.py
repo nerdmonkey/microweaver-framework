@@ -160,6 +160,74 @@ def test_run_bootstrap_enters_provisioning_when_wifi_ssid_unconfigured(mocker):
     mock_main.start_provisioning.assert_called_once_with()
 
 
+def test_run_bootstrap_skips_factory_reset_when_disabled(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
+    mocker.patch.object(_boot.setting, "FACTORY_RESET_ENABLED", False)
+    mocker.patch("_boot.gc")
+    mocker.patch("_boot.ResetService")
+    guard_cls = mocker.patch("_boot.BootLoopGuard")
+    guard_cls.return_value.check.return_value = False
+    factory_reset_cls = mocker.patch("_boot.FactoryResetService")
+    mocker.patch.dict("sys.modules", {"main": MagicMock()})
+
+    _boot.run_bootstrap()
+
+    factory_reset_cls.assert_not_called()
+
+
+def test_run_bootstrap_constructs_factory_reset_service_with_settings(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
+    mocker.patch.object(_boot.setting, "FACTORY_RESET_ENABLED", True)
+    mocker.patch("_boot.gc")
+    mocker.patch("_boot.ResetService")
+    guard_cls = mocker.patch("_boot.BootLoopGuard")
+    guard_cls.return_value.check.return_value = False
+    factory_reset_cls = mocker.patch("_boot.FactoryResetService")
+    factory_reset_cls.return_value.should_trigger.return_value = False
+    mocker.patch.dict("sys.modules", {"main": MagicMock()})
+
+    _boot.run_bootstrap()
+
+    factory_reset_cls.assert_called_once_with(
+        pin=_boot.setting.FACTORY_RESET_PIN,
+        hold_seconds=_boot.setting.FACTORY_RESET_HOLD_SECONDS,
+        sentinel_path=_boot.setting.FACTORY_RESET_SENTINEL_PATH,
+        setting=_boot.setting,
+    )
+
+
+def test_run_bootstrap_clears_credentials_when_factory_reset_triggered(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
+    mocker.patch.object(_boot.setting, "FACTORY_RESET_ENABLED", True)
+    mocker.patch("_boot.gc")
+    mocker.patch("_boot.ResetService")
+    guard_cls = mocker.patch("_boot.BootLoopGuard")
+    guard_cls.return_value.check.return_value = False
+    factory_reset_cls = mocker.patch("_boot.FactoryResetService")
+    factory_reset_cls.return_value.should_trigger.return_value = True
+    mocker.patch.dict("sys.modules", {"main": MagicMock()})
+
+    _boot.run_bootstrap()
+
+    factory_reset_cls.return_value.clear_credentials.assert_called_once_with()
+
+
+def test_run_bootstrap_does_not_clear_credentials_when_not_triggered(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
+    mocker.patch.object(_boot.setting, "FACTORY_RESET_ENABLED", True)
+    mocker.patch("_boot.gc")
+    mocker.patch("_boot.ResetService")
+    guard_cls = mocker.patch("_boot.BootLoopGuard")
+    guard_cls.return_value.check.return_value = False
+    factory_reset_cls = mocker.patch("_boot.FactoryResetService")
+    factory_reset_cls.return_value.should_trigger.return_value = False
+    mocker.patch.dict("sys.modules", {"main": MagicMock()})
+
+    _boot.run_bootstrap()
+
+    factory_reset_cls.return_value.clear_credentials.assert_not_called()
+
+
 def test_run_bootstrap_prefers_safe_mode_over_provisioning_when_both_apply(mocker):
     mocker.patch.object(_boot.setting, "WIFI_SSID", "")
     mocker.patch("_boot.gc")
