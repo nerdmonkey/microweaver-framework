@@ -51,6 +51,9 @@ _SCHEMA = {
     "memory_monitor_action": {"type": str, "choices": ("log", "warn", "restart")},
     "health_check_enabled": {"type": bool},
     "health_check_interval_seconds": {"type": "int", "min": 0},
+    "health_report_enabled": {"type": bool},
+    "health_report_interval_seconds": {"type": "int", "min": 0},
+    "health_report_topic": {"type": str},
     "service_restart_enabled": {"type": bool},
     "service_restart_max_attempts": {"type": "int", "min": 0},
     "log_format": {"type": str, "choices": ("json", "kv")},
@@ -166,6 +169,14 @@ class Setting:
         self.HEALTH_CHECK_ENABLED = self._bool("health_check_enabled", False)
         self.HEALTH_CHECK_INTERVAL_SECONDS = self._int(
             "health_check_interval_seconds", 30
+        )
+
+        self.HEALTH_REPORT_ENABLED = self._bool("health_report_enabled", False)
+        self.HEALTH_REPORT_INTERVAL_SECONDS = self._int(
+            "health_report_interval_seconds", 60
+        )
+        self.HEALTH_REPORT_TOPIC = self._value(
+            "health_report_topic", "device/{}/health".format(self.MQTT_CLIENT_ID)
         )
 
         self.SERVICE_RESTART_ENABLED = self._bool("service_restart_enabled", False)

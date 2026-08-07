@@ -55,6 +55,9 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "memory_monitor_action": "warn",
                 "health_check_enabled": True,
                 "health_check_interval_seconds": 15,
+                "health_report_enabled": True,
+                "health_report_interval_seconds": 45,
+                "health_report_topic": "test/device/health",
                 "service_restart_enabled": True,
                 "service_restart_max_attempts": 7,
                 "log_format": "kv",
@@ -116,6 +119,9 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.MEMORY_MONITOR_ACTION == "warn"
     assert setting.HEALTH_CHECK_ENABLED is True
     assert setting.HEALTH_CHECK_INTERVAL_SECONDS == 15
+    assert setting.HEALTH_REPORT_ENABLED is True
+    assert setting.HEALTH_REPORT_INTERVAL_SECONDS == 45
+    assert setting.HEALTH_REPORT_TOPIC == "test/device/health"
     assert setting.SERVICE_RESTART_ENABLED is True
     assert setting.SERVICE_RESTART_MAX_ATTEMPTS == 7
     assert setting.LOG_FORMAT == "kv"
@@ -175,6 +181,9 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.MEMORY_MONITOR_ACTION == "log"
     assert setting.HEALTH_CHECK_ENABLED is False
     assert setting.HEALTH_CHECK_INTERVAL_SECONDS == 30
+    assert setting.HEALTH_REPORT_ENABLED is False
+    assert setting.HEALTH_REPORT_INTERVAL_SECONDS == 60
+    assert setting.HEALTH_REPORT_TOPIC == "device/microweaver/health"
     assert setting.SERVICE_RESTART_ENABLED is False
     assert setting.SERVICE_RESTART_MAX_ATTEMPTS == 3
     assert setting.LOG_FORMAT == "json"

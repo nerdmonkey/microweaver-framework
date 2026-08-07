@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Configurable `log_level` (debug/info/warning/error) to filter `LogService` output by
   minimum severity.
+- `PublishService`/`SubscribeService` now publish `HealthCheckService.report()`
+  periodically to a dedicated MQTT topic (`health_report_enabled`,
+  `health_report_interval_seconds`, `health_report_topic`) so a fleet dashboard can see
+  live device health.
 
 ## [0.1.0] - 2026-08-08
 

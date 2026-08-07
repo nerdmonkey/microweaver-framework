@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -655,3 +656,91 @@ def test_run_reconciles_service_restart_each_poll(mocker):
         mocker.call(health_check.status),
         mocker.call(health_check.status),
     ]
+
+
+def test_health_report_disabled_by_default():
+    service = SubscribeService()
+
+    assert service.health_report_scheduler is None
+
+
+def test_health_report_not_created_without_mqtt_enabled(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", False)
+    mocker.patch("app.services.subscribe.setting.HEALTH_CHECK_ENABLED", True)
+    mocker.patch("app.services.subscribe.setting.HEALTH_REPORT_ENABLED", True)
+
+    service = SubscribeService()
+
+    assert service.health_report_scheduler is None
+
+
+def test_health_report_not_created_without_health_check(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
+    mocker.patch("app.services.subscribe.setting.HEALTH_REPORT_ENABLED", True)
+
+    service = SubscribeService()
+
+    assert service.health_report_scheduler is None
+
+
+def test_health_report_scheduler_created_when_enabled(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
+    mocker.patch("app.services.subscribe.setting.HEALTH_CHECK_ENABLED", True)
+    mocker.patch("app.services.subscribe.setting.HEALTH_REPORT_ENABLED", True)
+    mocker.patch("app.services.subscribe.setting.HEALTH_REPORT_INTERVAL_SECONDS", 45)
+    mock_scheduler_cls = mocker.patch("app.services.subscribe.PollScheduler")
+    mock_scheduler = mock_scheduler_cls.return_value
+
+    service = SubscribeService()
+
+    mock_scheduler_cls.assert_called_once_with(45)
+    mock_scheduler.register.assert_called_once_with("health_report")
+    assert service.health_report_scheduler is mock_scheduler
+
+
+def test_run_polls_health_report_scheduler_each_poll(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
+    mocker.patch("app.services.subscribe.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_client.check_msg.side_effect = [None, None, OSError("dropped")]
+    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mocker.patch("time.sleep")
+
+    service = SubscribeService()
+    health_check = MagicMock()
+    service.health_check_service = health_check
+    health_report_scheduler = MagicMock()
+    service.health_report_scheduler = health_report_scheduler
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        service.run()
+
+    assert health_report_scheduler.poll.call_args_list == [
+        mocker.call("health_report", service._publish_health_report),
+        mocker.call("health_report", service._publish_health_report),
+        mocker.call("health_report", service._publish_health_report),
+    ]
+
+
+def test_publish_health_report_publishes_report_json(mocker):
+    service = SubscribeService()
+    service.client = MagicMock()
+    service.health_report_topic = "device/microweaver/health"
+    health_check = MagicMock()
+    health_check.report.return_value = {
+        "app_version": "0.1.0",
+        "healthy": True,
+        "checks": {},
+    }
+    service.health_check_service = health_check
+
+    service._publish_health_report()
+
+    service.client.publish.assert_called_once_with(
+        "device/microweaver/health",
+        json.dumps(health_check.report.return_value).encode(),
+        qos=service.publish_qos,
+        retain=service.publish_retain,
+    )
