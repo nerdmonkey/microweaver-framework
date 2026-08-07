@@ -10,6 +10,7 @@ How Microweaver's pieces fit together: the boot sequence, the service model serv
   - [PubSubService](#pubsubservice)
 - [BaseAdapter contract](#baseadapter-contract)
 - [Config](#config)
+  - [Adapter-specific config](#adapter-specific-config)
 - [Reconnect behavior](#reconnect-behavior)
 
 ## Boot lifecycle
@@ -143,6 +144,22 @@ Adding a new tunable is a three-place change, and all three are required or the 
 1. `device_config.json.example` — snake_case key, realistic default, plus a matching entry in `_SCHEMA` if it should be validated.
 2. `config/app.py` `Setting.__init__` — `UPPER_SNAKE_CASE` attribute via `self._value`/`self._int`/`self._bool`, default matching what the consuming class's own constructor would use standalone.
 3. Wherever the service is constructed (`app/services/publish.py`, `app/services/subscribe.py`, or wherever else) — read `setting.YOUR_KEY` and pass it through.
+
+### Adapter-specific config
+
+Adapter constructors (`DHT22Adapter(pin=4)`, `RelayAdapter(pin=5)`, …) take their own sane default for pin/bus-address args, same as `WiFiService`/`MqttConnection` take theirs — an adapter must stay constructible and testable with no config file at all, which is why `tests/unit/test_dht22_adapter.py`/`test_relay_adapter.py` instantiate adapters directly without ever touching `Setting`.
+
+`Setting` is only imported at the composition root (`main.py`), never inside an adapter module — adapters don't know `Setting` exists. `main.py` reads `setting.DHT22_PIN`/`setting.RELAY_PIN` (`config/app.py`, defaulting to `4`/`5` via `self._int(...)` — matching each adapter's own standalone default) and passes them in when building the `adapters=[(name, adapter), ...]` list handed to `PublishService`:
+
+```python
+adapters = [
+    ("dht22", DHT22Adapter(pin=setting.DHT22_PIN)),
+    ("relay", RelayAdapter(pin=setting.RELAY_PIN)),
+]
+publish = PublishService(adapters=adapters)
+```
+
+Adding a new adapter-specific setting (a pin, an I2C address, …) follows the same three-place change as any other tunable: `device_config.json.example` + `_SCHEMA` entry, `Setting.__init__` attribute, then read it at the call site that constructs the adapter — never inside the adapter class itself.
 
 ## Reconnect behavior
 
