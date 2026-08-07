@@ -28,4 +28,9 @@ def run_bootstrap():
         main.start_safe_mode()
         return
 
+    if not setting.WIFI_SSID:
+        print("BOOT: no WiFi credentials configured, entering provisioning mode")
+        main.start_provisioning()
+        return
+
     main.start()

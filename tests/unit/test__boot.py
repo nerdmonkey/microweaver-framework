@@ -6,6 +6,7 @@ import _boot
 
 
 def test_run_bootstrap_orders_gc_reset_guard_import_gc_start(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
     order = []
     gc_mock = mocker.patch("_boot.gc")
     gc_mock.collect.side_effect = lambda: order.append("gc.collect")
@@ -63,6 +64,7 @@ def test_run_bootstrap_orders_calls_before_safe_mode(mocker):
 
 
 def test_run_bootstrap_constructs_reset_service_with_logger(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
     mocker.patch("_boot.gc")
     log_service_cls = mocker.patch("_boot.LogService")
     reset_service_cls = mocker.patch("_boot.ResetService")
@@ -77,6 +79,7 @@ def test_run_bootstrap_constructs_reset_service_with_logger(mocker):
 
 
 def test_run_bootstrap_constructs_bootloop_guard_with_settings(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
     mocker.patch("_boot.gc")
     mocker.patch("_boot.ResetService")
     guard_cls = mocker.patch("_boot.BootLoopGuard")
@@ -109,6 +112,7 @@ def test_run_bootstrap_propagates_reset_service_read_exception(mocker):
 
 
 def test_run_bootstrap_imports_main_and_starts(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
     gc_mock = mocker.patch("_boot.gc")
     reset_service_cls = mocker.patch("_boot.ResetService")
     guard_cls = mocker.patch("_boot.BootLoopGuard")
@@ -137,3 +141,36 @@ def test_run_bootstrap_enters_safe_mode_when_boot_loop_detected(mocker):
     assert gc_mock.collect.call_count == 2
     mock_main.start.assert_not_called()
     mock_main.start_safe_mode.assert_called_once_with()
+
+
+def test_run_bootstrap_enters_provisioning_when_wifi_ssid_unconfigured(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "")
+    gc_mock = mocker.patch("_boot.gc")
+    mocker.patch("_boot.ResetService")
+    guard_cls = mocker.patch("_boot.BootLoopGuard")
+    guard_cls.return_value.check.return_value = False
+    mock_main = MagicMock()
+    mocker.patch.dict("sys.modules", {"main": mock_main})
+
+    _boot.run_bootstrap()
+
+    assert gc_mock.collect.call_count == 2
+    mock_main.start.assert_not_called()
+    mock_main.start_safe_mode.assert_not_called()
+    mock_main.start_provisioning.assert_called_once_with()
+
+
+def test_run_bootstrap_prefers_safe_mode_over_provisioning_when_both_apply(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "")
+    mocker.patch("_boot.gc")
+    mocker.patch("_boot.ResetService")
+    guard_cls = mocker.patch("_boot.BootLoopGuard")
+    guard_cls.return_value.check.return_value = True
+    mock_main = MagicMock()
+    mocker.patch.dict("sys.modules", {"main": mock_main})
+
+    _boot.run_bootstrap()
+
+    mock_main.start_safe_mode.assert_called_once_with()
+    mock_main.start_provisioning.assert_not_called()
+    mock_main.start.assert_not_called()
