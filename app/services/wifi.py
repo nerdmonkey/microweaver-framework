@@ -25,6 +25,22 @@ class WiFiService:
         self.disable_power_save = disable_power_save
         self.wlan = network.WLAN(network.STA_IF)
 
+    def _configure_interface(self):
+        self.wlan.active(True)
+        if self.disable_power_save:
+            self.wlan.config(pm=network.WLAN.PM_NONE)
+        if self.static_ip:
+            self.wlan.ifconfig(self.static_ip)
+
+    def _reset_interface(self):
+        try:
+            self.wlan.disconnect()
+        except Exception:
+            pass
+        self.wlan.active(False)
+        time.sleep(1)
+        self._configure_interface()
+
     def connect(self):
         if self.wlan.isconnected():
             return True
@@ -34,13 +50,15 @@ class WiFiService:
             if self.watchdog_service:
                 self.watchdog_service.feed()
 
-            self.wlan.active(True)
-            if self.disable_power_save:
-                self.wlan.config(pm=network.WLAN.PM_NONE)
-            if self.static_ip:
-                self.wlan.ifconfig(self.static_ip)
+            self._reset_interface()
             print("Connecting to network...")
-            self.wlan.connect(self.ssid, self.password)
+            try:
+                self.wlan.connect(self.ssid, self.password)
+            except OSError as err:
+                print("Failed to start WiFi connection:", err)
+                time.sleep(delay)
+                delay = min(delay * 2, self.max_reconnect_delay_seconds)
+                continue
 
             if self._wait_until_connected():
                 print("Network connected!")

@@ -377,7 +377,11 @@ def test_upload_path_missing(tmp_path, mocker):
 
 def test_upload_success(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
+    mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=0, stdout="", stderr=""),
+    )
     src = tmp_path / "dist"
     src.mkdir()
     result = runner.invoke(tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(src)])
@@ -387,7 +391,11 @@ def test_upload_success(tmp_path, mocker):
 
 def test_upload_custom_baud_warns(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
+    mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=0, stdout="", stderr=""),
+    )
     src = tmp_path / "dist"
     src.mkdir()
     result = runner.invoke(
@@ -398,10 +406,46 @@ def test_upload_custom_baud_warns(tmp_path, mocker):
     assert "ignores --baud" in result.stderr
 
 
+def test_upload_resume_uses_resume_connect_prefix(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=0, stdout="", stderr=""),
+    )
+    src = tmp_path / "dist"
+    src.mkdir()
+    result = runner.invoke(
+        tinker.app, ["upload", "--port", "/dev/ttyUSB0", "--resume", str(src)]
+    )
+    assert result.exit_code == 0
+    assert mock_run.call_args[0][0][:5] == [
+        "mpremote",
+        "connect",
+        "/dev/ttyUSB0",
+        "resume",
+        "fs",
+    ]
+
+
+def test_upload_rejects_reset_and_resume_combination(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    src = tmp_path / "dist"
+    src.mkdir()
+    result = runner.invoke(
+        tinker.app,
+        ["upload", "--port", "/dev/ttyUSB0", "--reset", "--resume", str(src)],
+    )
+    assert result.exit_code == 1
+    assert "mutually exclusive" in result.stderr
+
+
 def test_upload_with_reset_flag(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mock_run = mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=0, stdout="", stderr=""),
     )
     mock_reset = mocker.patch.object(tinker, "hard_reset")
     mocker.patch.object(tinker.time, "sleep")
@@ -420,7 +464,14 @@ def test_upload_retries_after_reset_race(tmp_path, mocker):
     mock_run = mocker.patch.object(
         tinker.subprocess,
         "run",
-        side_effect=[MagicMock(returncode=1), MagicMock(returncode=0)],
+        side_effect=[
+            MagicMock(
+                returncode=1,
+                stdout="",
+                stderr="mpremote.transport.TransportError: could not enter raw repl\n",
+            ),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ],
     )
     mocker.patch.object(tinker, "hard_reset")
     mock_sleep = mocker.patch.object(tinker.time, "sleep")
@@ -438,7 +489,13 @@ def test_upload_retries_after_reset_race(tmp_path, mocker):
 def test_upload_exhausts_retries_after_reset(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mock_run = mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=1)
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="mpremote.transport.TransportError: could not enter raw repl\n",
+        ),
     )
     mocker.patch.object(tinker, "hard_reset")
     mocker.patch.object(tinker.time, "sleep")
@@ -454,7 +511,13 @@ def test_upload_exhausts_retries_after_reset(tmp_path, mocker):
 def test_upload_without_reset_does_not_retry(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mock_run = mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=1)
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="mpremote.transport.TransportError: could not enter raw repl\n",
+        ),
     )
     src = tmp_path / "dist"
     src.mkdir()
@@ -465,7 +528,11 @@ def test_upload_without_reset_does_not_retry(tmp_path, mocker):
 
 def test_upload_prompts_for_port_when_missing(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
+    mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=0, stdout="", stderr=""),
+    )
     mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
     src = tmp_path / "dist"
     src.mkdir()
@@ -481,7 +548,9 @@ def test_upload_uses_config_defaults(tmp_path, mocker):
     tinker.save_config(path=src)
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mock_run = mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=0, stdout="", stderr=""),
     )
     result = runner.invoke(tinker.app, ["upload"])
     assert result.exit_code == 0
@@ -491,11 +560,33 @@ def test_upload_uses_config_defaults(tmp_path, mocker):
 
 def test_upload_subprocess_failure(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=2))
+    mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=2, stdout="", stderr="plain failure\n"),
+    )
     src = tmp_path / "dist"
     src.mkdir()
     result = runner.invoke(tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(src)])
     assert result.exit_code == 2
+
+
+def test_upload_non_raw_repl_failure_does_not_retry_after_reset(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=2, stdout="", stderr="plain failure\n"),
+    )
+    mocker.patch.object(tinker, "hard_reset")
+    mocker.patch.object(tinker.time, "sleep")
+    src = tmp_path / "dist"
+    src.mkdir()
+    result = runner.invoke(
+        tinker.app, ["upload", "--port", "/dev/ttyUSB0", "--reset", str(src)]
+    )
+    assert result.exit_code == 2
+    assert mock_run.call_count == 1
 
 
 # --------------------------------------------------------------------------
@@ -529,10 +620,10 @@ def test_download_preserves_config_guard(tmp_path, mocker):
     guard_file = dest / tinker.CONFIG_PATH.name
     guard_file.write_bytes(b"original-config")
 
-    def fake_run(cmd):
+    def fake_run(cmd, **kwargs):
         # simulate mpremote clobbering the guarded file
         guard_file.write_bytes(b"clobbered")
-        return MagicMock(returncode=0)
+        return MagicMock(returncode=0, stdout="", stderr="")
 
     mocker.patch.object(tinker.subprocess, "run", side_effect=fake_run)
     result = runner.invoke(
@@ -1106,6 +1197,28 @@ def test_device_info_read_failure(mocker):
     esp._port.close.assert_called_once()
 
 
+def test_run_mpremote_cmd_raw_repl_failure_prints_recovery(mocker, capsys):
+    mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(
+            returncode=1,
+            stdout="",
+            stderr=(
+                "Traceback (most recent call last):\n"
+                "mpremote.transport.TransportError: could not enter raw repl\n"
+            ),
+        ),
+    )
+    result = tinker._run_mpremote_cmd(
+        ["mpremote", "connect", "/dev/ttyUSB0", "fs", "ls", ":"], "/dev/ttyUSB0"
+    )
+    captured = capsys.readouterr()
+    assert result.returncode == 1
+    assert "could not enter raw REPL on /dev/ttyUSB0" in captured.err
+    assert "device reset --port /dev/ttyUSB0" in captured.err
+
+
 def test_device_ls_missing_mpremote(mocker):
     mocker.patch.object(tinker.shutil, "which", return_value=None)
     result = runner.invoke(tinker.app, ["device", "ls"])
@@ -1212,6 +1325,22 @@ def test_device_repl_prompts_for_port_and_failure(mocker):
     mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=1))
     result = runner.invoke(tinker.app, ["device", "repl"])
     assert result.exit_code == 1
+
+
+def test_device_repl_raw_repl_failure_prints_recovery(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(
+            returncode=1,
+            stderr="mpremote.transport.TransportError: could not enter raw repl\n",
+        ),
+    )
+    result = runner.invoke(tinker.app, ["device", "repl", "--port", "/dev/ttyUSB0"])
+    assert result.exit_code == 1
+    assert "could not enter raw REPL on /dev/ttyUSB0" in result.stderr
+    assert "device reset --port /dev/ttyUSB0" in result.stderr
 
 
 @pytest.mark.parametrize("subcommand", ["logs", "monitor"])

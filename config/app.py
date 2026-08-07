@@ -42,6 +42,8 @@ _SCHEMA = {
     "boot_loop_protection_enabled": {"type": bool},
     "boot_loop_max_attempts": {"type": "int", "min": 0},
     "boot_loop_state_path": {"type": str},
+    "boot_interrupt_window_seconds": {"type": "int", "min": 0},
+    "autostart_enabled": {"type": bool},
     "safe_mode_sleep_seconds": {"type": "int", "min": 0},
     "memory_monitor_enabled": {"type": bool},
     "memory_monitor_threshold_bytes": {"type": "int", "min": 0},
@@ -132,6 +134,10 @@ class Setting:
         self.BOOT_LOOP_STATE_PATH = self._value(
             "boot_loop_state_path", "boot_state.json"
         )
+        self.BOOT_INTERRUPT_WINDOW_SECONDS = self._int(
+            "boot_interrupt_window_seconds", 2
+        )
+        self.AUTOSTART_ENABLED = self._bool("autostart_enabled", True)
 
         self.SAFE_MODE_SLEEP_SECONDS = self._int("safe_mode_sleep_seconds", 5)
 

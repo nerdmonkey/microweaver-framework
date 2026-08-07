@@ -1,4 +1,5 @@
 import gc
+import time
 
 from app.services.bootloop import BootLoopGuard
 from app.services.factory_reset import FactoryResetService
@@ -7,6 +8,18 @@ from app.services.reset import ResetService
 from config.app import Setting
 
 setting = (Setting()).get_settings()
+
+
+def _open_boot_interrupt_window():
+    seconds = setting.BOOT_INTERRUPT_WINDOW_SECONDS
+    if seconds <= 0:
+        return
+    print(
+        "BOOT: serial interrupt window open for",
+        seconds,
+        "s (connect with mpremote now)",
+    )
+    time.sleep(seconds)
 
 
 def run_bootstrap():
@@ -34,6 +47,11 @@ def run_bootstrap():
     import main
 
     gc.collect()
+    _open_boot_interrupt_window()
+
+    if not setting.AUTOSTART_ENABLED:
+        print("BOOT: autostart disabled, leaving device idle for serial access")
+        return
 
     if boot_loop_detected:
         print("BOOT: boot-loop detected, entering safe mode")

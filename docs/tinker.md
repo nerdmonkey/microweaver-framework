@@ -126,6 +126,7 @@ python tinker.py upload [OPTIONS] [PATH]
 | `--port`, `-p` | resolved (see [above](#config-resolution-order)) | Serial port |
 | `--baud`, `-b` | `115200` | Baud rate (accepted for parity; `mpremote` ignores it — see note above) |
 | `--reset` | off | Hard-reset the device via `esptool` before uploading |
+| `--resume` | off | Recovery-mode upload: reuse an already-idle interpreter session instead of letting `mpremote` soft-reset first |
 
 Examples:
 
@@ -139,6 +140,9 @@ python tinker.py upload --port /dev/tty.usbserial-0001
 
 # Device stuck / mpremote can't enter raw REPL — hard-reset first
 python tinker.py upload --reset
+
+# Recovery path: after you've already interrupted to a stable >>> prompt
+python tinker.py upload --resume
 
 # Upload a single file instead of the whole dist/ folder
 python tinker.py upload dist/main.mpy
@@ -453,7 +457,7 @@ python tinker.py upload ./backup-before-experiment --reset
 |---|---|
 | `ERROR: 'mpremote' not found on PATH.` | `pip install mpremote` |
 | `ERROR: No serial ports found and none set in .microweaver.` | Connect the device, or run `tinker.py config set --port <port>` |
-| `mpremote fails with 'could not enter raw repl'` | Firmware likely stuck — retry with `upload --reset`, or run `device reset` first |
+| `mpremote fails with 'could not enter raw repl'` | Firmware likely stuck or still rebooting — retry with `upload --reset`, or recover to an idle `>>>` and then use `upload --resume` |
 | `NOTE: mpremote ignores --baud ...` | Expected — `mpremote`'s CLI hardcodes 115200; not a bug in `tinker.py` |
 | `device info` shows `MicroPython: unavailable` | `mpremote` not installed, or firmware busy/unresponsive within the 10s timeout |
 | Wrong device picked automatically | Only happens when exactly one port is present; unplug other USB-serial adapters or pass `--port` explicitly |

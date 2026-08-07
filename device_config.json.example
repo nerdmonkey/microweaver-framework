@@ -35,6 +35,8 @@
     "boot_loop_protection_enabled": false,
     "boot_loop_max_attempts": 5,
     "boot_loop_state_path": "boot_state.json",
+    "boot_interrupt_window_seconds": 2,
+    "autostart_enabled": true,
     "safe_mode_sleep_seconds": 5,
     "memory_monitor_enabled": false,
     "memory_monitor_threshold_bytes": 10000,
