@@ -26,9 +26,9 @@ class FactoryResetService:
         if self.setting:
             self.setting.save(
                 wifi_ssid="",
-                wifi_password="",
+                wifi_password="",  # nosec B106 - clearing credential, not setting one
                 mqtt_username="",
-                mqtt_password="",
+                mqtt_password="",  # nosec B106 - clearing credential, not setting one
                 claim_code="",
                 device_id="",
                 device_cert="",
