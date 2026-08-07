@@ -1,6 +1,7 @@
 import gc
 
 from app.services.bootloop import BootLoopGuard
+from app.services.factory_reset import FactoryResetService
 from app.services.logger import LogService
 from app.services.reset import ResetService
 from config.app import Setting
@@ -18,6 +19,17 @@ def run_bootstrap():
         setting.BOOT_LOOP_PROTECTION_ENABLED,
     )
     boot_loop_detected = guard.check()
+
+    if setting.FACTORY_RESET_ENABLED:
+        factory_reset = FactoryResetService(
+            pin=setting.FACTORY_RESET_PIN,
+            hold_seconds=setting.FACTORY_RESET_HOLD_SECONDS,
+            sentinel_path=setting.FACTORY_RESET_SENTINEL_PATH,
+            setting=setting,
+        )
+        if factory_reset.should_trigger():
+            print("BOOT: factory reset requested, clearing credentials")
+            factory_reset.clear_credentials()
 
     import main
 
