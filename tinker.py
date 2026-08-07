@@ -1037,6 +1037,79 @@ def device_info(
     print_table(["Field", "Value"], rows)
 
 
+@device_app.command("health")
+def device_health(
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Serial port of device"
+    ),
+) -> None:
+    """Fetch and print a HealthCheckService report from the device.
+
+    Builds a fresh WiFiService/MetricsService/HealthCheckService on-device
+    (same as PublishService/SubscribeService wiring) and polls it once, so no
+    MQTT subscriber is needed to see the current health snapshot. Metrics
+    reflect this fresh instance, not the running loop's accumulated counters.
+    """
+    if shutil.which("mpremote") is None:
+        print(
+            "ERROR: 'mpremote' not found on PATH. Install it with "
+            "'pip install mpremote'.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    config = load_config()
+    resolved_port = port or config.get("port")
+    if resolved_port is None:
+        resolved_port = prompt_for_port()
+
+    script = (
+        "import json; "
+        "from app.services.health import HealthCheckService; "
+        "from app.services.metrics import MetricsService; "
+        "from app.services.wifi import WiFiService; "
+        "from config.app import Setting; "
+        "setting = Setting().get_settings(); "
+        "wifi = WiFiService(setting.WIFI_SSID, setting.WIFI_PASSWORD); "
+        "metrics = MetricsService(); "
+        "health = HealthCheckService("
+        "app_version=setting.APP_VERSION, metrics=metrics); "
+        "health.register('wifi', wifi.is_connected); "
+        "health.poll(); "
+        "print(json.dumps(health.report()))"
+    )
+    raw = _mpremote_field(resolved_port, script)
+    if raw.startswith("unavailable"):
+        print(f"ERROR: {raw}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    try:
+        report = json.loads(raw)
+    except ValueError:
+        print(f"ERROR: could not parse health report: {raw}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    rows = [
+        ("App Version", report.get("app_version") or "unknown"),
+        ("Healthy", report.get("healthy")),
+    ]
+    for name, status in (report.get("checks") or {}).items():
+        rows.append(
+            (
+                f"Check: {name}",
+                "ok" if status.get("healthy") else f"failed ({status.get('error')})",
+            )
+        )
+    metrics = report.get("metrics") or {}
+    if metrics:
+        rows.append(("Uptime (s)", round(metrics.get("uptime_seconds", 0), 1)))
+        rows.append(("Messages Published", metrics.get("messages_published")))
+        rows.append(("Messages Received", metrics.get("messages_received")))
+        rows.append(("Errors", metrics.get("errors")))
+
+    print_table(["Field", "Value"], rows)
+
+
 @device_app.command("ls")
 def device_ls(
     port: Optional[str] = typer.Option(
