@@ -27,8 +27,11 @@ class ResetService:
         self.logger = logger or LogService()
 
     def read(self):
-        cause = esp32.reset_reason()
-        self.reason = self._label(cause)
+        reset_reason = getattr(esp32, "reset_reason", None)
+        if reset_reason is None:
+            self.reason = "unknown"
+        else:
+            self.reason = self._label(reset_reason())
         if self.reason == "watchdog":
             self.logger.log("watchdog_trip", level="warning", reason=self.reason)
         else:

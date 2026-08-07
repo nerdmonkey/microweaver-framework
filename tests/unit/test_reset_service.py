@@ -128,6 +128,18 @@ def test_read_labels_unknown_reset_cause(mocker):
     assert result == "unknown"
 
 
+def test_read_falls_back_when_reset_reason_unavailable(mocker):
+    mock_esp32 = mocker.patch("app.services.reset.esp32")
+    del mock_esp32.reset_reason
+    logger = MagicMock()
+
+    service = ResetService(logger=logger)
+    result = service.read()
+
+    assert result == "unknown"
+    logger.log.assert_called_once_with("reset", reason="unknown")
+
+
 def test_reason_is_none_before_read():
     service = ResetService()
 
