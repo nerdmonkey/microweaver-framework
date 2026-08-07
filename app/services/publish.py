@@ -1,5 +1,10 @@
 import time
 
+try:
+    import ujson as json
+except ImportError:
+    import json
+
 from app.services.bootloop import BootLoopGuard
 from app.services.error_handler import ErrorHandlerService
 from app.services.health import HealthCheckService
@@ -59,12 +64,14 @@ class PublishService:
             self.bootloop_guard = BootLoopGuard(
                 setting.BOOT_LOOP_STATE_PATH, setting.BOOT_LOOP_MAX_ATTEMPTS
             )
+        self.ota_status_topic = setting.OTA_STATUS_TOPIC
         self.ota_service = None
         if setting.OTA_ENABLED:
             self.ota_service = OtaService(
                 setting.OTA_MANIFEST_URL,
                 setting=setting,
                 state_path=setting.OTA_STATE_PATH,
+                on_status=self._report_ota_status,
             )
         self.memory_monitor_service = None
         if setting.MEMORY_MONITOR_ENABLED:
@@ -135,11 +142,18 @@ class PublishService:
         self.client = self.connection.connect()
 
     def publish_message(self, message):
+        self._publish(self.topic, message)
+
+    def _report_ota_status(self, payload):
+        payload.setdefault("app_version", setting.APP_VERSION)
+        self._publish(self.ota_status_topic, json.dumps(payload))
+
+    def _publish(self, topic, message):
         if self.client:
             try:
-                print("Publishing message to topic:", self.topic)
+                print("Publishing message to topic:", topic)
                 self.client.publish(
-                    self.topic,
+                    topic,
                     message.encode(),
                     qos=self.publish_qos,
                     retain=self.publish_retain,

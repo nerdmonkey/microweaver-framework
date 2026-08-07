@@ -22,10 +22,17 @@ BACKUP_SUFFIX = ".ota_bak"
 
 
 class OtaService:
-    def __init__(self, manifest_url="", setting=None, state_path="ota_state.json"):
+    def __init__(
+        self,
+        manifest_url="",
+        setting=None,
+        state_path="ota_state.json",
+        on_status=None,
+    ):
         self.manifest_url = manifest_url
         self.setting = setting
         self.state_path = state_path
+        self.on_status = on_status
 
     def check_for_update(self):
         if not self.manifest_url:
@@ -96,18 +103,27 @@ class OtaService:
             print("OTA: no update available")
             return False
 
+        version = manifest["version"]
+        self._report_status("downloading", version=version)
+
         staged = {}
         for path, file_meta in manifest.get("files", {}).items():
             url, expected_sha256 = self._file_url_and_checksum(file_meta)
             if not expected_sha256:
                 print("OTA update aborted: missing checksum for", path)
                 self._remove_all(staged.values())
+                self._report_status(
+                    "failed", version=version, error="missing checksum for " + path
+                )
                 return False
 
             staged_path = path + STAGED_SUFFIX
             if not self.download_file(url, staged_path, expected_sha256):
                 print("OTA update aborted: failed to stage", path)
                 self._remove_all(staged.values())
+                self._report_status(
+                    "failed", version=version, error="failed to stage " + path
+                )
                 return False
             staged[path] = staged_path
 
@@ -132,6 +148,7 @@ class OtaService:
             self.setting.save(app_version=manifest["version"])
 
         print("OTA update applied, version:", manifest["version"])
+        self._report_status("applied", version=version)
         return True
 
     def rollback(self):
@@ -152,6 +169,7 @@ class OtaService:
 
         self._clear_state()
         print("OTA rollback complete, restored version:", state.get("previous_version"))
+        self._report_status("rolled_back", version=state.get("previous_version"))
         return True
 
     def confirm_update(self):
@@ -165,6 +183,22 @@ class OtaService:
 
         self._clear_state()
         print("OTA update confirmed, version:", state.get("version"))
+        self._report_status("confirmed", version=state.get("version"))
+
+    def _report_status(self, status, version=None, error=None):
+        if not self.on_status:
+            return
+
+        payload = {"status": status}
+        if version is not None:
+            payload["version"] = version
+        if error is not None:
+            payload["error"] = error
+
+        try:
+            self.on_status(payload)
+        except Exception as e:
+            print("OTA status report failed:", e)
 
     def _file_url_and_checksum(self, file_meta):
         if isinstance(file_meta, dict):

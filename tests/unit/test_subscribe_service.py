@@ -273,6 +273,7 @@ def test_ota_service_created_when_enabled(mocker):
         "https://example.com/m.json",
         setting=setting,
         state_path="ota_state.json",
+        on_status=service._report_ota_status,
     )
     assert service.ota_service is mock_ota
 
@@ -364,6 +365,28 @@ def test_run_confirms_ota_update_after_connect(mocker):
         service.run()
 
     ota_service.confirm_update.assert_called_once_with()
+
+
+def test_report_ota_status_publishes_json_with_app_version(mocker):
+    mocker.patch("app.services.subscribe.setting.APP_VERSION", "0.1.0")
+    service = SubscribeService()
+    service.client = MagicMock()
+
+    service._report_ota_status({"status": "applied", "version": "1.3.0"})
+
+    service.client.publish.assert_called_once_with(
+        service.ota_status_topic,
+        b'{"status": "applied", "version": "1.3.0", "app_version": "0.1.0"}',
+        qos=0,
+        retain=False,
+    )
+
+
+def test_report_ota_status_without_client_is_noop():
+    service = SubscribeService()
+    service.client = None
+
+    service._report_ota_status({"status": "applied", "version": "1.3.0"})
 
 
 def test_memory_monitor_disabled_by_default():
