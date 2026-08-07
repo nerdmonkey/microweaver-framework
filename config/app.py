@@ -65,8 +65,11 @@ def _is_int(value):
 
 class Setting:
     def __init__(self, config_path=DEVICE_CONFIG_PATH):
+        self._config_path = config_path
         self._config = self._load(config_path)
+        self._apply_config()
 
+    def _apply_config(self):
         self.APP_ENVIRONMENT = self._value("app_environment", "local")
         self.MQTT_BROKER = self._value("mqtt_broker", "localhost")
         self.MQTT_CLIENT_ID = self._value("mqtt_client_id", "microweaver")
@@ -150,6 +153,22 @@ class Setting:
 
         self._validate(config)
         return config
+
+    def save(self, **values):
+        updates = {key: value for key, value in values.items() if value is not None}
+        if not updates:
+            return {}
+
+        merged = dict(self._config)
+        merged.update(updates)
+        self._validate(merged)
+
+        with open(self._config_path, "w") as config_file:
+            json.dump(merged, config_file)
+
+        self._config = merged
+        self._apply_config()
+        return updates
 
     def _validate(self, config):
         errors = []

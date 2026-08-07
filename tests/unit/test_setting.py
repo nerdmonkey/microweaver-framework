@@ -280,3 +280,75 @@ def test_setting_collects_multiple_validation_errors(tmp_path):
     message = str(exc_info.value)
     assert "mqtt_port" in message
     assert "watchdog_enabled" in message
+
+
+def test_save_merges_new_values_without_clobbering_existing(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_broker": "existing_broker"}))
+    setting = Setting(config_path=str(config_path))
+
+    setting.save(wifi_ssid="new_ssid", wifi_password="new_password")
+
+    assert setting.WIFI_SSID == "new_ssid"
+    assert setting.WIFI_PASSWORD == "new_password"
+    assert setting.MQTT_BROKER == "existing_broker"
+
+    on_disk = json.loads(config_path.read_text())
+    assert on_disk["mqtt_broker"] == "existing_broker"
+    assert on_disk["wifi_ssid"] == "new_ssid"
+    assert on_disk["wifi_password"] == "new_password"
+
+
+def test_save_creates_config_file_when_missing(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    setting = Setting(config_path=str(config_path))
+
+    setting.save(wifi_ssid="fresh_ssid")
+
+    assert config_path.exists()
+    on_disk = json.loads(config_path.read_text())
+    assert on_disk["wifi_ssid"] == "fresh_ssid"
+
+
+def test_save_skips_none_values(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"wifi_ssid": "existing_ssid"}))
+    setting = Setting(config_path=str(config_path))
+
+    saved = setting.save(wifi_ssid=None, wifi_password="new_password")
+
+    assert saved == {"wifi_password": "new_password"}
+    assert setting.WIFI_SSID == "existing_ssid"
+    assert setting.WIFI_PASSWORD == "new_password"
+
+
+def test_save_with_no_updates_is_a_noop(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    setting = Setting(config_path=str(config_path))
+
+    saved = setting.save()
+
+    assert saved == {}
+    assert not config_path.exists()
+
+
+def test_save_raises_and_does_not_write_on_invalid_value(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_broker": "existing_broker"}))
+    setting = Setting(config_path=str(config_path))
+
+    with pytest.raises(ConfigError, match="mqtt_port must be an integer"):
+        setting.save(mqtt_port="not_a_number")
+
+    assert setting.MQTT_PORT == 1883
+    on_disk = json.loads(config_path.read_text())
+    assert on_disk == {"mqtt_broker": "existing_broker"}
+
+
+def test_save_returns_only_the_updated_keys(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    setting = Setting(config_path=str(config_path))
+
+    saved = setting.save(wifi_ssid="ssid_a", wifi_password="password_a")
+
+    assert saved == {"wifi_ssid": "ssid_a", "wifi_password": "password_a"}
