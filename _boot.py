@@ -1,9 +1,12 @@
 import gc
 import time
 
+import machine
+
 from app.services.bootloop import BootLoopGuard
 from app.services.factory_reset import FactoryResetService
 from app.services.logger import LogService
+from app.services.ota import OtaService
 from app.services.reset import ResetService
 from config.app import Setting
 
@@ -33,6 +36,14 @@ def run_bootstrap():
     )
     boot_loop_detected = guard.check()
 
+    ota_service = None
+    if setting.OTA_ENABLED:
+        ota_service = OtaService(
+            setting.OTA_MANIFEST_URL,
+            setting=setting,
+            state_path=setting.OTA_STATE_PATH,
+        )
+
     if setting.FACTORY_RESET_ENABLED:
         factory_reset = FactoryResetService(
             pin=setting.FACTORY_RESET_PIN,
@@ -54,6 +65,10 @@ def run_bootstrap():
         return
 
     if boot_loop_detected:
+        if ota_service and ota_service.rollback():
+            print("BOOT: OTA rollback complete, restarting")
+            machine.reset()
+            return
         print("BOOT: boot-loop detected, entering safe mode")
         main.start_safe_mode()
         return
