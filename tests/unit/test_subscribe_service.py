@@ -316,6 +316,40 @@ def test_registry_is_wired_with_error_handler():
     assert service.registry.error_handler is service.error_handler
 
 
+def test_no_adapters_by_default():
+    service = SubscribeService()
+
+    assert service.adapters == []
+
+
+def test_adapters_are_registered_and_setup_by_registry(mocker):
+    mocker.patch("app.services.subscribe.WiFiService")
+    mocker.patch("app.services.subscribe.MqttConnection")
+    led = MagicMock()
+    relay = MagicMock()
+
+    service = SubscribeService(adapters=[("led", led), ("relay", relay)])
+
+    assert service.adapters == [("led", led), ("relay", relay)]
+    led.setup.assert_called_once_with()
+    relay.setup.assert_called_once_with()
+
+
+def test_stop_tears_down_adapters_in_reverse_order(mocker):
+    mocker.patch("app.services.subscribe.WiFiService")
+    mocker.patch("app.services.subscribe.MqttConnection")
+    calls = []
+    led = MagicMock()
+    led.deinit.side_effect = lambda: calls.append("led.deinit")
+    relay = MagicMock()
+    relay.deinit.side_effect = lambda: calls.append("relay.deinit")
+
+    service = SubscribeService(adapters=[("led", led), ("relay", relay)])
+    service.stop()
+
+    assert calls == ["relay.deinit", "led.deinit"]
+
+
 def test_run_survives_memory_monitor_exception(mocker):
     mocker.patch("app.services.subscribe.WiFiService")
     mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")

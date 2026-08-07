@@ -16,7 +16,7 @@ setting = (Setting()).get_settings()
 
 
 class PublishService:
-    def __init__(self):
+    def __init__(self, adapters=None):
         self.topic = setting.MQTT_TOPIC_PUB
         self.publish_qos = setting.MQTT_PUBLISH_QOS
         self.publish_retain = setting.MQTT_PUBLISH_RETAIN
@@ -51,6 +51,8 @@ class PublishService:
         self.registry = ServiceRegistry(error_handler=self.error_handler)
         if self.watchdog_service:
             self.registry.register("watchdog", start=self.watchdog_service.start)
+        self.adapters = list(adapters) if adapters else []
+        self._register_adapters()
         self.bootloop_guard = None
         if setting.BOOT_LOOP_PROTECTION_ENABLED:
             self.bootloop_guard = BootLoopGuard(
@@ -106,6 +108,10 @@ class PublishService:
         self.client = None
         self.registry.start_all()
 
+    def _register_adapters(self):
+        for name, adapter in self.adapters:
+            self.registry.register_adapter(name, adapter)
+
     def connect_to_mqtt(self):
         self.client = self.connection.connect()
 
@@ -128,6 +134,9 @@ class PublishService:
     def disconnect(self):
         self.connection.disconnect()
         self.client = None
+
+    def stop(self):
+        self.registry.stop_all()
 
     def run(self, message="Hello from Agnes agent"):
         while True:

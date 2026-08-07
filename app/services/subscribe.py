@@ -16,7 +16,7 @@ setting = (Setting()).get_settings()
 
 
 class SubscribeService:
-    def __init__(self):
+    def __init__(self, adapters=None):
         self.topics = setting.MQTT_TOPIC_SUB
         self.message_handlers = {}
         self.log_service = LogService(format=setting.LOG_FORMAT)
@@ -50,6 +50,8 @@ class SubscribeService:
         self.registry = ServiceRegistry(error_handler=self.error_handler)
         if self.watchdog_service:
             self.registry.register("watchdog", start=self.watchdog_service.start)
+        self.adapters = list(adapters) if adapters else []
+        self._register_adapters()
         self.bootloop_guard = None
         if setting.BOOT_LOOP_PROTECTION_ENABLED:
             self.bootloop_guard = BootLoopGuard(
@@ -105,6 +107,10 @@ class SubscribeService:
         self.client = None
         self.registry.start_all()
 
+    def _register_adapters(self):
+        for name, adapter in self.adapters:
+            self.registry.register_adapter(name, adapter)
+
     def on_message(self, topic, message):
         handler = self.message_handlers.get(topic.decode(), self._default_handler)
         handler(topic, message)
@@ -122,6 +128,9 @@ class SubscribeService:
     def disconnect(self):
         self.connection.disconnect()
         self.client = None
+
+    def stop(self):
+        self.registry.stop_all()
 
     def run(self):
         while True:
