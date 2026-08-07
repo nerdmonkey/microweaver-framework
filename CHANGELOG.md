@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `PublishService` run loop now logs a `tick` heartbeat (debug level) each cycle with
+  current wifi connection state, so setting `log_level: debug` gives serial proof the
+  device loop is alive even when `mqtt_enabled` is off and nothing else prints.
 - Configurable `log_level` (debug/info/warning/error) to filter `LogService` output by
   minimum severity.
 - `PublishService`/`SubscribeService` now publish `HealthCheckService.report()`
