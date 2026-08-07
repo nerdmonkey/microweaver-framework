@@ -277,6 +277,75 @@ def test_ota_service_created_when_enabled(mocker):
     assert service.ota_service is mock_ota
 
 
+def test_ota_topic_registered_when_ota_enabled(mocker):
+    mocker.patch("app.services.subscribe.setting.OTA_ENABLED", True)
+    mocker.patch("app.services.subscribe.setting.OTA_TOPIC", "ota/update")
+    mocker.patch("app.services.subscribe.OtaService")
+
+    service = SubscribeService()
+
+    assert "ota/update" in service.topics
+    assert service.message_handlers["ota/update"] == service._handle_ota_message
+
+
+def test_ota_topic_not_registered_when_ota_disabled():
+    service = SubscribeService()
+
+    assert "ota/update" not in service.topics
+    assert "ota/update" not in service.message_handlers
+
+
+def test_ota_topic_not_registered_when_topic_blank(mocker):
+    mocker.patch("app.services.subscribe.setting.OTA_ENABLED", True)
+    mocker.patch("app.services.subscribe.setting.OTA_TOPIC", "")
+    mocker.patch("app.services.subscribe.OtaService")
+
+    service = SubscribeService()
+
+    assert service.topics == list(setting.MQTT_TOPIC_SUB)
+    assert service.message_handlers == {}
+
+
+def test_handle_ota_message_applies_update_via_error_handler():
+    service = SubscribeService()
+    ota_service = MagicMock()
+    service.ota_service = ota_service
+
+    service._handle_ota_message(b"ota/update", b'{"version":"1.2.0"}')
+
+    ota_service.apply_update.assert_called_once_with()
+
+
+def test_handle_ota_message_logs_and_swallows_apply_update_errors():
+    service = SubscribeService()
+    ota_service = MagicMock()
+    ota_service.apply_update.side_effect = RuntimeError("boom")
+    service.ota_service = ota_service
+    service.error_handler = ErrorHandlerService(logger=MagicMock())
+
+    service._handle_ota_message(b"ota/update", b"trigger")
+
+    service.error_handler.logger.log.assert_called_once_with(
+        "unhandled_exception",
+        level="error",
+        context="ota_update",
+        error="boom",
+    )
+
+
+def test_on_message_routes_ota_topic_to_ota_handler(mocker):
+    mocker.patch("app.services.subscribe.setting.OTA_ENABLED", True)
+    mocker.patch("app.services.subscribe.setting.OTA_TOPIC", "ota/update")
+    mock_ota_cls = mocker.patch("app.services.subscribe.OtaService")
+    mock_ota = mock_ota_cls.return_value
+
+    service = SubscribeService()
+
+    service.on_message(b"ota/update", b'{"version":"1.2.0"}')
+
+    mock_ota.apply_update.assert_called_once_with()
+
+
 def test_run_confirms_ota_update_after_connect(mocker):
     mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
     mocker.patch("app.services.subscribe.WiFiService")

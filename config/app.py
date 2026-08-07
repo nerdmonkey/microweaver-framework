@@ -75,6 +75,7 @@ _SCHEMA = {
     "ota_enabled": {"type": bool},
     "ota_manifest_url": {"type": str},
     "ota_state_path": {"type": str},
+    "ota_topic": {"type": str},
 }
 
 
@@ -199,6 +200,7 @@ class Setting:
         self.OTA_ENABLED = self._bool("ota_enabled", False)
         self.OTA_MANIFEST_URL = self._value("ota_manifest_url", "")
         self.OTA_STATE_PATH = self._value("ota_state_path", "ota_state.json")
+        self.OTA_TOPIC = self._value("ota_topic", "ota/update")
 
     def _load(self, path):
         try:
