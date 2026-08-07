@@ -20,6 +20,7 @@
   - [`device info`](#device-info)
   - [`device ls`](#device-ls)
   - [`device tree`](#device-tree)
+  - [`device test-adapter`](#device-test-adapter)
 - [Common workflows](#common-workflows)
 - [Troubleshooting](#troubleshooting)
 
@@ -28,10 +29,10 @@
 | Tool | Required for | Install |
 |---|---|---|
 | `mpy-cross-multi` | `build` | bundled with the project's build deps |
-| `mpremote` | `upload`, `download`, `device info` (firmware read), `device ls`, `device tree` | `pip install mpremote` |
+| `mpremote` | `upload`, `download`, `device info` (firmware read), `device ls`, `device tree`, `device test-adapter` | `pip install mpremote` |
 | `esptool` (Python API) | `device reset`, `device info` (chip read) | installed as a project dependency, no separate CLI install needed |
 
-`upload`, `download`, `device ls`, and `device tree` check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`.
+`upload`, `download`, `device ls`, `device tree`, and `device test-adapter` check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`.
 
 ## Global concepts
 
@@ -379,6 +380,31 @@ python tinker.py device tree --size
 
 # Tree with human-readable sizes, starting from a subdirectory
 python tinker.py device tree --human :app
+```
+
+### `device test-adapter`
+
+Bench-test a single adapter against real hardware without deploying the full app. Runs the adapter's `setup()` / `read()` (if it has one) / `deinit()` cycle on-device via `mpremote exec` and prints the result — useful for verifying wiring/config before wiring the adapter into a `PublishService`/`SubscribeService` run. Requires the adapter's module to already be present on the device (via `upload`).
+
+```shell
+python tinker.py device test-adapter [OPTIONS] MODULE
+```
+
+| Argument/Option | Default | Description |
+|---|---|---|
+| `MODULE` | (required) | Dotted path to the adapter class, e.g. `app.adapters.sensors.dht22.DHT22Adapter` |
+| `--port`, `-p` | resolved | Serial port |
+
+The adapter is instantiated with no arguments, so it uses its constructor's defaults (e.g. `DHT22Adapter(pin=4)`). Adapters without a `read()` method (actuators, indicators) print `no read() method` instead of failing.
+
+Examples:
+
+```shell
+# Bench-test the DHT22 sensor adapter on the resolved port
+python tinker.py device test-adapter app.adapters.sensors.dht22.DHT22Adapter
+
+# Against an explicit port
+python tinker.py device test-adapter --port /dev/tty.usbserial-0001 app.adapters.actuators.relay.RelayAdapter
 ```
 
 ## Common workflows

@@ -905,6 +905,59 @@ def test_device_ls_prompts_for_port_and_failure(mocker):
     assert result.exit_code == 1
 
 
+def test_device_test_adapter_missing_mpremote(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value=None)
+    result = runner.invoke(
+        tinker.app,
+        ["device", "test-adapter", "app.adapters.sensors.dht22.DHT22Adapter"],
+    )
+    assert result.exit_code == 1
+    assert "mpremote" in result.stderr
+
+
+def test_device_test_adapter_rejects_bare_name(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    result = runner.invoke(tinker.app, ["device", "test-adapter", "DHT22Adapter"])
+    assert result.exit_code == 1
+    assert "dotted path" in result.stderr
+
+
+def test_device_test_adapter_success(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "device",
+            "test-adapter",
+            "app.adapters.sensors.dht22.DHT22Adapter",
+            "--port",
+            "/dev/ttyUSB0",
+        ],
+    )
+    assert result.exit_code == 0
+    cmd = mock_run.call_args[0][0]
+    assert cmd[:4] == ["mpremote", "connect", "/dev/ttyUSB0", "exec"]
+    script = cmd[-1]
+    assert "from app.adapters.sensors.dht22 import DHT22Adapter" in script
+    assert "adapter = DHT22Adapter()" in script
+    assert "adapter.setup()" in script
+    assert "adapter.deinit()" in script
+
+
+def test_device_test_adapter_prompts_for_port_and_failure(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=1))
+    result = runner.invoke(
+        tinker.app,
+        ["device", "test-adapter", "app.adapters.sensors.dht22.DHT22Adapter"],
+    )
+    assert result.exit_code == 1
+
+
 def test_device_repl_missing_mpremote(mocker):
     mocker.patch.object(tinker.shutil, "which", return_value=None)
     result = runner.invoke(tinker.app, ["device", "repl"])
