@@ -64,23 +64,8 @@ class SubscribeService:
                 setting.MEMORY_MONITOR_ACTION,
                 logger=self.log_service,
             )
-        self.health_check_service = None
-        if setting.HEALTH_CHECK_ENABLED:
-            self.health_check_service = HealthCheckService(
-                interval_seconds=setting.HEALTH_CHECK_INTERVAL_SECONDS,
-                logger=self.log_service,
-            )
-            self.health_check_service.register("wifi", self.wifi_service.is_connected)
-            self.health_check_service.register("mqtt", lambda: self.client is not None)
-        self.service_restart_service = None
-        if setting.SERVICE_RESTART_ENABLED and self.health_check_service:
-            self.service_restart_service = ServiceRestartService(
-                max_attempts=setting.SERVICE_RESTART_MAX_ATTEMPTS
-            )
-            self.service_restart_service.register("wifi", self.wifi_service.connect)
-            self.service_restart_service.register(
-                "mqtt", lambda: self.connect_to_mqtt()
-            )
+        self._init_health_check()
+        self._init_service_restart()
         ssl_params = {}
         if setting.MQTT_SSL_CERT_PATH:
             ssl_params["cert"] = setting.MQTT_SSL_CERT_PATH
@@ -111,6 +96,31 @@ class SubscribeService:
         for name, adapter in self.adapters:
             self.registry.register_adapter(name, adapter)
 
+    def _init_health_check(self):
+        self.health_check_service = None
+        if setting.HEALTH_CHECK_ENABLED:
+            self.health_check_service = HealthCheckService(
+                interval_seconds=setting.HEALTH_CHECK_INTERVAL_SECONDS,
+                logger=self.log_service,
+            )
+            self.health_check_service.register("wifi", self.wifi_service.is_connected)
+            if setting.MQTT_ENABLED:
+                self.health_check_service.register(
+                    "mqtt", lambda: self.client is not None
+                )
+
+    def _init_service_restart(self):
+        self.service_restart_service = None
+        if setting.SERVICE_RESTART_ENABLED and self.health_check_service:
+            self.service_restart_service = ServiceRestartService(
+                max_attempts=setting.SERVICE_RESTART_MAX_ATTEMPTS
+            )
+            self.service_restart_service.register("wifi", self.wifi_service.connect)
+            if setting.MQTT_ENABLED:
+                self.service_restart_service.register(
+                    "mqtt", lambda: self.connect_to_mqtt()
+                )
+
     def on_message(self, topic, message):
         handler = self.message_handlers.get(topic.decode(), self._default_handler)
         handler(topic, message)
@@ -132,27 +142,30 @@ class SubscribeService:
     def stop(self):
         self.registry.stop_all()
 
+    def _run_tick(self):
+        if self.watchdog_service:
+            self.watchdog_service.feed()
+        self.wifi_service.ensure_connected()
+        if self.memory_monitor_service:
+            self.error_handler.guard(
+                self.memory_monitor_service.check, "memory_monitor"
+            )
+        if self.health_check_service:
+            self.health_check_service.poll()
+            if self.service_restart_service:
+                self.service_restart_service.reconcile(self.health_check_service.status)
+        if setting.MQTT_ENABLED:
+            self.client.check_msg()
+
     def run(self):
         while True:
-            self.connect_to_mqtt()
+            if setting.MQTT_ENABLED:
+                self.connect_to_mqtt()
             if self.bootloop_guard:
                 self.bootloop_guard.confirm()
             try:
                 while True:
-                    if self.watchdog_service:
-                        self.watchdog_service.feed()
-                    self.wifi_service.ensure_connected()
-                    if self.memory_monitor_service:
-                        self.error_handler.guard(
-                            self.memory_monitor_service.check, "memory_monitor"
-                        )
-                    if self.health_check_service:
-                        self.health_check_service.poll()
-                        if self.service_restart_service:
-                            self.service_restart_service.reconcile(
-                                self.health_check_service.status
-                            )
-                    self.client.check_msg()
+                    self._run_tick()
                     time.sleep(1)
             except Exception as e:
                 print("Connection lost:", e)
