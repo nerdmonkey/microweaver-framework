@@ -1,8 +1,16 @@
 import socket
+import time
 
 import network
 
 ACCEPT_TIMEOUT_SECONDS = 1.0
+WIFI_TEST_TIMEOUT_SECONDS = 20
+LED_CONNECTED_BLINKS = 2
+LED_CONNECTED_ON_SECONDS = 1.0
+LED_CONNECTED_OFF_SECONDS = 0.3
+LED_CONNECT_FAILED_BLINKS = 5
+LED_CONNECT_FAILED_ON_SECONDS = 0.1
+LED_CONNECT_FAILED_OFF_SECONDS = 0.1
 
 
 class ProvisioningService:
@@ -13,12 +21,16 @@ class ProvisioningService:
         ap_ip="192.168.4.1",
         port=80,
         setting=None,
+        led=None,
+        wifi_test_timeout_seconds=WIFI_TEST_TIMEOUT_SECONDS,
     ):
         self.ap_ssid = ap_ssid
         self.ap_password = ap_password
         self.ap_ip = ap_ip
         self.port = port
         self.setting = setting
+        self.led = led
+        self.wifi_test_timeout_seconds = wifi_test_timeout_seconds
         self.ap = network.WLAN(network.AP_IF)
         self.server = None
 
@@ -34,12 +46,17 @@ class ProvisioningService:
         else:
             self.ap.config(essid=self.ap_ssid, authmode=network.AUTH_OPEN)
         print("Provisioning AP started:", self.ap_ssid, self.ap_ip)
+        if self.led:
+            # solid on = AP active, waiting for a client to submit credentials
+            self.led.on()
 
     def stop(self):
         if self.server:
             self.server.close()
             self.server = None
         self.ap.active(False)
+        if self.led:
+            self.led.off()
         print("Provisioning AP stopped")
 
     def scan_networks(self):
@@ -70,6 +87,8 @@ class ProvisioningService:
                     # accept() timed out with no client connecting - loop
                     # back so the interpreter gets a chance to process a
                     # Ctrl-C / raw-REPL request instead of blocking forever.
+                    if self.led:
+                        self.led.toggle()
                     continue
                 self._handle_request(client)
         finally:
@@ -81,8 +100,15 @@ class ProvisioningService:
             method, path = self._parse_request_line(request)
             if method == "POST" and path == "/save":
                 fields = self._parse_form(request)
-                self._save_credentials(fields)
-                client.send(self._response(200, "Credentials saved. Rebooting."))
+                connected = self._save_credentials(fields)
+                if connected:
+                    message = "Credentials saved. Connected!"
+                else:
+                    message = (
+                        "Credentials saved, but could not connect. "
+                        "Check the password and try again."
+                    )
+                client.send(self._response(200, message))
             else:
                 client.send(
                     self._response(200, self._render_form(), content_type="text/html")
@@ -102,11 +128,47 @@ class ProvisioningService:
         claim_code = fields.get("claim_code", "").strip()
         if not ssid:
             raise ValueError("ssid is required")
+        connected = self._test_wifi_connection(ssid, password)
         if self.setting:
             self.setting.save(
                 wifi_ssid=ssid, wifi_password=password, claim_code=claim_code or None
             )
         print("Provisioning saved credentials for ssid:", ssid)
+        if self.led:
+            if connected:
+                self.led.blink(
+                    LED_CONNECTED_BLINKS,
+                    LED_CONNECTED_ON_SECONDS,
+                    LED_CONNECTED_OFF_SECONDS,
+                )
+            else:
+                self.led.blink(
+                    LED_CONNECT_FAILED_BLINKS,
+                    LED_CONNECT_FAILED_ON_SECONDS,
+                    LED_CONNECT_FAILED_OFF_SECONDS,
+                )
+        return connected
+
+    def _test_wifi_connection(self, ssid, password):
+        sta = network.WLAN(network.STA_IF)
+        sta.active(True)
+        try:
+            sta.disconnect()
+        except Exception:
+            pass
+        try:
+            sta.connect(ssid, password)
+        except OSError as e:
+            print("Provisioning WiFi test failed to start:", e)
+            return False
+
+        deadline = time.time() + self.wifi_test_timeout_seconds
+        while not sta.isconnected():
+            if time.time() >= deadline:
+                print("Provisioning WiFi test timed out connecting to", ssid)
+                return False
+            time.sleep(1)
+        return True
 
     def _parse_request_line(self, request):
         line = request.split(b"\r\n", 1)[0].decode()

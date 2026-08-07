@@ -52,6 +52,8 @@
     "provisioning_ap_password": "",
     "provisioning_ap_ip": "192.168.4.1",
     "provisioning_port": 80,
+    "provisioning_led_enabled": false,
+    "provisioning_led_pin": 2,
     "factory_reset_enabled": false,
     "factory_reset_pin": -1,
     "factory_reset_hold_seconds": 3,

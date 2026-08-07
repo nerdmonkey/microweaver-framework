@@ -59,6 +59,8 @@ _SCHEMA = {
     "provisioning_ap_password": {"type": str},
     "provisioning_ap_ip": {"type": str},
     "provisioning_port": {"type": "int", "min": 1, "max": 65535},
+    "provisioning_led_enabled": {"type": bool},
+    "provisioning_led_pin": {"type": "int", "min": 0, "max": 39},
     "factory_reset_enabled": {"type": bool},
     "factory_reset_pin": {"type": "int", "min": -1, "max": 39},
     "factory_reset_hold_seconds": {"type": "int", "min": 0},
@@ -172,6 +174,8 @@ class Setting:
         self.PROVISIONING_AP_PASSWORD = self._value("provisioning_ap_password", "")
         self.PROVISIONING_AP_IP = self._value("provisioning_ap_ip", "192.168.4.1")
         self.PROVISIONING_PORT = self._int("provisioning_port", 80)
+        self.PROVISIONING_LED_ENABLED = self._bool("provisioning_led_enabled", False)
+        self.PROVISIONING_LED_PIN = self._int("provisioning_led_pin", 2)
 
         self.FACTORY_RESET_ENABLED = self._bool("factory_reset_enabled", False)
         self.FACTORY_RESET_PIN = self._int("factory_reset_pin", -1)

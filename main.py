@@ -1,4 +1,5 @@
 from app.adapters.actuators.relay import RelayAdapter
+from app.adapters.indicators.led import StatusLEDAdapter
 from app.adapters.sensors.dht22 import DHT22Adapter
 from app.services.provisioning import ProvisioningService
 from app.services.publish import PublishService
@@ -25,14 +26,23 @@ def start_safe_mode():
 
 
 def start_provisioning():
+    led = None
+    if setting.PROVISIONING_LED_ENABLED:
+        led = StatusLEDAdapter(pin=setting.PROVISIONING_LED_PIN)
+        led.setup()
     provisioning = ProvisioningService(
         ap_ssid=setting.PROVISIONING_AP_SSID,
         ap_password=setting.PROVISIONING_AP_PASSWORD,
         ap_ip=setting.PROVISIONING_AP_IP,
         port=setting.PROVISIONING_PORT,
         setting=setting,
+        led=led,
     )
-    provisioning.run()
+    try:
+        provisioning.run()
+    finally:
+        if led:
+            led.deinit()
 
 
 def start_claim():

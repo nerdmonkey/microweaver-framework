@@ -38,19 +38,51 @@ def test_start_provisioning_wires_and_runs_provisioning_service(mocker):
     mocker.patch("main.setting.PROVISIONING_AP_PASSWORD", "secret123")
     mocker.patch("main.setting.PROVISIONING_AP_IP", "192.168.4.1")
     mocker.patch("main.setting.PROVISIONING_PORT", 80)
+    mocker.patch("main.setting.PROVISIONING_LED_ENABLED", False)
+    mock_led_cls = mocker.patch("main.StatusLEDAdapter")
     mock_provisioning_cls = mocker.patch("main.ProvisioningService")
     mock_instance = mock_provisioning_cls.return_value
 
     main.start_provisioning()
 
+    mock_led_cls.assert_not_called()
     mock_provisioning_cls.assert_called_once_with(
         ap_ssid="Microweaver-Setup",
         ap_password="secret123",
         ap_ip="192.168.4.1",
         port=80,
         setting=main.setting,
+        led=None,
     )
     mock_instance.run.assert_called_once_with()
+
+
+def test_start_provisioning_wires_led_when_enabled(mocker):
+    mocker.patch("main.setting.PROVISIONING_AP_SSID", "Microweaver-Setup")
+    mocker.patch("main.setting.PROVISIONING_AP_PASSWORD", "secret123")
+    mocker.patch("main.setting.PROVISIONING_AP_IP", "192.168.4.1")
+    mocker.patch("main.setting.PROVISIONING_PORT", 80)
+    mocker.patch("main.setting.PROVISIONING_LED_ENABLED", True)
+    mocker.patch("main.setting.PROVISIONING_LED_PIN", 12)
+    mock_led_cls = mocker.patch("main.StatusLEDAdapter")
+    mock_led = mock_led_cls.return_value
+    mock_provisioning_cls = mocker.patch("main.ProvisioningService")
+    mock_instance = mock_provisioning_cls.return_value
+
+    main.start_provisioning()
+
+    mock_led_cls.assert_called_once_with(pin=12)
+    mock_led.setup.assert_called_once_with()
+    mock_provisioning_cls.assert_called_once_with(
+        ap_ssid="Microweaver-Setup",
+        ap_password="secret123",
+        ap_ip="192.168.4.1",
+        port=80,
+        setting=main.setting,
+        led=mock_led,
+    )
+    mock_instance.run.assert_called_once_with()
+    mock_led.deinit.assert_called_once_with()
 
 
 def test_start_claim_wires_wifi_and_registers_with_backend(mocker):
