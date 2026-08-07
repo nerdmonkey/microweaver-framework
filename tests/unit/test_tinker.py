@@ -1,3 +1,4 @@
+import json
 import shutil
 import subprocess
 from unittest.mock import MagicMock
@@ -518,6 +519,179 @@ def test_download_subprocess_failure(tmp_path, mocker):
         tinker.app, ["download", "--port", "/dev/ttyUSB0", str(dest)]
     )
     assert result.exit_code == 3
+
+
+PROVISION_FLAGS = [
+    "--wifi-ssid",
+    "MySSID",
+    "--wifi-password",
+    "MyPass",
+    "--mqtt-broker",
+    "broker.local",
+    "--mqtt-port",
+    "1884",
+    "--mqtt-client-id",
+    "device-1",
+    "--mqtt-topic-pub",
+    "pub/topic",
+    "--mqtt-topic-sub",
+    "sub/topic",
+    "--mqtt-username",
+    "muser",
+    "--mqtt-password",
+    "mpass",
+]
+
+
+# --------------------------------------------------------------------------
+# provision command
+# --------------------------------------------------------------------------
+
+
+def test_provision_missing_mpremote(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value=None)
+    result = runner.invoke(tinker.app, ["provision"])
+    assert result.exit_code == 1
+    assert "mpremote" in result.stderr
+
+
+def test_provision_success_via_flags(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["provision", "--port", "/dev/ttyUSB0", *PROVISION_FLAGS],
+    )
+    assert result.exit_code == 0
+
+    config_path = tmp_path / "device_config.json"
+    written = json.loads(config_path.read_text())
+    assert written["wifi_ssid"] == "MySSID"
+    assert written["mqtt_broker"] == "broker.local"
+    assert written["mqtt_port"] == 1884
+
+    called_cmd = mock_run.call_args[0][0]
+    assert called_cmd == [
+        "mpremote",
+        "connect",
+        "/dev/ttyUSB0",
+        "fs",
+        "cp",
+        str(config_path),
+        ":device_config.json",
+    ]
+    assert tinker.load_config()["port"] == "/dev/ttyUSB0"
+
+
+def test_provision_custom_baud_warns(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
+    result = runner.invoke(
+        tinker.app,
+        ["provision", "--port", "/dev/ttyUSB0", "--baud", "9600", *PROVISION_FLAGS],
+    )
+    assert result.exit_code == 0
+    assert "ignores --baud" in result.stderr
+
+
+def test_provision_prompts_for_port_when_missing(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
+    mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
+    result = runner.invoke(tinker.app, ["provision", *PROVISION_FLAGS])
+    assert result.exit_code == 0
+    assert tinker.load_config()["port"] == "/dev/ttyUSB9"
+
+
+def test_provision_missing_fields_not_tty(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    result = runner.invoke(tinker.app, ["provision", "--port", "/dev/ttyUSB0"])
+    assert result.exit_code == 1
+    assert "no TTY to prompt for" in result.stderr
+    assert "--wifi-ssid" in result.stderr
+
+
+def test_provision_subprocess_failure(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=2))
+    result = runner.invoke(
+        tinker.app,
+        ["provision", "--port", "/dev/ttyUSB0", *PROVISION_FLAGS],
+    )
+    assert result.exit_code == 2
+
+
+def test_provision_invalid_config_rejected(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
+    flags = list(PROVISION_FLAGS)
+    flags[flags.index("1884")] = "999999"  # out of the schema's 1-65535 range
+    result = runner.invoke(tinker.app, ["provision", "--port", "/dev/ttyUSB0", *flags])
+    assert result.exit_code == 1
+    assert "ERROR" in result.stderr
+
+
+def test_provision_interactive_prompts_fill_only_missing(tmp_path, mocker):
+    # CliRunner swaps sys.stdin for its own fake stream during invoke(), so
+    # isatty must be mocked directly and the command called without the CLI
+    # runner to keep the mock in effect (mirrors test_config_set_interactive).
+    (tmp_path / "device_config.json.example").write_text(
+        json.dumps({"mqtt_broker": "example-broker"})
+    )
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
+    mocker.patch.object(
+        tinker.typer,
+        "prompt",
+        side_effect=[
+            "prompted-pass",  # wifi_password
+            "example-broker",  # mqtt_broker (default echoed back)
+            1884,  # mqtt_port
+            "device-1",  # mqtt_client_id
+            "pub/topic",  # mqtt_topic_pub
+            "sub/topic",  # mqtt_topic_sub
+            "muser",  # mqtt_username
+            "mpass",  # mqtt_password
+        ],
+    )
+
+    tinker.provision(
+        port="/dev/ttyUSB5",
+        baud=None,
+        wifi_ssid="GivenSSID",
+        wifi_password=None,
+        mqtt_broker=None,
+        mqtt_port=None,
+        mqtt_client_id=None,
+        mqtt_topic_pub=None,
+        mqtt_topic_sub=None,
+        mqtt_username=None,
+        mqtt_password=None,
+    )
+
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["wifi_ssid"] == "GivenSSID"
+    assert written["wifi_password"] == "prompted-pass"
+    assert written["mqtt_broker"] == "example-broker"
+
+
+def test_load_provision_defaults_prefers_existing_config(tmp_path):
+    (tmp_path / "device_config.json.example").write_text(
+        json.dumps({"mqtt_broker": "from-example"})
+    )
+    assert tinker._load_provision_defaults() == {"mqtt_broker": "from-example"}
+
+    (tmp_path / "device_config.json").write_text(
+        json.dumps({"mqtt_broker": "from-existing-config"})
+    )
+    assert tinker._load_provision_defaults() == {"mqtt_broker": "from-existing-config"}
+
+
+def test_load_provision_defaults_no_files(tmp_path):
+    assert tinker._load_provision_defaults() == {}
 
 
 # --------------------------------------------------------------------------

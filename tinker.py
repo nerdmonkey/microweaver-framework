@@ -2,6 +2,7 @@
 """Build, upload, and manage microweaver firmware."""
 
 import configparser
+import json
 import shutil
 import subprocess  # nosec B404
 import sys
@@ -16,6 +17,8 @@ from esptool.cmds import attach_flash, detect_chip, reset_chip
 from esptool.logger import log as esptool_log
 from esptool.util import FatalError
 from serial.tools import list_ports
+
+from config.app import ConfigError, Setting
 
 ROOT = Path(__file__).parent
 DIST = ROOT / "dist"
@@ -407,6 +410,149 @@ def download(
 
     save_config(port=port, baud=baud)
     print(f"\nDownloaded {resolved_port} -> {path}")
+
+
+PROVISION_FIELDS = [
+    # (json key, prompt label, default, is_secret)
+    ("wifi_ssid", "WiFi SSID", "", False),
+    ("wifi_password", "WiFi password", "", True),
+    ("mqtt_broker", "MQTT broker", "localhost", False),
+    ("mqtt_port", "MQTT port", 1883, False),
+    ("mqtt_client_id", "MQTT client id", "microweaver", False),
+    ("mqtt_topic_pub", "MQTT publish topic", "command/control/room/light", False),
+    ("mqtt_topic_sub", "MQTT subscribe topic", "data/sensor/room/temperature", False),
+    ("mqtt_username", "MQTT username", "", False),
+    ("mqtt_password", "MQTT password", "", True),
+]
+
+
+def _load_provision_defaults() -> dict:
+    """Seed prompt defaults from the device's own device_config.json, falling
+    back to the shipped example when it doesn't exist yet."""
+    config_path = ROOT / "device_config.json"
+    defaults_path = (
+        config_path if config_path.exists() else ROOT / "device_config.json.example"
+    )
+    if not defaults_path.exists():
+        return {}
+    with defaults_path.open() as f:
+        return json.load(f)
+
+
+def _prompt_missing_fields(given: dict, defaults: dict) -> None:
+    """Fill any None values in `given` (in place) by prompting interactively."""
+    print("Provisioning over serial. Press Enter to accept the default.\n")
+    for key, label, fallback, secret in PROVISION_FIELDS:
+        if given[key] is not None:
+            continue
+        given[key] = typer.prompt(
+            label,
+            default=defaults.get(key, fallback),
+            type=int if isinstance(fallback, int) else str,
+            hide_input=secret,
+        )
+
+
+def _require_tty_for_missing(missing: list) -> None:
+    if missing and not sys.stdin.isatty():
+        flags = ", ".join(f"--{key.replace('_', '-')}" for key in missing)
+        print(f"ERROR: no TTY to prompt for: {flags}.", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def provision(
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Serial port of device (see 'tinker.py port')"
+    ),
+    baud: Optional[int] = typer.Option(None, "--baud", "-b", help="Baud rate"),
+    wifi_ssid: Optional[str] = typer.Option(None, help="WiFi SSID"),
+    wifi_password: Optional[str] = typer.Option(None, help="WiFi password"),
+    mqtt_broker: Optional[str] = typer.Option(None, help="MQTT broker host"),
+    mqtt_port: Optional[int] = typer.Option(None, help="MQTT broker port"),
+    mqtt_client_id: Optional[str] = typer.Option(None, help="MQTT client id"),
+    mqtt_topic_pub: Optional[str] = typer.Option(None, help="MQTT publish topic"),
+    mqtt_topic_sub: Optional[str] = typer.Option(None, help="MQTT subscribe topic"),
+    mqtt_username: Optional[str] = typer.Option(None, help="MQTT username"),
+    mqtt_password: Optional[str] = typer.Option(None, help="MQTT password"),
+) -> None:
+    """Prompt for WiFi/MQTT settings and push a generated device_config.json.
+
+    Bench/headless alternative to the SoftAP captive-portal setup flow: no
+    phone or laptop needs to join the device's access point, since settings
+    are entered locally and pushed over the same serial connection used by
+    upload/download.
+    """
+    if shutil.which("mpremote") is None:
+        print(
+            "ERROR: 'mpremote' not found on PATH. Install it with "
+            "'pip install mpremote'.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    # Resolution order: CLI flag > .microweaver > hardcoded default.
+    config = load_config()
+    resolved_port = port or config.get("port")
+    resolved_baud = baud if baud is not None else int(config.get("baud", DEFAULT_BAUD))
+
+    if resolved_port is None:
+        resolved_port = prompt_for_port()
+        port = resolved_port
+
+    # mpremote's CLI hardcodes 115200 baud (no override flag exists upstream
+    # as of 1.28.0); --baud is accepted for interface parity but has no
+    # effect on the actual transfer today.
+    if resolved_baud != 115200:
+        print(
+            f"NOTE: mpremote ignores --baud (requested {resolved_baud}), "
+            "connection always runs at 115200.",
+            file=sys.stderr,
+        )
+
+    given = {
+        "wifi_ssid": wifi_ssid,
+        "wifi_password": wifi_password,
+        "mqtt_broker": mqtt_broker,
+        "mqtt_port": mqtt_port,
+        "mqtt_client_id": mqtt_client_id,
+        "mqtt_topic_pub": mqtt_topic_pub,
+        "mqtt_topic_sub": mqtt_topic_sub,
+        "mqtt_username": mqtt_username,
+        "mqtt_password": mqtt_password,
+    }
+    missing = [key for key, value in given.items() if value is None]
+    _require_tty_for_missing(missing)
+
+    defaults = _load_provision_defaults()
+    if missing:
+        _prompt_missing_fields(given, defaults)
+
+    config_path = ROOT / "device_config.json"
+    merged = dict(defaults)
+    merged.update(given)
+
+    try:
+        Setting(config_path=str(config_path)).save(**merged)
+    except ConfigError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    cmd = [
+        "mpremote",
+        "connect",
+        resolved_port,
+        "fs",
+        "cp",
+        str(config_path),
+        ":device_config.json",
+    ]
+    result = subprocess.run(cmd)  # nosec B603
+    if result.returncode != 0:
+        raise typer.Exit(code=result.returncode)
+
+    save_config(port=port, baud=baud)
+    print(f"\nProvisioned {resolved_port} with {config_path.name}")
 
 
 def _watched_files() -> list:
