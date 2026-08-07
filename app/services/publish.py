@@ -12,6 +12,7 @@ from app.services.logger import LogService
 from app.services.memory_monitor import MemoryMonitorService
 from app.services.mqtt import MqttConnection
 from app.services.ota import OtaService
+from app.services.poll_scheduler import PollScheduler
 from app.services.registry import ServiceRegistry
 from app.services.service_restart import ServiceRestartService
 from app.services.watchdog import WatchdogService
@@ -84,6 +85,7 @@ class PublishService:
             )
         self._init_health_check()
         self._init_service_restart()
+        self._init_health_report()
         ssl_params = {}
         if setting.MQTT_SSL_CERT_PATH:
             ssl_params["cert"] = setting.MQTT_SSL_CERT_PATH
@@ -140,6 +142,19 @@ class PublishService:
                     "mqtt", lambda: self.connect_to_mqtt()
                 )
 
+    def _init_health_report(self):
+        self.health_report_topic = setting.HEALTH_REPORT_TOPIC
+        self.health_report_scheduler = None
+        if (
+            setting.HEALTH_REPORT_ENABLED
+            and setting.MQTT_ENABLED
+            and self.health_check_service
+        ):
+            self.health_report_scheduler = PollScheduler(
+                setting.HEALTH_REPORT_INTERVAL_SECONDS
+            )
+            self.health_report_scheduler.register("health_report")
+
     def connect_to_mqtt(self):
         self.client = self.connection.connect()
 
@@ -149,6 +164,11 @@ class PublishService:
     def _report_ota_status(self, payload):
         payload.setdefault("app_version", setting.APP_VERSION)
         self._publish(self.ota_status_topic, json.dumps(payload))
+
+    def _publish_health_report(self):
+        self._publish(
+            self.health_report_topic, json.dumps(self.health_check_service.report())
+        )
 
     def _publish(self, topic, message):
         if self.client:
@@ -185,6 +205,10 @@ class PublishService:
             self.health_check_service.poll()
             if self.service_restart_service:
                 self.service_restart_service.reconcile(self.health_check_service.status)
+            if self.health_report_scheduler:
+                self.health_report_scheduler.poll(
+                    "health_report", self._publish_health_report
+                )
         if setting.MQTT_ENABLED:
             self.publish_message(message)
 
