@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Nothing yet.
+- Configurable `log_level` (debug/info/warning/error) to filter `LogService` output by
+  minimum severity.
 
 ## [0.1.0] - 2026-08-08
 

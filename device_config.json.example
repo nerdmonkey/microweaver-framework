@@ -47,6 +47,7 @@
     "service_restart_enabled": false,
     "service_restart_max_attempts": 3,
     "log_format": "json",
+    "log_level": "info",
     "dht22_pin": 4,
     "relay_pin": 5,
     "provisioning_ap_ssid": "Microweaver-Setup",

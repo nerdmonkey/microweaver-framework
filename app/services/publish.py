@@ -26,7 +26,9 @@ class PublishService:
         self.topic = setting.MQTT_TOPIC_PUB
         self.publish_qos = setting.MQTT_PUBLISH_QOS
         self.publish_retain = setting.MQTT_PUBLISH_RETAIN
-        self.log_service = LogService(format=setting.LOG_FORMAT)
+        self.log_service = LogService(
+            format=setting.LOG_FORMAT, level=setting.LOG_LEVEL
+        )
         self.error_handler = ErrorHandlerService(logger=self.log_service)
         self.watchdog_service = None
         if setting.WATCHDOG_ENABLED:

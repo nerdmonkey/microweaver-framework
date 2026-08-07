@@ -54,6 +54,7 @@ _SCHEMA = {
     "service_restart_enabled": {"type": bool},
     "service_restart_max_attempts": {"type": "int", "min": 0},
     "log_format": {"type": str, "choices": ("json", "kv")},
+    "log_level": {"type": str, "choices": ("debug", "info", "warning", "error")},
     "dht22_pin": {"type": "int", "min": 0, "max": 39},
     "relay_pin": {"type": "int", "min": 0, "max": 39},
     "provisioning_ap_ssid": {"type": str},
@@ -171,6 +172,7 @@ class Setting:
         self.SERVICE_RESTART_MAX_ATTEMPTS = self._int("service_restart_max_attempts", 3)
 
         self.LOG_FORMAT = self._value("log_format", "json")
+        self.LOG_LEVEL = self._value("log_level", "info")
 
         self.DHT22_PIN = self._int("dht22_pin", 4)
         self.RELAY_PIN = self._int("relay_pin", 5)
