@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   incremented by `PublishService`/`SubscribeService` on every publish, inbound message,
   and unhandled exception, and surfaced in `HealthCheckService.report()`'s `metrics` key
   alongside the existing health payload.
+- `tinker.py device health` fetches and prints a `HealthCheckService` report from the
+  device over `mpremote exec` (same pattern as the `device info` "Reset Reason" row), so
+  the current health/metrics snapshot can be read without a full MQTT subscriber.
 
 ## [0.1.0] - 2026-08-08
 

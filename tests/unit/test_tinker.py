@@ -1399,6 +1399,101 @@ def test_device_info_read_failure(mocker):
     esp._port.close.assert_called_once()
 
 
+# --------------------------------------------------------------------------
+# device health
+# --------------------------------------------------------------------------
+
+
+def test_device_health_no_mpremote(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value=None)
+    result = runner.invoke(tinker.app, ["device", "health", "--port", "/dev/ttyUSB0"])
+    assert result.exit_code == 1
+    assert "mpremote' not found" in result.stderr
+
+
+def test_device_health_prompts_for_port(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
+    report = {"app_version": "1.0.0", "healthy": True, "checks": {}, "metrics": {}}
+    mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=0, stdout=json.dumps(report)),
+    )
+    result = runner.invoke(tinker.app, ["device", "health"])
+    assert result.exit_code == 0
+    tinker.prompt_for_port.assert_called_once()
+
+
+def test_device_health_success(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    report = {
+        "app_version": "1.2.3",
+        "healthy": False,
+        "checks": {
+            "wifi": {"healthy": True, "error": None, "checked_at": 100},
+            "mqtt": {"healthy": False, "error": "broker down", "checked_at": 100},
+        },
+        "metrics": {
+            "uptime_seconds": 12.345,
+            "messages_published": 3,
+            "messages_received": 5,
+            "errors": 1,
+        },
+    }
+    mock_run = mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=0, stdout=json.dumps(report)),
+    )
+    result = runner.invoke(tinker.app, ["device", "health", "--port", "/dev/ttyUSB0"])
+    assert result.exit_code == 0
+    assert "1.2.3" in result.stdout
+    assert "Check: wifi" in result.stdout
+    assert "ok" in result.stdout
+    assert "Check: mqtt" in result.stdout
+    assert "failed (broker down)" in result.stdout
+    assert "12.3" in result.stdout
+    assert "Messages Published" in result.stdout
+    script = mock_run.call_args[0][0][-1]
+    assert "HealthCheckService" in script
+    assert "WiFiService(setting.WIFI_SSID, setting.WIFI_PASSWORD)" in script
+
+
+def test_device_health_mpremote_unresponsive(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(
+        tinker.subprocess, "run", return_value=MagicMock(returncode=1, stdout="")
+    )
+    result = runner.invoke(tinker.app, ["device", "health", "--port", "/dev/ttyUSB0"])
+    assert result.exit_code == 1
+    assert "unavailable (device unresponsive)" in result.stderr
+
+
+def test_device_health_mpremote_timeout(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        side_effect=subprocess.TimeoutExpired(cmd="mpremote", timeout=10),
+    )
+    result = runner.invoke(tinker.app, ["device", "health", "--port", "/dev/ttyUSB0"])
+    assert result.exit_code == 1
+    assert "timed out" in result.stderr
+
+
+def test_device_health_unparseable_report(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=0, stdout="not json"),
+    )
+    result = runner.invoke(tinker.app, ["device", "health", "--port", "/dev/ttyUSB0"])
+    assert result.exit_code == 1
+    assert "could not parse health report" in result.stderr
+
+
 def test_run_mpremote_cmd_raw_repl_failure_prints_recovery(mocker, capsys):
     mocker.patch.object(
         tinker.subprocess,
