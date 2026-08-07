@@ -44,7 +44,7 @@ def test_run_logs_connection_lost_with_trace(mocker):
     with pytest.raises(RuntimeError, match="stop test"):
         service.run(message="hi")
 
-    service.log_service.log.assert_called_once_with(
+    service.log_service.log.assert_any_call(
         "connection_lost",
         level="error",
         error="dropped",
@@ -118,6 +118,26 @@ def test_run_checks_wifi_drop_each_publish(mocker):
         service.run(message="hi")
 
     assert mock_wifi.ensure_connected.call_count == 3
+
+
+def test_run_logs_tick_heartbeat_each_publish(mocker):
+    mocker.patch("app.services.publish.setting.MQTT_ENABLED", True)
+    mock_wifi_cls = mocker.patch("app.services.publish.WiFiService")
+    mock_wifi = mock_wifi_cls.return_value
+    mock_wifi.is_connected.return_value = True
+    mock_connection_cls = mocker.patch("app.services.publish.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mocker.patch("time.sleep", side_effect=ConnectionResetError("dropped"))
+
+    service = PublishService()
+    service.log_service = MagicMock()
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        service.run(message="hi")
+
+    service.log_service.log.assert_any_call("tick", level="debug", wifi_connected=True)
 
 
 def test_publish_message_survives_publish_exception():

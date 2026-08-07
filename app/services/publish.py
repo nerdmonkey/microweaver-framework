@@ -208,6 +208,9 @@ class PublishService:
         self.registry.stop_all()
 
     def _run_tick(self, message):
+        self.log_service.log(
+            "tick", level="debug", wifi_connected=self.wifi_service.is_connected()
+        )
         if self.watchdog_service:
             self.watchdog_service.feed()
         self.wifi_service.ensure_connected()
