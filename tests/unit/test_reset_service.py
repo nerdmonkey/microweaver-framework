@@ -144,3 +144,56 @@ def test_reason_is_none_before_read():
     service = ResetService()
 
     assert service.reason is None
+
+
+def test_read_recovers_and_clears_crash_log_when_present(mocker):
+    mock_esp32 = mocker.patch("app.services.reset.esp32")
+    mock_esp32.reset_reason.return_value = mock_esp32.POWERON_RESET
+    logger = MagicMock()
+    crash_log = MagicMock()
+    crash_log.read.return_value = {
+        "event": "unhandled_exception",
+        "ts": 100,
+        "context": "mqtt_connect",
+        "error": "boom",
+        "trace": "OSError: boom",
+    }
+
+    service = ResetService(logger=logger, crash_log=crash_log)
+    service.read()
+
+    logger.log.assert_called_with(
+        "crash_log_recovered",
+        level="error",
+        ts=100,
+        context="mqtt_connect",
+        error="boom",
+        trace="OSError: boom",
+        original_event="unhandled_exception",
+    )
+    crash_log.clear.assert_called_once_with()
+
+
+def test_read_skips_recovery_when_crash_log_empty(mocker):
+    mock_esp32 = mocker.patch("app.services.reset.esp32")
+    mock_esp32.reset_reason.return_value = mock_esp32.POWERON_RESET
+    logger = MagicMock()
+    crash_log = MagicMock()
+    crash_log.read.return_value = None
+
+    service = ResetService(logger=logger, crash_log=crash_log)
+    service.read()
+
+    assert logger.log.call_args_list == [mocker.call("reset", reason="power_on")]
+    crash_log.clear.assert_not_called()
+
+
+def test_read_skips_recovery_when_no_crash_log_given(mocker):
+    mock_esp32 = mocker.patch("app.services.reset.esp32")
+    mock_esp32.reset_reason.return_value = mock_esp32.POWERON_RESET
+    logger = MagicMock()
+
+    service = ResetService(logger=logger)
+    service.read()
+
+    assert logger.log.call_args_list == [mocker.call("reset", reason="power_on")]

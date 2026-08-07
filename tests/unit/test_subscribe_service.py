@@ -430,7 +430,9 @@ def test_memory_monitor_created_when_enabled(mocker):
 
     service = SubscribeService()
 
-    mock_monitor_cls.assert_called_once_with(5000, "warn", logger=service.log_service)
+    mock_monitor_cls.assert_called_once_with(
+        5000, "warn", logger=service.log_service, crash_log=service.crash_log
+    )
     assert service.memory_monitor_service is mock_monitor
 
 
@@ -477,6 +479,18 @@ def test_error_handler_is_created():
 
     assert isinstance(service.error_handler, ErrorHandlerService)
     assert service.error_handler.logger is service.log_service
+    assert service.error_handler.crash_log is service.crash_log
+
+
+def test_crash_log_created_from_settings(mocker):
+    mocker.patch("app.services.subscribe.setting.CRASH_LOG_PATH", "crash.json")
+    mocker.patch("app.services.subscribe.setting.CRASH_LOG_ENABLED", True)
+    crash_log_cls = mocker.patch("app.services.subscribe.CrashLogService")
+
+    service = SubscribeService()
+
+    crash_log_cls.assert_called_once_with("crash.json", True)
+    assert service.crash_log is crash_log_cls.return_value
 
 
 def test_registry_is_wired_with_error_handler():

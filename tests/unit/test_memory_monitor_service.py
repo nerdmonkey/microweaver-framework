@@ -123,6 +123,49 @@ def test_default_action_is_log(mocker):
     )
 
 
+def test_check_writes_crash_log_before_restarting(mocker):
+    mocker.patch(
+        "app.services.memory_monitor.gc.mem_free", return_value=5000, create=True
+    )
+    mocker.patch("app.services.memory_monitor.reset")
+    crash_log = MagicMock()
+    service = MemoryMonitorService(
+        threshold_bytes=10000, action="restart", crash_log=crash_log
+    )
+
+    service.check()
+
+    crash_log.write.assert_called_once_with(
+        "memory_restart", free_bytes=5000, threshold_bytes=10000
+    )
+
+
+def test_check_does_not_write_crash_log_when_action_is_not_restart(mocker):
+    mocker.patch(
+        "app.services.memory_monitor.gc.mem_free", return_value=5000, create=True
+    )
+    crash_log = MagicMock()
+    service = MemoryMonitorService(
+        threshold_bytes=10000, action="log", crash_log=crash_log
+    )
+
+    service.check()
+
+    crash_log.write.assert_not_called()
+
+
+def test_check_restarts_without_crash_log_when_none_given(mocker):
+    mocker.patch(
+        "app.services.memory_monitor.gc.mem_free", return_value=5000, create=True
+    )
+    mock_reset = mocker.patch("app.services.memory_monitor.reset")
+    service = MemoryMonitorService(threshold_bytes=10000, action="restart")
+
+    service.check()
+
+    mock_reset.assert_called_once_with()
+
+
 def test_uses_default_logger_when_none_provided(mocker, capsys):
     mocker.patch(
         "app.services.memory_monitor.gc.mem_free", return_value=5000, create=True

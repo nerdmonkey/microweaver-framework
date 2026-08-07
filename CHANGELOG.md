@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   log a full stack trace (`sys.print_exception` on-device, exception type + args as a host
   fallback) alongside every unhandled exception, so field crashes are debuggable without a
   live serial session.
+- `CrashLogService` persists the final unhandled exception, memory-monitor restart, or
+  boot-loop reset to a small guard file (`crash_log_enabled`, `crash_log_path`, mirroring
+  `BootLoopGuard`'s `boot_state.json` pattern) before the device resets. `ResetService`
+  reads and logs it as `crash_log_recovered` on the next boot, then clears it, so the log
+  leading up to a reset survives for post-mortem retrieval.
 
 ## [0.1.0] - 2026-08-08
 
