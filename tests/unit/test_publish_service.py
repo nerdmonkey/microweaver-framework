@@ -364,6 +364,48 @@ def test_run_survives_memory_monitor_exception(mocker):
     assert mock_client.publish.call_count == 2
 
 
+def test_run_skips_mqtt_connect_and_publish_when_disabled(mocker):
+    mocker.patch("app.services.publish.setting.MQTT_ENABLED", False)
+    mocker.patch("app.services.publish.WiFiService")
+    mocker.patch("app.services.publish.MqttConnection")
+    mocker.patch("time.sleep", side_effect=KeyboardInterrupt())
+
+    service = PublishService()
+    mocker.patch.object(service, "connect_to_mqtt")
+    mocker.patch.object(service, "publish_message")
+
+    with pytest.raises(KeyboardInterrupt):
+        service.run(message="hi")
+
+    service.connect_to_mqtt.assert_not_called()
+    service.publish_message.assert_not_called()
+
+
+def test_health_check_skips_mqtt_registration_when_mqtt_disabled(mocker):
+    mocker.patch("app.services.publish.setting.MQTT_ENABLED", False)
+    mocker.patch("app.services.publish.setting.HEALTH_CHECK_ENABLED", True)
+    mock_health_cls = mocker.patch("app.services.publish.HealthCheckService")
+    mock_health = mock_health_cls.return_value
+
+    PublishService()
+
+    registered = [call.args[0] for call in mock_health.register.call_args_list]
+    assert registered == ["wifi"]
+
+
+def test_service_restart_skips_mqtt_registration_when_mqtt_disabled(mocker):
+    mocker.patch("app.services.publish.setting.MQTT_ENABLED", False)
+    mocker.patch("app.services.publish.setting.HEALTH_CHECK_ENABLED", True)
+    mocker.patch("app.services.publish.setting.SERVICE_RESTART_ENABLED", True)
+    mock_restart_cls = mocker.patch("app.services.publish.ServiceRestartService")
+    mock_restart = mock_restart_cls.return_value
+
+    PublishService()
+
+    registered = [call.args[0] for call in mock_restart.register.call_args_list]
+    assert registered == ["wifi"]
+
+
 def test_health_check_disabled_by_default():
     service = PublishService()
 

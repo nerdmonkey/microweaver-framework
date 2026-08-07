@@ -1,5 +1,6 @@
 {
     "app_environment": "local",
+    "mqtt_enabled": true,
     "mqtt_broker": "localhost",
     "mqtt_client_id": "microweaver",
     "mqtt_port": 1883,
