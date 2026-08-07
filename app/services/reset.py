@@ -22,9 +22,10 @@ REASON_LABELS = {
 
 
 class ResetService:
-    def __init__(self, logger=None):
+    def __init__(self, logger=None, crash_log=None):
         self.reason = None
         self.logger = logger or LogService()
+        self.crash_log = crash_log
 
     def read(self):
         reset_reason = getattr(esp32, "reset_reason", None)
@@ -36,7 +37,19 @@ class ResetService:
             self.logger.log("watchdog_trip", level="warning", reason=self.reason)
         else:
             self.logger.log("reset", reason=self.reason)
+        self._recover_crash_log()
         return self.reason
+
+    def _recover_crash_log(self):
+        if not self.crash_log:
+            return
+        entry = self.crash_log.read()
+        if not entry:
+            return
+        fields = dict(entry)
+        fields["original_event"] = fields.pop("event", "unknown")
+        self.logger.log("crash_log_recovered", level="error", **fields)
+        self.crash_log.clear()
 
     def _label(self, cause):
         for name, label in REASON_LABELS.items():

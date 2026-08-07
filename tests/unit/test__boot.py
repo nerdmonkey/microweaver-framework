@@ -82,7 +82,9 @@ def test_run_bootstrap_constructs_reset_service_with_logger(mocker):
     _boot.run_bootstrap()
 
     log_service_cls.assert_called_once_with(format=_boot.setting.LOG_FORMAT)
-    reset_service_cls.assert_called_once_with(logger=log_service_cls.return_value)
+    reset_service_cls.assert_called_once_with(
+        logger=log_service_cls.return_value, crash_log=mocker.ANY
+    )
 
 
 def test_run_bootstrap_constructs_bootloop_guard_with_settings(mocker):
@@ -380,6 +382,31 @@ def test_run_bootstrap_rolls_back_and_restarts_on_boot_loop(mocker):
     ota_cls.return_value.rollback.assert_called_once_with()
     machine_mock.reset.assert_called_once_with()
     mock_main.start_safe_mode.assert_not_called()
+
+
+def test_run_bootstrap_writes_crash_log_before_boot_loop_reset(mocker):
+    mocker.patch.object(_boot.setting, "OTA_ENABLED", True)
+    mocker.patch.object(_boot.setting, "OTA_MANIFEST_URL", "https://example.com/m.json")
+    mocker.patch.object(_boot.setting, "OTA_STATE_PATH", "ota_state.json")
+    mocker.patch("_boot.gc")
+    mocker.patch("_boot.ResetService")
+    guard_cls = mocker.patch("_boot.BootLoopGuard")
+    guard_cls.return_value.check.return_value = True
+    guard_cls.return_value.attempts = 6
+    ota_cls = mocker.patch("_boot.OtaService")
+    ota_cls.return_value.rollback.return_value = True
+    mocker.patch("_boot.machine")
+    crash_log_cls = mocker.patch("_boot.CrashLogService")
+    mocker.patch.dict("sys.modules", {"main": MagicMock()})
+
+    _boot.run_bootstrap()
+
+    crash_log_cls.assert_called_once_with(
+        _boot.setting.CRASH_LOG_PATH, _boot.setting.CRASH_LOG_ENABLED
+    )
+    crash_log_cls.return_value.write.assert_called_once_with(
+        "boot_loop_reset", attempts=6
+    )
 
 
 def test_run_bootstrap_enters_safe_mode_when_ota_rollback_has_nothing_pending(mocker):

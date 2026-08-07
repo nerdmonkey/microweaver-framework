@@ -95,3 +95,40 @@ def test_format_exception_falls_back_when_sys_print_exception_unavailable():
     result = format_exception(OSError("broker down"))
 
     assert result == "OSError: broker down"
+
+
+def test_guard_writes_crash_log_on_exception():
+    crash_log = MagicMock()
+    service = ErrorHandlerService(logger=MagicMock(), crash_log=crash_log)
+
+    def failing():
+        raise OSError("broker down")
+
+    service.guard(failing, "mqtt_connect")
+
+    crash_log.write.assert_called_once_with(
+        "unhandled_exception",
+        context="mqtt_connect",
+        error="broker down",
+        trace="OSError: broker down",
+    )
+
+
+def test_guard_does_not_write_crash_log_on_success():
+    crash_log = MagicMock()
+    service = ErrorHandlerService(logger=MagicMock(), crash_log=crash_log)
+
+    service.guard(lambda: 1, "some_context")
+
+    crash_log.write.assert_not_called()
+
+
+def test_guard_does_not_touch_crash_log_when_none_given():
+    service = ErrorHandlerService(logger=MagicMock())
+
+    def failing():
+        raise OSError("broker down")
+
+    result = service.guard(failing, "mqtt_connect")
+
+    assert result is None

@@ -4,6 +4,7 @@ import time
 import machine
 
 from app.services.bootloop import BootLoopGuard
+from app.services.crash_log import CrashLogService
 from app.services.factory_reset import FactoryResetService
 from app.services.logger import LogService
 from app.services.ota import OtaService
@@ -27,7 +28,10 @@ def _open_boot_interrupt_window():
 
 def run_bootstrap():
     gc.collect()
-    ResetService(logger=LogService(format=setting.LOG_FORMAT)).read()
+    crash_log = CrashLogService(setting.CRASH_LOG_PATH, setting.CRASH_LOG_ENABLED)
+    ResetService(
+        logger=LogService(format=setting.LOG_FORMAT), crash_log=crash_log
+    ).read()
 
     guard = BootLoopGuard(
         setting.BOOT_LOOP_STATE_PATH,
@@ -67,6 +71,7 @@ def run_bootstrap():
     if boot_loop_detected:
         if ota_service and ota_service.rollback():
             print("BOOT: OTA rollback complete, restarting")
+            crash_log.write("boot_loop_reset", attempts=guard.attempts)
             machine.reset()
             return
         print("BOOT: boot-loop detected, entering safe mode")

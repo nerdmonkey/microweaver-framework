@@ -6,6 +6,7 @@ except ImportError:
     import json
 
 from app.services.bootloop import BootLoopGuard
+from app.services.crash_log import CrashLogService
 from app.services.error_handler import ErrorHandlerService, format_exception
 from app.services.health import HealthCheckService
 from app.services.logger import LogService
@@ -30,7 +31,12 @@ class PublishService:
         self.log_service = LogService(
             format=setting.LOG_FORMAT, level=setting.LOG_LEVEL
         )
-        self.error_handler = ErrorHandlerService(logger=self.log_service)
+        self.crash_log = CrashLogService(
+            setting.CRASH_LOG_PATH, setting.CRASH_LOG_ENABLED
+        )
+        self.error_handler = ErrorHandlerService(
+            logger=self.log_service, crash_log=self.crash_log
+        )
         self.watchdog_service = None
         if setting.WATCHDOG_ENABLED:
             self.watchdog_service = WatchdogService(setting.WATCHDOG_TIMEOUT_MS)
@@ -82,6 +88,7 @@ class PublishService:
                 setting.MEMORY_MONITOR_THRESHOLD_BYTES,
                 setting.MEMORY_MONITOR_ACTION,
                 logger=self.log_service,
+                crash_log=self.crash_log,
             )
         self._init_health_check()
         self._init_service_restart()
