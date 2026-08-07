@@ -51,3 +51,46 @@ def test_log_quotes_kv_values_containing_spaces(mocker, capsys):
 
     out = capsys.readouterr().out.strip()
     assert 'error="broker down"' in out
+
+
+def test_log_suppresses_entries_below_configured_level(mocker, capsys):
+    mocker.patch("time.time", return_value=100)
+    service = LogService(level="warning")
+
+    service.log("debug_probe", level="debug")
+    service.log("routine_tick", level="info")
+
+    assert capsys.readouterr().out == ""
+
+
+def test_log_emits_entries_at_or_above_configured_level(mocker, capsys):
+    mocker.patch("time.time", return_value=100)
+    service = LogService(level="warning")
+
+    service.log("watchdog_trip", level="warning")
+    service.log("mqtt_failure", level="error")
+
+    out = capsys.readouterr().out.strip().splitlines()
+    assert len(out) == 2
+
+
+def test_log_defaults_to_info_level_threshold(mocker, capsys):
+    mocker.patch("time.time", return_value=100)
+    service = LogService()
+
+    service.log("debug_probe", level="debug")
+    service.log("reset")
+
+    out = capsys.readouterr().out.strip().splitlines()
+    assert len(out) == 1
+
+
+def test_log_treats_unknown_level_as_info(mocker, capsys):
+    mocker.patch("time.time", return_value=100)
+    service = LogService(level="bogus")
+
+    service.log("reset", level="bogus")
+
+    out = capsys.readouterr().out.strip()
+    payload = json.loads(out)
+    assert payload["level"] == "bogus"

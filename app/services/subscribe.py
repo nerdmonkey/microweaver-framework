@@ -28,7 +28,9 @@ class SubscribeService:
         self.publish_qos = setting.MQTT_PUBLISH_QOS
         self.publish_retain = setting.MQTT_PUBLISH_RETAIN
         self.ota_status_topic = setting.OTA_STATUS_TOPIC
-        self.log_service = LogService(format=setting.LOG_FORMAT)
+        self.log_service = LogService(
+            format=setting.LOG_FORMAT, level=setting.LOG_LEVEL
+        )
         self.error_handler = ErrorHandlerService(logger=self.log_service)
         self.watchdog_service = None
         if setting.WATCHDOG_ENABLED:

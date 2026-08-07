@@ -58,6 +58,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "service_restart_enabled": True,
                 "service_restart_max_attempts": 7,
                 "log_format": "kv",
+                "log_level": "debug",
                 "dht22_pin": 21,
                 "relay_pin": 22,
                 "ota_enabled": True,
@@ -118,6 +119,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.SERVICE_RESTART_ENABLED is True
     assert setting.SERVICE_RESTART_MAX_ATTEMPTS == 7
     assert setting.LOG_FORMAT == "kv"
+    assert setting.LOG_LEVEL == "debug"
     assert setting.DHT22_PIN == 21
     assert setting.RELAY_PIN == 22
     assert setting.OTA_ENABLED is True
@@ -176,6 +178,7 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.SERVICE_RESTART_ENABLED is False
     assert setting.SERVICE_RESTART_MAX_ATTEMPTS == 3
     assert setting.LOG_FORMAT == "json"
+    assert setting.LOG_LEVEL == "info"
     assert setting.DHT22_PIN == 4
     assert setting.RELAY_PIN == 5
     assert setting.CLAIM_ENABLED is False
@@ -245,6 +248,14 @@ def test_setting_raises_on_invalid_choice_field(tmp_path):
     config_path.write_text(json.dumps({"log_format": "xml"}))
 
     with pytest.raises(ConfigError, match="log_format must be one of"):
+        Setting(config_path=str(config_path))
+
+
+def test_setting_raises_on_invalid_log_level(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"log_level": "verbose"}))
+
+    with pytest.raises(ConfigError, match="log_level must be one of"):
         Setting(config_path=str(config_path))
 
 
