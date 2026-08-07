@@ -127,6 +127,40 @@ def test_on_off_toggle_set_brightness_are_noops_when_unavailable(mocker):
     assert adapter.is_on() is False
 
 
+def test_blink_toggles_on_off_given_times_with_delays(mocker):
+    mocker.patch("machine.Pin")
+    mock_pwm_cls = mocker.patch("machine.PWM")
+    mock_sleep = mocker.patch("time.sleep")
+    adapter = make_adapter()
+    adapter.setup()
+    mock_pwm_cls.return_value.duty_u16.reset_mock()
+
+    adapter.blink(3, on_seconds=0.1, off_seconds=0.05)
+
+    assert (
+        mock_pwm_cls.return_value.duty_u16.call_args_list
+        == [
+            mocker.call(65535),
+            mocker.call(0),
+        ]
+        * 3
+    )
+    assert mock_sleep.call_args_list == [mocker.call(0.1), mocker.call(0.05)] * 3
+    assert adapter.is_on() is False
+
+
+def test_blink_is_noop_when_unavailable(mocker):
+    mocker.patch("machine.Pin")
+    mocker.patch("machine.PWM", side_effect=OSError("pwm unavailable"))
+    mock_sleep = mocker.patch("time.sleep")
+    adapter = make_adapter()
+    adapter.setup()
+
+    adapter.blink(3)
+
+    mock_sleep.assert_not_called()
+
+
 def test_is_on_defaults_to_false():
     adapter = make_adapter()
 

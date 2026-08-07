@@ -1,3 +1,5 @@
+import time
+
 import machine
 
 from app.adapters.base import BaseAdapter
@@ -47,6 +49,15 @@ class StatusLEDAdapter(BaseAdapter):
 
     def is_on(self):
         return self._on
+
+    def blink(self, times, on_seconds=0.2, off_seconds=0.2):
+        if not self._available:
+            return
+        for _ in range(times):
+            self.on()
+            time.sleep(on_seconds)
+            self.off()
+            time.sleep(off_seconds)
 
     def deinit(self):
         if self._led is not None:
