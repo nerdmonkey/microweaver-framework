@@ -111,3 +111,43 @@ def test_stop_all_routes_failure_through_error_handler_when_given():
     registry.stop_all()
 
     error_handler.guard.assert_called_once_with(failing_stop, "service_stop:watchdog")
+
+
+def test_register_adapter_returns_self_for_chaining():
+    registry = ServiceRegistry()
+    adapter = MagicMock()
+
+    result = registry.register_adapter("led", adapter)
+
+    assert result is registry
+
+
+def test_register_adapter_bridges_setup_and_deinit_to_start_and_stop():
+    registry = ServiceRegistry()
+    adapter = MagicMock()
+
+    registry.register_adapter("led", adapter)
+    registry.start_all()
+    adapter.setup.assert_called_once_with()
+    adapter.deinit.assert_not_called()
+
+    registry.stop_all()
+    adapter.deinit.assert_called_once_with()
+
+
+def test_register_adapter_runs_setup_and_deinit_in_registration_order():
+    calls = []
+    registry = ServiceRegistry()
+    led = MagicMock()
+    led.setup.side_effect = lambda: calls.append("led.setup")
+    led.deinit.side_effect = lambda: calls.append("led.deinit")
+    relay = MagicMock()
+    relay.setup.side_effect = lambda: calls.append("relay.setup")
+    relay.deinit.side_effect = lambda: calls.append("relay.deinit")
+
+    registry.register_adapter("led", led)
+    registry.register_adapter("relay", relay)
+    registry.start_all()
+    registry.stop_all()
+
+    assert calls == ["led.setup", "relay.setup", "relay.deinit", "led.deinit"]

@@ -19,6 +19,16 @@ class ServiceRegistry:
         self._entries.append((name, start, stop))
         return self
 
+    def register_adapter(self, name, adapter):
+        """Register a `BaseAdapter` under its `setup`/`deinit` pair.
+
+        Bridges the adapter lifecycle contract (`app/adapters/base.py`)
+        onto the `start`/`stop` callables `start_all`/`stop_all` expect,
+        so adapters boot and tear down in the same order-guaranteed way
+        as `watchdog` and other core services.
+        """
+        return self.register(name, start=adapter.setup, stop=adapter.deinit)
+
     def start_all(self):
         for name, start, _stop in self._entries:
             if start:
