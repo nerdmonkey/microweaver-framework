@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.services.error_handler import ErrorHandlerService
+from app.services.metrics import MetricsService
 from app.services.subscribe import SubscribeService, setting
 
 
@@ -49,6 +50,24 @@ def test_run_logs_connection_lost_with_trace(mocker):
         error="dropped",
         trace="OSError: dropped",
     )
+
+
+def test_run_records_metrics_error_on_connection_lost(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
+    mocker.patch("app.services.subscribe.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_client.check_msg.side_effect = OSError("dropped")
+    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mocker.patch("time.sleep")
+
+    service = SubscribeService()
+
+    with pytest.raises(RuntimeError, match="stop test"):
+        service.run()
+
+    assert service.metrics_service.errors == 1
 
 
 def test_run_reconnects_through_repeated_drops(mocker):
@@ -125,6 +144,16 @@ def test_on_message_routes_to_registered_topic_handler():
     service.on_message(b"sensors/temp", b"21.5")
 
     handler.assert_called_once_with(b"sensors/temp", b"21.5")
+
+
+def test_on_message_records_metrics_for_every_message():
+    service = SubscribeService()
+    service.message_handlers["sensors/temp"] = MagicMock()
+
+    service.on_message(b"sensors/temp", b"21.5")
+    service.on_message(b"sensors/humidity", b"55")
+
+    assert service.metrics_service.messages_received == 2
 
 
 def test_on_message_falls_back_to_default_for_unregistered_topic(capsys):
@@ -415,6 +444,43 @@ def test_report_ota_status_without_client_is_noop():
     service._report_ota_status({"status": "applied", "version": "1.3.0"})
 
 
+def test_metrics_service_is_created():
+    service = SubscribeService()
+
+    assert isinstance(service.metrics_service, MetricsService)
+
+
+def test_publish_records_metrics_on_success():
+    service = SubscribeService()
+    service.client = MagicMock()
+
+    service._publish("some/topic", "hi")
+
+    assert service.metrics_service.messages_published == 1
+    assert service.metrics_service.errors == 0
+
+
+def test_publish_records_error_on_publish_exception():
+    service = SubscribeService()
+    service.client = MagicMock()
+    service.client.publish.side_effect = OSError("broker unreachable")
+
+    service._publish("some/topic", "hi")
+
+    assert service.metrics_service.messages_published == 0
+    assert service.metrics_service.errors == 1
+
+
+def test_publish_without_client_records_no_metrics():
+    service = SubscribeService()
+    service.client = None
+
+    service._publish("some/topic", "hi")
+
+    assert service.metrics_service.messages_published == 0
+    assert service.metrics_service.errors == 0
+
+
 def test_memory_monitor_disabled_by_default():
     service = SubscribeService()
 
@@ -480,6 +546,7 @@ def test_error_handler_is_created():
     assert isinstance(service.error_handler, ErrorHandlerService)
     assert service.error_handler.logger is service.log_service
     assert service.error_handler.crash_log is service.crash_log
+    assert service.error_handler.metrics is service.metrics_service
 
 
 def test_crash_log_created_from_settings(mocker):
@@ -614,6 +681,7 @@ def test_health_check_created_when_enabled(mocker):
         interval_seconds=15,
         logger=service.log_service,
         app_version=setting.APP_VERSION,
+        metrics=service.metrics_service,
     )
     assert service.health_check_service is mock_health
     assert mock_health.register.call_args_list[0][0][0] == "wifi"

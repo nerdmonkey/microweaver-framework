@@ -171,3 +171,24 @@ def test_needs_update_treats_non_numeric_segments_as_zero():
 
     assert service.needs_update("1.2.4") is True
     assert service.needs_update("1.2.0") is False
+
+
+def test_report_omits_metrics_when_none_given(mocker):
+    mocker.patch("time.time", return_value=100)
+    service = HealthCheckService()
+
+    assert "metrics" not in service.report()
+
+
+def test_report_includes_metrics_snapshot_when_given(mocker):
+    mocker.patch("time.time", return_value=100)
+    metrics = MagicMock()
+    metrics.snapshot.return_value = {
+        "uptime_seconds": 30,
+        "messages_published": 2,
+        "messages_received": 1,
+        "errors": 0,
+    }
+    service = HealthCheckService(metrics=metrics)
+
+    assert service.report()["metrics"] == metrics.snapshot.return_value
