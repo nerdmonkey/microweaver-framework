@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.services.provisioning import ACCEPT_TIMEOUT_SECONDS, ProvisioningService
+from config.app import ConfigError
 
 
 def make_provisioning_service(mocker, **kwargs):
@@ -349,6 +350,43 @@ def test_handle_request_rejects_missing_ssid_with_400(mocker):
     response = client.send.call_args[0][0]
     assert b"400 Bad Request" in response
     assert b"ssid is required" in response
+
+
+def test_handle_request_rejects_invalid_config_with_400(mocker):
+    mock_network = mocker.patch("app.services.provisioning.network")
+    service = ProvisioningService()
+    setting = MagicMock()
+    setting.save.side_effect = ConfigError(
+        "device_config.json failed validation: claim_code must be a string, got 1"
+    )
+    service.setting = setting
+    client = MagicMock()
+    client.recv.return_value = (
+        b"POST /save HTTP/1.1\r\nHost: x\r\n\r\nssid=MyWifi&password=hunter2"
+    )
+
+    service._handle_request(client)
+
+    response = client.send.call_args[0][0]
+    assert b"400 Bad Request" in response
+    assert b"claim_code must be a string" in response
+    mock_network.WLAN.return_value.connect.assert_not_called()
+
+
+def test_save_credentials_validates_before_testing_wifi_connection(mocker):
+    mock_network = mocker.patch("app.services.provisioning.network")
+    mock_network.WLAN.return_value.isconnected.return_value = True
+    service = ProvisioningService()
+    setting = MagicMock()
+    service.setting = setting
+
+    manager = mocker.Mock()
+    manager.attach_mock(setting.save, "save")
+    manager.attach_mock(mock_network.WLAN.return_value.connect, "connect")
+
+    service._save_credentials({"ssid": "MyWifi", "password": "secret"})
+
+    assert [call[0] for call in manager.mock_calls] == ["save", "connect"]
 
 
 def test_handle_request_returns_500_on_unexpected_error(mocker):

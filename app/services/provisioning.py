@@ -3,6 +3,8 @@ import time
 
 import network
 
+from config.app import ConfigError
+
 ACCEPT_TIMEOUT_SECONDS = 1.0
 WIFI_TEST_TIMEOUT_SECONDS = 20
 LED_CONNECTED_BLINKS = 2
@@ -113,7 +115,7 @@ class ProvisioningService:
                 client.send(
                     self._response(200, self._render_form(), content_type="text/html")
                 )
-        except ValueError as e:
+        except (ValueError, ConfigError) as e:
             print("Provisioning request rejected:", e)
             client.send(self._response(400, str(e)))
         except Exception as e:
@@ -128,11 +130,11 @@ class ProvisioningService:
         claim_code = fields.get("claim_code", "").strip()
         if not ssid:
             raise ValueError("ssid is required")
-        connected = self._test_wifi_connection(ssid, password)
         if self.setting:
             self.setting.save(
                 wifi_ssid=ssid, wifi_password=password, claim_code=claim_code or None
             )
+        connected = self._test_wifi_connection(ssid, password)
         print("Provisioning saved credentials for ssid:", ssid)
         if self.led:
             if connected:
