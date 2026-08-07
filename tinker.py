@@ -60,6 +60,8 @@ config_app = typer.Typer(
 app.add_typer(config_app, name="config")
 device_app = typer.Typer(no_args_is_help=True, help="Interrupt or reset the device.")
 app.add_typer(device_app, name="device")
+fleet_app = typer.Typer(no_args_is_help=True, help="Push a build to multiple devices.")
+app.add_typer(fleet_app, name="fleet")
 
 
 def _version_callback(value: bool) -> None:
@@ -496,6 +498,95 @@ def upload(
 
     save_config(port=port, baud=baud, path=path)
     print(f"\nUploaded {resolved_path} -> {resolved_port}")
+
+
+@fleet_app.command("push")
+def fleet_push(
+    ports: Optional[list[str]] = typer.Option(
+        None,
+        "--port",
+        "-p",
+        help="Serial port to push to (repeatable). Default: all detected ports.",
+    ),
+    baud: Optional[int] = typer.Option(None, "--baud", "-b", help="Baud rate"),
+    reset: bool = typer.Option(
+        False,
+        "--reset",
+        help="Hard-reset each device before uploading (recommended for a fleet, "
+        "since a stuck device shouldn't block the others).",
+    ),
+    path: Optional[Path] = typer.Argument(
+        None, help="Local file/folder to upload (default: ./dist)"
+    ),
+) -> None:
+    """Upload compiled firmware to every given (or detected) device over serial."""
+    if shutil.which("mpremote") is None:
+        print(
+            "ERROR: 'mpremote' not found on PATH. Install it with "
+            "'pip install mpremote'.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    resolved_ports = (
+        list(ports) if ports else [p.device for p in sorted(list_ports.comports())]
+    )
+    if not resolved_ports:
+        print(
+            "ERROR: no --port given and no serial ports detected. Connect "
+            "device(s) and retry, or pass --port explicitly.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    resolved_path = path or DIST
+    if not resolved_path.exists():
+        print(f"ERROR: {resolved_path} does not exist.", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    resolved_baud = baud if baud is not None else DEFAULT_BAUD
+    if resolved_baud != 115200:
+        print(
+            f"NOTE: mpremote ignores --baud (requested {resolved_baud}), "
+            "connection always runs at 115200.",
+            file=sys.stderr,
+        )
+
+    src = f"{resolved_path}/." if resolved_path.is_dir() else str(resolved_path)
+    attempts = UPLOAD_RETRY_ATTEMPTS if reset else 1
+
+    print(
+        f"Pushing {resolved_path} to {len(resolved_ports)} device(s): "
+        f"{', '.join(resolved_ports)}"
+    )
+
+    results = []
+    for port_name in resolved_ports:
+        print(f"\n== {port_name} ==")
+        if reset:
+            print(f"Resetting {port_name}...")
+            try:
+                hard_reset(port_name)
+            except typer.Exit:
+                results.append((port_name, False))
+                continue
+            time.sleep(UPLOAD_RESET_SETTLE_SECONDS)
+
+        cmd = _mpremote_connect_cmd(port_name) + ["fs", "cp", "-r", src, ":"]
+        result = _run_upload_cmd(cmd, port_name, attempts)
+        results.append((port_name, result.returncode == 0))
+
+    print()
+    print_table(
+        ["Port", "Result"],
+        [(p, "OK" if ok else "FAILED") for p, ok in results],
+    )
+
+    failed = [p for p, ok in results if not ok]
+    if failed:
+        print(f"\n{len(failed)}/{len(results)} device(s) failed.", file=sys.stderr)
+        raise typer.Exit(code=1)
+    print(f"\nPushed {resolved_path} -> {len(results)} device(s).")
 
 
 @app.command()

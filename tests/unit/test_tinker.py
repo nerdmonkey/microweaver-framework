@@ -590,6 +590,208 @@ def test_upload_non_raw_repl_failure_does_not_retry_after_reset(tmp_path, mocker
 
 
 # --------------------------------------------------------------------------
+# fleet push command
+# --------------------------------------------------------------------------
+
+
+def test_fleet_push_missing_mpremote(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value=None)
+    result = runner.invoke(tinker.app, ["fleet", "push"])
+    assert result.exit_code == 1
+    assert "mpremote" in result.stderr
+
+
+def test_fleet_push_no_ports_given_or_detected(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(tinker.list_ports, "comports", return_value=[])
+    result = runner.invoke(tinker.app, ["fleet", "push"])
+    assert result.exit_code == 1
+    assert "no serial ports detected" in result.stderr
+
+
+def test_fleet_push_path_missing(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    missing = tmp_path / "nope"
+    result = runner.invoke(
+        tinker.app,
+        ["fleet", "push", "--port", "/dev/ttyUSB0", str(missing)],
+    )
+    assert result.exit_code == 1
+    assert "does not exist" in result.stderr
+
+
+def test_fleet_push_success_all_ports_ok(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=0, stdout="", stderr=""),
+    )
+    src = tmp_path / "dist"
+    src.mkdir()
+    result = runner.invoke(
+        tinker.app,
+        [
+            "fleet",
+            "push",
+            "--port",
+            "/dev/ttyUSB0",
+            "--port",
+            "/dev/ttyUSB1",
+            str(src),
+        ],
+    )
+    assert result.exit_code == 0
+    assert mock_run.call_count == 2
+    assert "OK" in result.stdout
+    assert "Pushed" in result.stdout
+
+
+def test_fleet_push_defaults_to_detected_ports(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    ports = [FakePort("/dev/ttyUSB0"), FakePort("/dev/ttyUSB1")]
+    mocker.patch.object(tinker.list_ports, "comports", return_value=ports)
+    mock_run = mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=0, stdout="", stderr=""),
+    )
+    src = tmp_path / "dist"
+    src.mkdir()
+    result = runner.invoke(tinker.app, ["fleet", "push", str(src)])
+    assert result.exit_code == 0
+    assert mock_run.call_count == 2
+
+
+def test_fleet_push_defaults_to_dist_path(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    default_dist = tmp_path / "dist"
+    default_dist.mkdir()
+    mocker.patch.object(tinker, "DIST", default_dist)
+    mock_run = mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=0, stdout="", stderr=""),
+    )
+    result = runner.invoke(tinker.app, ["fleet", "push", "--port", "/dev/ttyUSB0"])
+    assert result.exit_code == 0
+    assert mock_run.call_count == 1
+    called_cmd = mock_run.call_args[0][0]
+    assert f"{default_dist}/." in called_cmd
+
+
+def test_fleet_push_one_device_fails_others_continue(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        side_effect=[
+            MagicMock(returncode=1, stdout="", stderr="plain failure\n"),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ],
+    )
+    src = tmp_path / "dist"
+    src.mkdir()
+    result = runner.invoke(
+        tinker.app,
+        [
+            "fleet",
+            "push",
+            "--port",
+            "/dev/ttyUSB0",
+            "--port",
+            "/dev/ttyUSB1",
+            str(src),
+        ],
+    )
+    assert result.exit_code == 1
+    assert "FAILED" in result.stdout
+    assert "OK" in result.stdout
+    assert "1/2 device(s) failed" in result.stderr
+
+
+def test_fleet_push_custom_baud_warns(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=0, stdout="", stderr=""),
+    )
+    src = tmp_path / "dist"
+    src.mkdir()
+    result = runner.invoke(
+        tinker.app,
+        ["fleet", "push", "--port", "/dev/ttyUSB0", "--baud", "9600", str(src)],
+    )
+    assert result.exit_code == 0
+    assert "ignores --baud" in result.stderr
+
+
+def test_fleet_push_with_reset_resets_each_device(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=0, stdout="", stderr=""),
+    )
+    mock_reset = mocker.patch.object(tinker, "hard_reset")
+    mocker.patch.object(tinker.time, "sleep")
+    src = tmp_path / "dist"
+    src.mkdir()
+    result = runner.invoke(
+        tinker.app,
+        [
+            "fleet",
+            "push",
+            "--port",
+            "/dev/ttyUSB0",
+            "--port",
+            "/dev/ttyUSB1",
+            "--reset",
+            str(src),
+        ],
+    )
+    assert result.exit_code == 0
+    assert mock_reset.call_args_list == [
+        mocker.call("/dev/ttyUSB0"),
+        mocker.call("/dev/ttyUSB1"),
+    ]
+
+
+def test_fleet_push_reset_failure_marks_device_failed_and_continues(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=0, stdout="", stderr=""),
+    )
+    mocker.patch.object(
+        tinker,
+        "hard_reset",
+        side_effect=[typer.Exit(code=1), None],
+    )
+    mocker.patch.object(tinker.time, "sleep")
+    src = tmp_path / "dist"
+    src.mkdir()
+    result = runner.invoke(
+        tinker.app,
+        [
+            "fleet",
+            "push",
+            "--port",
+            "/dev/ttyUSB0",
+            "--port",
+            "/dev/ttyUSB1",
+            "--reset",
+            str(src),
+        ],
+    )
+    assert result.exit_code == 1
+    assert mock_run.call_count == 1
+    assert "FAILED" in result.stdout
+
+
+# --------------------------------------------------------------------------
 # download command
 # --------------------------------------------------------------------------
 
