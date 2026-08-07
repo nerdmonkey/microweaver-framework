@@ -25,6 +25,9 @@ DIST = ROOT / "dist"
 BACKUP = ROOT / "backup"
 CONFIG_PATH = ROOT / ".microweaver"
 DEFAULT_BAUD = 115200
+UPLOAD_RESET_SETTLE_SECONDS = 1.5
+UPLOAD_RETRY_ATTEMPTS = 4
+MPREMOTE_RAW_REPL_ERROR = "could not enter raw repl"
 
 PACKAGE_DIRS = ["app", "config"]
 ROOT_FILES_COMPILE = ["_boot.py", "main.py"]
@@ -194,6 +197,94 @@ def hard_reset(port_name: str) -> None:
         esp._port.close()
 
 
+def _is_raw_repl_failure(output: str) -> bool:
+    """Check whether mpremote failed to switch the board into raw REPL."""
+    return MPREMOTE_RAW_REPL_ERROR in output.lower()
+
+
+def _print_mpremote_failure(
+    resolved_port: str, *, allow_reset_hint: bool, output: str
+) -> None:
+    """Print a friendlier recovery hint for common mpremote failures."""
+    if _is_raw_repl_failure(output):
+        print(
+            f"ERROR: mpremote could not enter raw REPL on {resolved_port}. "
+            "Firmware may be stuck or the board may still be rebooting.",
+            file=sys.stderr,
+        )
+        if allow_reset_hint:
+            print(
+                f"Retry with 'python tinker.py device reset --port {resolved_port}' "
+                "or rerun this command with '--reset' where supported.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"Retry with 'python tinker.py device reset --port {resolved_port}' "
+                "and try again.",
+                file=sys.stderr,
+            )
+        return
+
+    if output:
+        print(output, end="", file=sys.stderr)
+
+
+def _run_mpremote_cmd(
+    cmd: list[str], resolved_port: str, *, allow_reset_hint: bool = False
+) -> "subprocess.CompletedProcess[str]":
+    """Run a non-interactive mpremote command and normalize raw-REPL errors."""
+    result = subprocess.run(  # nosec B603
+        cmd,
+        capture_output=True,
+        text=True,
+    )
+    stdout = result.stdout if isinstance(result.stdout, str) else ""
+    stderr = result.stderr if isinstance(result.stderr, str) else ""
+
+    if result.returncode == 0:
+        if stdout:
+            print(stdout, end="")
+        if stderr:
+            print(stderr, end="", file=sys.stderr)
+        return result
+
+    combined = "".join(part for part in (stdout, stderr) if part)
+    _print_mpremote_failure(
+        resolved_port, allow_reset_hint=allow_reset_hint, output=combined
+    )
+    return result
+
+
+def _run_mpremote_interactive(
+    cmd: list[str], resolved_port: str
+) -> "subprocess.CompletedProcess[str]":
+    """Run an interactive mpremote command while still catching raw-REPL errors."""
+    result = subprocess.run(  # nosec B603
+        cmd,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stderr = result.stderr if isinstance(result.stderr, str) else ""
+    if result.returncode != 0:
+        _print_mpremote_failure(
+            resolved_port,
+            allow_reset_hint=False,
+            output=stderr,
+        )
+    elif stderr:
+        print(stderr, end="", file=sys.stderr)
+    return result
+
+
+def _mpremote_connect_cmd(resolved_port: str, *, resume: bool = False) -> list[str]:
+    """Build an mpremote connect command prefix for this port."""
+    cmd = ["mpremote", "connect", resolved_port]
+    if resume:
+        cmd.append("resume")
+    return cmd
+
+
 def compile_file(src: Path, dst: Path, mp_version: str, march: str) -> bool:
     dst.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -286,6 +377,43 @@ def build(
     print("\nDone. Output: dist/")
 
 
+def _run_upload_cmd(
+    cmd: list[str], resolved_port: str, attempts: int
+) -> "subprocess.CompletedProcess[str]":
+    """Run the mpremote fs cp command, retrying 'could not enter raw repl'.
+
+    A hard reset races mpremote's raw-REPL handshake against the board
+    rebooting. If the device has no WiFi credentials configured it also
+    boots into provisioning mode - starting its own AP and HTTP server -
+    which keeps the serial port busy longer than a normal boot, so this
+    failure right after --reset is usually transient rather than fatal.
+    Retry with a linear backoff (longer waits on later attempts) before
+    giving up.
+    """
+    result = _run_mpremote_cmd(cmd, resolved_port, allow_reset_hint=True)
+    for attempt in range(2, attempts + 1):
+        if result.returncode == 0:
+            break
+        combined = "".join(
+            part
+            for part in (
+                result.stdout if isinstance(result.stdout, str) else "",
+                result.stderr if isinstance(result.stderr, str) else "",
+            )
+            if part
+        )
+        if not _is_raw_repl_failure(combined):
+            break
+        print(
+            f"NOTE: upload failed (raw-REPL race after reset), "
+            f"retrying ({attempt}/{attempts})...",
+            file=sys.stderr,
+        )
+        time.sleep(UPLOAD_RESET_SETTLE_SECONDS * (attempt - 1))
+        result = _run_mpremote_cmd(cmd, resolved_port, allow_reset_hint=True)
+    return result
+
+
 @app.command()
 def upload(
     port: Optional[str] = typer.Option(
@@ -298,6 +426,14 @@ def upload(
         help=(
             "Hard-reset the device before uploading. Use this if the device "
             "is stuck (e.g. mpremote fails with 'could not enter raw repl')."
+        ),
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help=(
+            "Use an already-idle interpreter session instead of letting "
+            "mpremote soft-reset into raw REPL. Recovery-oriented upload path."
         ),
     ),
     path: Optional[Path] = typer.Argument(
@@ -327,6 +463,14 @@ def upload(
         print(f"ERROR: {resolved_path} does not exist.", file=sys.stderr)
         raise typer.Exit(code=1)
 
+    if reset and resume:
+        print(
+            "ERROR: --reset and --resume are mutually exclusive. "
+            "Use --resume only after you already have the device at an idle >>>.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
     # mpremote's CLI hardcodes 115200 baud (no override flag exists upstream
     # as of 1.28.0); --baud is accepted for interface parity but has no
     # effect on the actual transfer today.
@@ -340,10 +484,13 @@ def upload(
     if reset:
         print(f"Resetting {resolved_port}...")
         hard_reset(resolved_port)
+        time.sleep(UPLOAD_RESET_SETTLE_SECONDS)
 
     src = f"{resolved_path}/." if resolved_path.is_dir() else str(resolved_path)
-    cmd = ["mpremote", "connect", resolved_port, "fs", "cp", "-r", src, ":"]
-    result = subprocess.run(cmd)  # nosec B603
+    cmd = _mpremote_connect_cmd(resolved_port, resume=resume)
+    cmd += ["fs", "cp", "-r", src, ":"]
+    attempts = UPLOAD_RETRY_ATTEMPTS if reset else 1
+    result = _run_upload_cmd(cmd, resolved_port, attempts)
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 
@@ -400,7 +547,7 @@ def download(
     guard_backup = guard_path.read_bytes() if guard_path.exists() else None
 
     cmd = ["mpremote", "connect", resolved_port, "fs", "cp", "-r", ":.", str(path)]
-    result = subprocess.run(cmd)  # nosec B603
+    result = _run_mpremote_cmd(cmd, resolved_port)
 
     if guard_backup is not None:
         guard_path.write_bytes(guard_backup)
@@ -547,7 +694,7 @@ def provision(
         str(config_path),
         ":device_config.json",
     ]
-    result = subprocess.run(cmd)  # nosec B603
+    result = _run_mpremote_cmd(cmd, resolved_port)
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 
@@ -821,7 +968,7 @@ def device_ls(
         resolved_port = prompt_for_port()
 
     cmd = ["mpremote", "connect", resolved_port, "fs", "ls", path]
-    result = subprocess.run(cmd)  # nosec B603
+    result = _run_mpremote_cmd(cmd, resolved_port)
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 
@@ -874,7 +1021,7 @@ def device_test_adapter(
     )
 
     cmd = ["mpremote", "connect", resolved_port, "exec", script]
-    result = subprocess.run(cmd)  # nosec B603
+    result = _run_mpremote_cmd(cmd, resolved_port)
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 
@@ -900,7 +1047,7 @@ def device_repl(
         resolved_port = prompt_for_port()
 
     cmd = ["mpremote", "connect", resolved_port, "repl"]
-    result = subprocess.run(cmd)  # nosec B603
+    result = _run_mpremote_interactive(cmd, resolved_port)
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 
@@ -928,7 +1075,7 @@ def _device_logs(port: Optional[str], capture: Optional[Path]) -> None:
     cmd = ["mpremote", "connect", resolved_port, "repl"]
     if capture is not None:
         cmd += ["--capture", str(capture)]
-    result = subprocess.run(cmd)  # nosec B603
+    result = _run_mpremote_interactive(cmd, resolved_port)
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 
@@ -990,7 +1137,7 @@ def device_tree(
     if human:
         cmd.append("--human")
     cmd += ["tree", path]
-    result = subprocess.run(cmd)  # nosec B603
+    result = _run_mpremote_cmd(cmd, resolved_port)
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 
@@ -1033,7 +1180,7 @@ def device_rm(
         cmd += ["rmdir", path]
     else:
         cmd += ["rm", path]
-    result = subprocess.run(cmd)  # nosec B603
+    result = _run_mpremote_cmd(cmd, resolved_port)
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 
@@ -1060,7 +1207,7 @@ def device_mkdir(
         resolved_port = prompt_for_port()
 
     cmd = ["mpremote", "connect", resolved_port, "fs", "mkdir", path]
-    result = subprocess.run(cmd)  # nosec B603
+    result = _run_mpremote_cmd(cmd, resolved_port)
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 

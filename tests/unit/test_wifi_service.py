@@ -28,6 +28,8 @@ def test_connect_waits_until_connected(mocker):
 
     assert service.connect() is True
     mock_wlan.connect.assert_called_once_with("ssid", "password")
+    assert mock_wlan.disconnect.call_count == 1
+    assert mock_wlan.active.call_args_list[:2] == [mocker.call(False), mocker.call(True)]
 
 
 def test_connect_retries_with_exponential_backoff(mocker):
@@ -48,7 +50,13 @@ def test_connect_retries_with_exponential_backoff(mocker):
     )
 
     assert service.connect() is True
-    assert mock_sleep.call_args_list == [mocker.call(2), mocker.call(4)]
+    assert mock_sleep.call_args_list == [
+        mocker.call(1),
+        mocker.call(2),
+        mocker.call(1),
+        mocker.call(4),
+        mocker.call(1),
+    ]
 
 
 def test_connect_backoff_caps_at_max_delay(mocker):
@@ -69,9 +77,13 @@ def test_connect_backoff_caps_at_max_delay(mocker):
 
     assert service.connect() is True
     assert mock_sleep.call_args_list == [
+        mocker.call(1),
         mocker.call(2),
+        mocker.call(1),
         mocker.call(4),
+        mocker.call(1),
         mocker.call(5),
+        mocker.call(1),
     ]
 
 
@@ -95,16 +107,25 @@ def test_connect_feeds_watchdog_on_each_retry(mocker):
     assert watchdog.feed.call_count == 3
 
 
-def test_connect_propagates_wlan_connect_exception(mocker):
+def test_connect_retries_wlan_connect_exception(mocker):
     mock_wlan_cls = mocker.patch("network.WLAN")
     mock_wlan = mock_wlan_cls.return_value
-    mock_wlan.isconnected.return_value = False
-    mock_wlan.connect.side_effect = OSError("wifi internal error")
+    mock_wlan.isconnected.side_effect = [False, False, True]
+    mock_wlan.ifconfig.return_value = ["10.0.0.5"]
+    mock_wlan.connect.side_effect = [OSError("wifi internal error"), None]
+    mock_sleep = mocker.patch("time.sleep")
+    mocker.patch("time.time", side_effect=[0, 1])
 
     service = WiFiService("ssid", "password")
 
-    with pytest.raises(OSError, match="wifi internal error"):
-        service.connect()
+    assert service.connect() is True
+    assert mock_wlan.connect.call_count == 2
+    assert mock_sleep.call_args_list == [
+        mocker.call(1),
+        mocker.call(2),
+        mocker.call(1),
+        mocker.call(1),
+    ]
 
 
 def test_connect_applies_static_ip_before_connecting(mocker):

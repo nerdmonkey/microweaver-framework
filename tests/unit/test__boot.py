@@ -5,6 +5,13 @@ import pytest
 import _boot
 
 
+@pytest.fixture(autouse=True)
+def disable_boot_interrupt_window(mocker):
+    mocker.patch.object(_boot.setting, "BOOT_INTERRUPT_WINDOW_SECONDS", 0)
+    mocker.patch.object(_boot.setting, "AUTOSTART_ENABLED", True)
+    mocker.patch("_boot.time")
+
+
 def test_run_bootstrap_orders_gc_reset_guard_import_gc_start(mocker):
     mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
     order = []
@@ -160,6 +167,24 @@ def test_run_bootstrap_enters_provisioning_when_wifi_ssid_unconfigured(mocker):
     mock_main.start_provisioning.assert_called_once_with()
 
 
+def test_run_bootstrap_stops_when_autostart_disabled(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
+    mocker.patch.object(_boot.setting, "AUTOSTART_ENABLED", False)
+    gc_mock = mocker.patch("_boot.gc")
+    mocker.patch("_boot.ResetService")
+    guard_cls = mocker.patch("_boot.BootLoopGuard")
+    guard_cls.return_value.check.return_value = False
+    mock_main = MagicMock()
+    mocker.patch.dict("sys.modules", {"main": mock_main})
+
+    _boot.run_bootstrap()
+
+    assert gc_mock.collect.call_count == 2
+    mock_main.start.assert_not_called()
+    mock_main.start_safe_mode.assert_not_called()
+    mock_main.start_provisioning.assert_not_called()
+
+
 def test_run_bootstrap_skips_factory_reset_when_disabled(mocker):
     mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
     mocker.patch.object(_boot.setting, "FACTORY_RESET_ENABLED", False)
@@ -242,3 +267,32 @@ def test_run_bootstrap_prefers_safe_mode_over_provisioning_when_both_apply(mocke
     mock_main.start_safe_mode.assert_called_once_with()
     mock_main.start_provisioning.assert_not_called()
     mock_main.start.assert_not_called()
+
+
+def test_run_bootstrap_opens_serial_interrupt_window_when_enabled(mocker):
+    mocker.patch.object(_boot.setting, "WIFI_SSID", "TestNet")
+    mocker.patch.object(_boot.setting, "BOOT_INTERRUPT_WINDOW_SECONDS", 3)
+    order = []
+    gc_mock = mocker.patch("_boot.gc")
+    gc_mock.collect.side_effect = lambda: order.append("gc.collect")
+    reset_service_cls = mocker.patch("_boot.ResetService")
+    reset_service_cls.return_value.read.side_effect = lambda: order.append("reset.read")
+    guard_cls = mocker.patch("_boot.BootLoopGuard")
+    guard_cls.return_value.check.side_effect = lambda: order.append("guard.check") or False
+    mocker.patch.object(
+        _boot.time, "sleep", side_effect=lambda seconds: order.append(f"sleep:{seconds}")
+    )
+    mock_main = MagicMock()
+    mock_main.start.side_effect = lambda: order.append("main.start")
+    mocker.patch.dict("sys.modules", {"main": mock_main})
+
+    _boot.run_bootstrap()
+
+    assert order == [
+        "gc.collect",
+        "reset.read",
+        "guard.check",
+        "gc.collect",
+        "sleep:3",
+        "main.start",
+    ]

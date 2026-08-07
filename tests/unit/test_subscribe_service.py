@@ -7,6 +7,7 @@ from app.services.subscribe import SubscribeService
 
 
 def test_run_reconnects_after_connection_loss(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
     mocker.patch("app.services.subscribe.WiFiService")
     mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
     mock_connection = mock_connection_cls.return_value
@@ -26,6 +27,7 @@ def test_run_reconnects_after_connection_loss(mocker):
 
 
 def test_run_reconnects_through_repeated_drops(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
     mocker.patch("app.services.subscribe.WiFiService")
     mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
     mock_connection = mock_connection_cls.return_value
@@ -51,6 +53,7 @@ def test_run_reconnects_through_repeated_drops(mocker):
 
 
 def test_run_feeds_watchdog_each_poll(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
     mocker.patch("app.services.subscribe.WiFiService")
     mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
     mock_connection = mock_connection_cls.return_value
@@ -111,6 +114,7 @@ def test_on_message_falls_back_to_default_for_unregistered_topic(capsys):
 
 
 def test_run_checks_wifi_drop_each_poll(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
     mock_wifi_cls = mocker.patch("app.services.subscribe.WiFiService")
     mock_wifi = mock_wifi_cls.return_value
     mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
@@ -229,6 +233,7 @@ def test_bootloop_guard_created_when_enabled(mocker):
 
 
 def test_run_confirms_bootloop_guard_after_connect(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
     mocker.patch("app.services.subscribe.WiFiService")
     mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
     mock_connection = mock_connection_cls.return_value
@@ -267,6 +272,7 @@ def test_memory_monitor_created_when_enabled(mocker):
 
 
 def test_run_checks_memory_each_poll(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
     mocker.patch("app.services.subscribe.WiFiService")
     mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
     mock_connection = mock_connection_cls.return_value
@@ -351,6 +357,7 @@ def test_stop_tears_down_adapters_in_reverse_order(mocker):
 
 
 def test_run_survives_memory_monitor_exception(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
     mocker.patch("app.services.subscribe.WiFiService")
     mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
     mock_connection = mock_connection_cls.return_value
@@ -418,6 +425,7 @@ def test_health_check_disabled_by_default():
 
 
 def test_health_check_created_when_enabled(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
     mocker.patch("app.services.subscribe.setting.HEALTH_CHECK_ENABLED", True)
     mocker.patch("app.services.subscribe.setting.HEALTH_CHECK_INTERVAL_SECONDS", 15)
     mock_health_cls = mocker.patch("app.services.subscribe.HealthCheckService")
@@ -434,6 +442,7 @@ def test_health_check_created_when_enabled(mocker):
 
 
 def test_run_polls_health_check_each_poll(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
     mocker.patch("app.services.subscribe.WiFiService")
     mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
     mock_connection = mock_connection_cls.return_value
@@ -467,6 +476,7 @@ def test_service_restart_not_created_without_health_check(mocker):
 
 
 def test_service_restart_created_when_enabled(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
     mocker.patch("app.services.subscribe.setting.HEALTH_CHECK_ENABLED", True)
     mocker.patch("app.services.subscribe.setting.SERVICE_RESTART_ENABLED", True)
     mocker.patch("app.services.subscribe.setting.SERVICE_RESTART_MAX_ATTEMPTS", 5)
@@ -482,6 +492,7 @@ def test_service_restart_created_when_enabled(mocker):
 
 
 def test_run_reconciles_service_restart_each_poll(mocker):
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
     mocker.patch("app.services.subscribe.WiFiService")
     mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
     mock_connection = mock_connection_cls.return_value
