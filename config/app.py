@@ -50,6 +50,8 @@ _SCHEMA = {
     "service_restart_enabled": {"type": bool},
     "service_restart_max_attempts": {"type": "int", "min": 0},
     "log_format": {"type": str, "choices": ("json", "kv")},
+    "dht22_pin": {"type": "int", "min": 0, "max": 39},
+    "relay_pin": {"type": "int", "min": 0, "max": 39},
 }
 
 
@@ -135,6 +137,9 @@ class Setting:
         self.SERVICE_RESTART_MAX_ATTEMPTS = self._int("service_restart_max_attempts", 3)
 
         self.LOG_FORMAT = self._value("log_format", "json")
+
+        self.DHT22_PIN = self._int("dht22_pin", 4)
+        self.RELAY_PIN = self._int("relay_pin", 5)
 
     def _load(self, path):
         try:

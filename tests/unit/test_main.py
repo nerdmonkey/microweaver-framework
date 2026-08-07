@@ -2,12 +2,23 @@ import main
 
 
 def test_start_wires_and_runs_publish_service(mocker):
+    mocker.patch("main.setting.DHT22_PIN", 15)
+    mocker.patch("main.setting.RELAY_PIN", 16)
+    mock_dht22_cls = mocker.patch("main.DHT22Adapter")
+    mock_relay_cls = mocker.patch("main.RelayAdapter")
     mock_publish_cls = mocker.patch("main.PublishService")
     mock_instance = mock_publish_cls.return_value
 
     main.start()
 
-    mock_publish_cls.assert_called_once_with()
+    mock_dht22_cls.assert_called_once_with(pin=15)
+    mock_relay_cls.assert_called_once_with(pin=16)
+    mock_publish_cls.assert_called_once_with(
+        adapters=[
+            ("dht22", mock_dht22_cls.return_value),
+            ("relay", mock_relay_cls.return_value),
+        ]
+    )
     mock_instance.run.assert_called_once_with()
 
 
