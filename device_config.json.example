@@ -55,6 +55,7 @@
     "log_level_topic": "device/microweaver/log-level",
     "crash_log_enabled": false,
     "crash_log_path": "crash.json",
+    "crash_log_max_bytes": 4096,
     "dht_sensor_type": "dht22",
     "dht_pin": 4,
     "relay_pin": 5,

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `CrashLogService` now caps a persisted crash entry at `crash_log_max_bytes`
+  (default 4096, configurable), truncating the largest string field (typically the
+  stack trace) so a single write can't consume unbounded flash on-device.
 - Remote `log_level` override via MQTT: `RuntimeService` subscribes to
   `log_level_topic` (`log_level_override_enabled`) and applies a valid level to
   `LogService` at runtime for field debugging, reverting to the configured default on
