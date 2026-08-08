@@ -1,3 +1,4 @@
+import hashlib
 import json
 import shutil
 from unittest.mock import MagicMock
@@ -293,6 +294,375 @@ def test_build_no_clean_skips_rmtree(fake_project, mocker):
     result = runner.invoke(tinker.app, ["build", "--no-clean"])
     assert result.exit_code == 0
     assert marker.exists()
+
+
+# --------------------------------------------------------------------------
+# ota build / ota validate commands
+# --------------------------------------------------------------------------
+
+
+def test_ota_build_single_file(fake_project):
+    root, dist = fake_project
+    result = runner.invoke(
+        tinker.app,
+        [
+            "ota",
+            "build",
+            "--version",
+            "1.0.0",
+            "--base-url",
+            "https://cdn.example.com/rel",
+            "app/mod.py",
+        ],
+    )
+    assert result.exit_code == 0
+
+    manifest = json.loads((dist / "ota" / "1.0.0" / "manifest.json").read_text())
+    assert manifest["version"] == "1.0.0"
+    assert manifest["files"] == {
+        "app/mod.py": {
+            "url": "https://cdn.example.com/rel/app/mod.py",
+            "sha256": hashlib.sha256(b"x = 1").hexdigest(),
+        }
+    }
+    copied = dist / "ota" / "1.0.0" / "app" / "mod.py"
+    assert copied.read_bytes() == (root / "app" / "mod.py").read_bytes()
+
+
+def test_ota_build_multiple_files(fake_project):
+    root, dist = fake_project
+    result = runner.invoke(
+        tinker.app,
+        [
+            "ota",
+            "build",
+            "--version",
+            "1.0.0",
+            "--base-url",
+            "https://cdn.example.com/rel",
+            "app/mod.py",
+            "config/settings.py",
+        ],
+    )
+    assert result.exit_code == 0
+
+    manifest = json.loads((dist / "ota" / "1.0.0" / "manifest.json").read_text())
+    assert set(manifest["files"]) == {"app/mod.py", "config/settings.py"}
+    assert (
+        manifest["files"]["app/mod.py"]["sha256"]
+        == hashlib.sha256(b"x = 1").hexdigest()
+    )
+    assert (
+        manifest["files"]["config/settings.py"]["sha256"]
+        == hashlib.sha256(b"y = 2").hexdigest()
+    )
+    assert (dist / "ota" / "1.0.0" / "app" / "mod.py").exists()
+    assert (dist / "ota" / "1.0.0" / "config" / "settings.py").exists()
+
+
+def test_ota_build_url_construction_strips_trailing_slash(fake_project):
+    _, dist = fake_project
+    result = runner.invoke(
+        tinker.app,
+        [
+            "ota",
+            "build",
+            "--version",
+            "1.0.0",
+            "--base-url",
+            "https://cdn.example.com/rel/",
+            "app/mod.py",
+        ],
+    )
+    assert result.exit_code == 0
+    manifest = json.loads((dist / "ota" / "1.0.0" / "manifest.json").read_text())
+    assert (
+        manifest["files"]["app/mod.py"]["url"]
+        == "https://cdn.example.com/rel/app/mod.py"
+    )
+
+
+def test_ota_build_missing_source_file(fake_project):
+    _, dist = fake_project
+    result = runner.invoke(
+        tinker.app,
+        [
+            "ota",
+            "build",
+            "--version",
+            "1.0.0",
+            "--base-url",
+            "https://cdn.example.com/rel",
+            "nope.py",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "ERROR" in result.stderr
+    assert "nope.py" in result.stderr
+    assert not (dist / "ota" / "1.0.0").exists()
+
+
+def test_ota_build_partial_failure_cleans_up(fake_project):
+    _, dist = fake_project
+    result = runner.invoke(
+        tinker.app,
+        [
+            "ota",
+            "build",
+            "--version",
+            "1.0.0",
+            "--base-url",
+            "https://cdn.example.com/rel",
+            "app/mod.py",
+            "nope.py",
+        ],
+    )
+    assert result.exit_code == 1
+    assert not (dist / "ota" / "1.0.0").exists()
+
+
+def test_ota_build_refuses_existing_version_dir(fake_project):
+    _, dist = fake_project
+    args = [
+        "ota",
+        "build",
+        "--version",
+        "1.0.0",
+        "--base-url",
+        "https://cdn.example.com/rel",
+        "app/mod.py",
+    ]
+    first = runner.invoke(tinker.app, args)
+    assert first.exit_code == 0
+    manifest_path = dist / "ota" / "1.0.0" / "manifest.json"
+    original = manifest_path.read_text()
+
+    second = runner.invoke(tinker.app, args)
+
+    assert second.exit_code == 1
+    assert "already exists" in second.stderr
+    assert manifest_path.read_text() == original
+
+
+def test_ota_build_force_overwrites_existing_version_dir(fake_project):
+    _, dist = fake_project
+    base_args = [
+        "ota",
+        "build",
+        "--version",
+        "1.0.0",
+        "--base-url",
+        "https://cdn.example.com/rel",
+    ]
+    first = runner.invoke(tinker.app, base_args + ["app/mod.py"])
+    assert first.exit_code == 0
+
+    second = runner.invoke(
+        tinker.app, base_args + ["--force", "app/mod.py", "config/settings.py"]
+    )
+
+    assert second.exit_code == 0
+    manifest = json.loads((dist / "ota" / "1.0.0" / "manifest.json").read_text())
+    assert set(manifest["files"]) == {"app/mod.py", "config/settings.py"}
+
+
+def test_ota_build_manifest_summary_printed(fake_project):
+    result = runner.invoke(
+        tinker.app,
+        [
+            "ota",
+            "build",
+            "--version",
+            "1.0.0",
+            "--base-url",
+            "https://cdn.example.com/rel",
+            "app/mod.py",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "1 file(s)" in result.stdout
+    assert "1.0.0" in result.stdout
+    assert "dist" in result.stdout
+
+
+def _write_manifest(path, manifest):
+    path.write_text(json.dumps(manifest))
+
+
+def test_ota_validate_valid_manifest(tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    _write_manifest(
+        manifest_path,
+        {
+            "version": "1.0.0",
+            "files": {
+                "app_main.py": {
+                    "url": "https://cdn.example.com/app_main.py",
+                    "sha256": "a" * 64,
+                }
+            },
+        },
+    )
+    result = runner.invoke(tinker.app, ["ota", "validate", str(manifest_path)])
+    assert result.exit_code == 0
+    assert "manifest OK" in result.stdout
+
+
+def test_ota_validate_missing_version(tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    _write_manifest(
+        manifest_path,
+        {"files": {"a.py": {"url": "https://example.com/a.py", "sha256": "a" * 64}}},
+    )
+    result = runner.invoke(tinker.app, ["ota", "validate", str(manifest_path)])
+    assert result.exit_code == 1
+    assert "version" in result.stderr
+
+
+def test_ota_validate_empty_files(tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    _write_manifest(manifest_path, {"version": "1.0.0", "files": {}})
+    result = runner.invoke(tinker.app, ["ota", "validate", str(manifest_path)])
+    assert result.exit_code == 1
+    assert "files" in result.stderr
+
+
+def test_ota_validate_short_form_entry_rejected(tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    _write_manifest(
+        manifest_path,
+        {"version": "1.0.0", "files": {"a.py": "https://example.com/a.py"}},
+    )
+    result = runner.invoke(tinker.app, ["ota", "validate", str(manifest_path)])
+    assert result.exit_code == 1
+    assert "a.py" in result.stderr
+    assert "object form" in result.stderr
+
+
+def test_ota_validate_malformed_sha256(tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    _write_manifest(
+        manifest_path,
+        {
+            "version": "1.0.0",
+            "files": {"a.py": {"url": "https://example.com/a.py", "sha256": "not-hex"}},
+        },
+    )
+    result = runner.invoke(tinker.app, ["ota", "validate", str(manifest_path)])
+    assert result.exit_code == 1
+    assert "a.py" in result.stderr
+    assert "sha256" in result.stderr
+
+
+def test_ota_validate_checksum_mismatch_with_files_root(tmp_path):
+    files_root = tmp_path / "files"
+    files_root.mkdir()
+    (files_root / "a.py").write_text("real content")
+    manifest_path = tmp_path / "manifest.json"
+    _write_manifest(
+        manifest_path,
+        {
+            "version": "1.0.0",
+            "files": {"a.py": {"url": "https://example.com/a.py", "sha256": "b" * 64}},
+        },
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["ota", "validate", str(manifest_path), "--files-root", str(files_root)],
+    )
+    assert result.exit_code == 1
+    assert "mismatch" in result.stderr
+    assert "a.py" in result.stderr
+
+
+def test_ota_validate_checksum_ok_with_files_root(tmp_path):
+    files_root = tmp_path / "files"
+    files_root.mkdir()
+    (files_root / "a.py").write_text("real content")
+    manifest_path = tmp_path / "manifest.json"
+    _write_manifest(
+        manifest_path,
+        {
+            "version": "1.0.0",
+            "files": {
+                "a.py": {
+                    "url": "https://example.com/a.py",
+                    "sha256": hashlib.sha256(b"real content").hexdigest(),
+                }
+            },
+        },
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["ota", "validate", str(manifest_path), "--files-root", str(files_root)],
+    )
+    assert result.exit_code == 0
+
+
+def test_ota_validate_missing_local_file_with_files_root(tmp_path):
+    files_root = tmp_path / "files"
+    files_root.mkdir()
+    manifest_path = tmp_path / "manifest.json"
+    _write_manifest(
+        manifest_path,
+        {
+            "version": "1.0.0",
+            "files": {"a.py": {"url": "https://example.com/a.py", "sha256": "a" * 64}},
+        },
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["ota", "validate", str(manifest_path), "--files-root", str(files_root)],
+    )
+    assert result.exit_code == 1
+    assert "not found" in result.stderr
+    assert "a.py" in result.stderr
+
+
+def test_ota_validate_no_files_root_skips_checksum_check(tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    _write_manifest(
+        manifest_path,
+        {
+            "version": "1.0.0",
+            "files": {"a.py": {"url": "https://example.com/a.py", "sha256": "a" * 64}},
+        },
+    )
+    result = runner.invoke(tinker.app, ["ota", "validate", str(manifest_path)])
+    assert result.exit_code == 0
+
+
+def test_ota_validate_invalid_json(tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("{not json")
+    result = runner.invoke(tinker.app, ["ota", "validate", str(manifest_path)])
+    assert result.exit_code == 1
+    assert "invalid JSON" in result.stderr
+
+
+def test_ota_validate_multiple_issues_all_reported(tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    _write_manifest(
+        manifest_path,
+        {"files": {"a.py": "https://example.com/a.py"}},
+    )
+    result = runner.invoke(tinker.app, ["ota", "validate", str(manifest_path)])
+    assert result.exit_code == 1
+    assert "version" in result.stderr
+    assert "a.py" in result.stderr
+
+
+def test_ota_build_help():
+    result = runner.invoke(tinker.app, ["ota", "build", "--help"])
+    assert result.exit_code == 0
+    assert "--version" in result.stdout
+    assert "--base-url" in result.stdout
+
+
+def test_ota_validate_help():
+    result = runner.invoke(tinker.app, ["ota", "validate", "--help"])
+    assert result.exit_code == 0
+    assert "--files-root" in result.stdout
 
 
 # --------------------------------------------------------------------------
