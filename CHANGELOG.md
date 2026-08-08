@@ -33,10 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tinker.py device health` fetches and prints a `HealthCheckService` report from the
   device over `mpremote exec` (same pattern as the `device info` "Reset Reason" row), so
   the current health/metrics snapshot can be read without a full MQTT subscriber.
+- `tinker.py restore` uploads a previous `backup` folder's contents back onto the device
+  - the reverse of `backup`, sharing `upload`'s raw-REPL transfer path (retries,
+  `--reset`, per-file progress) but never persisting its `path` argument to
+  `.microweaver`, so restoring from a backup can't silently change what a plain `upload`
+  uploads next time.
 
 ### Changed
+- `tinker.py download` renamed to `backup`, to pair with the new `restore` command.
 - `tinker.py device ls`, `device tree`, `device info` (firmware read), `device health`,
-  `device rm`, `device mkdir`, `device test-adapter`, `upload`, `download`, and
+  `device rm`, `device mkdir`, `device test-adapter`, `upload`, `backup`, and
   `provision` now talk to the device directly over a raw-REPL serial connection
   (`device_transport.py`'s new `DeviceTransport`) instead of shelling out to the
   `mpremote` CLI, and no longer require `mpremote` on `PATH`. `fleet push`,
@@ -46,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a prompt that never returns; raw-REPL entry retries with the same linear backoff
   `upload --reset` used to reserve for reset races, now applied on every attempt
   (previously a plain `upload` with no `--reset` got exactly one try). `upload` and
-  `download` now print each file as it's sent/received (`[i/N] local -> remote` /
+  `backup` now print each file as it's sent/received (`[i/N] local -> remote` /
   `[i/N] remote -> local`), and `upload`'s recursive directory walk creates remote
   subdirectories as it goes. `device info`'s MicroPython/Reset Reason rows are read in
   one batched raw-REPL session instead of two separate `mpremote exec` calls, and now

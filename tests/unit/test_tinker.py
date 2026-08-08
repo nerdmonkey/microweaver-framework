@@ -764,64 +764,60 @@ def test_fleet_push_reset_failure_marks_device_failed_and_continues(tmp_path, mo
 
 
 # --------------------------------------------------------------------------
-# download command
+# backup command
 # --------------------------------------------------------------------------
 
 
-def test_download_success(tmp_path, mocker):
+def test_backup_success(tmp_path, mocker):
     fake_transport = FakeDeviceTransport()
     mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     dest = tmp_path / "backup"
-    result = runner.invoke(
-        tinker.app, ["download", "--port", "/dev/ttyUSB0", str(dest)]
-    )
+    result = runner.invoke(tinker.app, ["backup", "--port", "/dev/ttyUSB0", str(dest)])
     assert result.exit_code == 0
     assert dest.exists()
     assert tinker.load_config()["port"] == "/dev/ttyUSB0"
     assert ("get_dir", ":", dest) in fake_transport.calls
 
 
-def test_download_preserves_config_guard(tmp_path, mocker):
+def test_backup_preserves_config_guard(tmp_path, mocker):
     dest = tmp_path / "backup"
     dest.mkdir()
     guard_file = dest / tinker.CONFIG_PATH.name
     guard_file.write_bytes(b"original-config")
 
     def clobber(local):
-        # simulate the download pulling in and overwriting the guarded file
+        # simulate the backup pulling in and overwriting the guarded file
         guard_file.write_bytes(b"clobbered")
 
     fake_transport = FakeDeviceTransport(get_dir_side_effect=clobber)
     mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
-    result = runner.invoke(
-        tinker.app, ["download", "--port", "/dev/ttyUSB0", str(dest)]
-    )
+    result = runner.invoke(tinker.app, ["backup", "--port", "/dev/ttyUSB0", str(dest)])
     assert result.exit_code == 0
     assert guard_file.read_bytes() == b"original-config"
 
 
-def test_download_custom_baud_warns(tmp_path, mocker):
+def test_backup_custom_baud_warns(tmp_path, mocker):
     fake_transport = FakeDeviceTransport()
     mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     dest = tmp_path / "backup"
     result = runner.invoke(
         tinker.app,
-        ["download", "--port", "/dev/ttyUSB0", "--baud", "9600", str(dest)],
+        ["backup", "--port", "/dev/ttyUSB0", "--baud", "9600", str(dest)],
     )
     assert "ignores --baud" in result.stderr
 
 
-def test_download_prompts_for_port(tmp_path, mocker):
+def test_backup_prompts_for_port(tmp_path, mocker):
     fake_transport = FakeDeviceTransport()
     mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
     dest = tmp_path / "backup"
-    result = runner.invoke(tinker.app, ["download", str(dest)])
+    result = runner.invoke(tinker.app, ["backup", str(dest)])
     assert result.exit_code == 0
     assert tinker.load_config()["port"] == "/dev/ttyUSB9"
 
 
-def test_download_raw_repl_failure(tmp_path, mocker):
+def test_backup_raw_repl_failure(tmp_path, mocker):
     mocker.patch.object(tinker.time, "sleep")
     fake_transport = FakeDeviceTransport(
         raise_on="enter_raw_repl",
@@ -829,23 +825,127 @@ def test_download_raw_repl_failure(tmp_path, mocker):
     )
     mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     dest = tmp_path / "backup"
-    result = runner.invoke(
-        tinker.app, ["download", "--port", "/dev/ttyUSB0", str(dest)]
-    )
+    result = runner.invoke(tinker.app, ["backup", "--port", "/dev/ttyUSB0", str(dest)])
     assert result.exit_code == 1
     assert "could not enter raw REPL on /dev/ttyUSB0" in result.stderr
 
 
-def test_download_exec_error(tmp_path, mocker):
+def test_backup_exec_error(tmp_path, mocker):
     fake_transport = FakeDeviceTransport(
         raise_on="get_dir",
         error=tinker.DeviceExecError("", "OSError: device busy"),
     )
     mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     dest = tmp_path / "backup"
+    result = runner.invoke(tinker.app, ["backup", "--port", "/dev/ttyUSB0", str(dest)])
+    assert result.exit_code == 1
+    assert "OSError: device busy" in result.stderr
+
+
+# --------------------------------------------------------------------------
+# restore command
+# --------------------------------------------------------------------------
+
+
+def test_restore_defaults_to_backup_dir(mocker):
+    # typer bakes the Argument default at decoration time (matches backup's
+    # own path argument), so it can't be overridden via monkeypatching
+    # tinker.BACKUP after import - assert the documented default instead.
+    result = runner.invoke(tinker.app, ["restore", "--help"])
+    assert result.exit_code == 0
+    assert "./backup" in result.stdout
+
+
+def test_restore_success_with_explicit_path(tmp_path, mocker):
+    src = tmp_path / "old-backup"
+    src.mkdir()
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(tinker.app, ["restore", "--port", "/dev/ttyUSB0", str(src)])
+    assert result.exit_code == 0
+    assert ("put_dir", src, ":") in fake_transport.calls
+    assert "Restored" in result.stdout
+
+
+def test_restore_does_not_persist_path_to_config(tmp_path, mocker):
+    src = tmp_path / "old-backup"
+    src.mkdir()
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(tinker.app, ["restore", "--port", "/dev/ttyUSB0", str(src)])
+    assert result.exit_code == 0
+    assert "path" not in tinker.load_config()
+
+
+def test_restore_path_missing(tmp_path, mocker):
+    missing = tmp_path / "nope"
     result = runner.invoke(
-        tinker.app, ["download", "--port", "/dev/ttyUSB0", str(dest)]
+        tinker.app, ["restore", "--port", "/dev/ttyUSB0", str(missing)]
     )
+    assert result.exit_code == 1
+    assert "does not exist" in result.stderr
+
+
+def test_restore_with_reset_flag(tmp_path, mocker):
+    src = tmp_path / "old-backup"
+    src.mkdir()
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    mock_reset = mocker.patch.object(tinker, "hard_reset")
+    mocker.patch.object(tinker.time, "sleep")
+    result = runner.invoke(
+        tinker.app, ["restore", "--port", "/dev/ttyUSB0", "--reset", str(src)]
+    )
+    assert result.exit_code == 0
+    mock_reset.assert_called_once_with("/dev/ttyUSB0")
+
+
+def test_restore_custom_baud_warns(tmp_path, mocker):
+    src = tmp_path / "old-backup"
+    src.mkdir()
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(
+        tinker.app,
+        ["restore", "--port", "/dev/ttyUSB0", "--baud", "9600", str(src)],
+    )
+    assert "ignores --baud" in result.stderr
+
+
+def test_restore_prompts_for_port(tmp_path, mocker):
+    src = tmp_path / "old-backup"
+    src.mkdir()
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
+    result = runner.invoke(tinker.app, ["restore", str(src)])
+    assert result.exit_code == 0
+    assert tinker.load_config()["port"] == "/dev/ttyUSB9"
+
+
+def test_restore_raw_repl_failure(tmp_path, mocker):
+    src = tmp_path / "old-backup"
+    src.mkdir()
+    mocker.patch.object(tinker.time, "sleep")
+    fake_transport = FakeDeviceTransport(
+        raise_on="enter_raw_repl",
+        error=tinker.RawReplEntryError("could not enter raw repl"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(tinker.app, ["restore", "--port", "/dev/ttyUSB0", str(src)])
+    assert result.exit_code == 1
+    assert "could not enter raw REPL on /dev/ttyUSB0" in result.stderr
+
+
+def test_restore_exec_error(tmp_path, mocker):
+    src = tmp_path / "old-backup"
+    src.mkdir()
+    fake_transport = FakeDeviceTransport(
+        raise_on="put_dir",
+        error=tinker.DeviceExecError("", "OSError: device busy"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(tinker.app, ["restore", "--port", "/dev/ttyUSB0", str(src)])
     assert result.exit_code == 1
     assert "OSError: device busy" in result.stderr
 

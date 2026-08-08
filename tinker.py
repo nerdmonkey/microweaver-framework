@@ -457,13 +457,66 @@ def upload(
             file=sys.stderr,
         )
 
+    _upload_path(resolved_port, resolved_path, reset, "upload")
+
+    save_config(port=port, baud=baud, path=path)
+    print(f"\nUploaded {resolved_path} -> {resolved_port}")
+
+
+@app.command()
+def restore(
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Serial port of device (see 'tinker.py port')"
+    ),
+    baud: Optional[int] = typer.Option(None, "--baud", "-b", help="Baud rate"),
+    reset: bool = typer.Option(
+        False, "--reset", help="Hard-reset the device before uploading"
+    ),
+    path: Path = typer.Argument(
+        BACKUP, help="Local backup folder to restore (default: ./backup)"
+    ),
+) -> None:
+    """Upload a previous `backup` folder's contents back onto the device."""
+    # Resolution order: CLI flag > .microweaver > hardcoded default. Unlike
+    # upload, the restore source is always BACKUP unless overridden - it
+    # never reads or writes .microweaver's "path" default, so it can't
+    # clobber upload's own default path.
+    config = load_config()
+    resolved_port = port or config.get("port")
+    resolved_baud = baud if baud is not None else int(config.get("baud", DEFAULT_BAUD))
+
+    if resolved_port is None:
+        resolved_port = prompt_for_port()
+        port = resolved_port
+
+    if not path.exists():
+        print(f"ERROR: {path} does not exist.", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    if resolved_baud != 115200:
+        print(
+            f"NOTE: restore ignores --baud (requested {resolved_baud}), "
+            "connection always runs at 115200.",
+            file=sys.stderr,
+        )
+
+    _upload_path(resolved_port, path, reset, "restore")
+
+    save_config(port=port, baud=baud)
+    print(f"\nRestored {path} -> {resolved_port}")
+
+
+def _upload_path(
+    resolved_port: str, resolved_path: Path, reset: bool, command_label: str
+) -> None:
+    """Push a local file/folder to the device over raw REPL; shared with restore()."""
     if reset:
         print(f"Resetting {resolved_port}...")
         hard_reset(resolved_port)
         time.sleep(UPLOAD_RESET_SETTLE_SECONDS)
 
     try:
-        with _raw_repl_session(resolved_port, "upload") as transport:
+        with _raw_repl_session(resolved_port, command_label) as transport:
             if resolved_path.is_dir():
                 transport.put_dir(resolved_path, ":", on_file=_print_upload_file)
             else:
@@ -476,9 +529,6 @@ def upload(
     except DeviceExecError as exc:
         print(f"ERROR: {exc.stderr}", file=sys.stderr)
         raise typer.Exit(code=1) from exc
-
-    save_config(port=port, baud=baud, path=path)
-    print(f"\nUploaded {resolved_path} -> {resolved_port}")
 
 
 def _print_upload_file(
@@ -578,7 +628,7 @@ def fleet_push(
 
 
 @app.command()
-def download(
+def backup(
     port: Optional[str] = typer.Option(
         None, "--port", "-p", help="Serial port of device (see 'tinker.py port')"
     ),
@@ -589,7 +639,7 @@ def download(
         "(relative or absolute path, default: ./backup)",
     ),
 ) -> None:
-    """Download the device's filesystem to a local folder."""
+    """Back up the device's filesystem to a local folder."""
     # Resolution order: CLI flag > .microweaver > hardcoded default.
     config = load_config()
     resolved_port = port or config.get("port")
@@ -603,7 +653,7 @@ def download(
     # interface/config-file compatibility but has no effect on the transfer.
     if resolved_baud != 115200:
         print(
-            f"NOTE: download ignores --baud (requested {resolved_baud}), "
+            f"NOTE: backup ignores --baud (requested {resolved_baud}), "
             "connection always runs at 115200.",
             file=sys.stderr,
         )
@@ -612,12 +662,12 @@ def download(
 
     # get_dir has no include/exclude filter, so if the destination is (or
     # contains) the project root, guard our own config file from being
-    # clobbered by whatever the download pulls in.
+    # clobbered by whatever the backup pulls in.
     guard_path = path / CONFIG_PATH.name
     guard_backup = guard_path.read_bytes() if guard_path.exists() else None
 
     try:
-        with _raw_repl_session(resolved_port, "download") as transport:
+        with _raw_repl_session(resolved_port, "backup") as transport:
             transport.get_dir(":", path, on_file=_print_download_file)
     except RawReplEntryError as exc:
         _print_raw_repl_failure(resolved_port)
@@ -630,7 +680,7 @@ def download(
             guard_path.write_bytes(guard_backup)
 
     save_config(port=port, baud=baud)
-    print(f"\nDownloaded {resolved_port} -> {path}")
+    print(f"\nBacked up {resolved_port} -> {path}")
 
 
 def _print_download_file(
@@ -709,7 +759,7 @@ def provision(
     Bench/headless alternative to the SoftAP captive-portal setup flow: no
     phone or laptop needs to join the device's access point, since settings
     are entered locally and pushed over the same serial connection used by
-    upload/download.
+    upload/backup.
     """
     # Resolution order: CLI flag > .microweaver > hardcoded default.
     config = load_config()
