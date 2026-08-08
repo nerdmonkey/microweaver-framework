@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import shutil
 from unittest.mock import MagicMock
 
@@ -17,6 +18,13 @@ try:
     runner = CliRunner(mix_stderr=False)
 except TypeError:
     runner = CliRunner()
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    """Strip Rich/Click color codes so --help assertions survive CI's forced color."""
+    return _ANSI_RE.sub("", text)
 
 
 class FakePort:
@@ -655,14 +663,15 @@ def test_ota_validate_multiple_issues_all_reported(tmp_path):
 def test_ota_build_help():
     result = runner.invoke(tinker.app, ["ota", "build", "--help"])
     assert result.exit_code == 0
-    assert "--version" in result.stdout
-    assert "--base-url" in result.stdout
+    stdout = _strip_ansi(result.stdout)
+    assert "--version" in stdout
+    assert "--base-url" in stdout
 
 
 def test_ota_validate_help():
     result = runner.invoke(tinker.app, ["ota", "validate", "--help"])
     assert result.exit_code == 0
-    assert "--files-root" in result.stdout
+    assert "--files-root" in _strip_ansi(result.stdout)
 
 
 # --------------------------------------------------------------------------
