@@ -1,8 +1,11 @@
 import json
+from pathlib import Path
 
 import pytest
 
-from config.app import ConfigError, Setting
+from config.app import _SCHEMA, ConfigError, Setting
+
+EXAMPLE_CONFIG_PATH = Path(__file__).resolve().parents[2] / "device_config.json.example"
 
 
 def test_setting_reads_values_from_device_config(tmp_path):
@@ -423,3 +426,15 @@ def test_save_returns_only_the_updated_keys(tmp_path):
     saved = setting.save(wifi_ssid="ssid_a", wifi_password="password_a")
 
     assert saved == {"wifi_ssid": "ssid_a", "wifi_password": "password_a"}
+
+
+def test_device_config_example_covers_every_schema_key():
+    example = json.loads(EXAMPLE_CONFIG_PATH.read_text())
+
+    missing_from_example = sorted(set(_SCHEMA) - set(example))
+
+    assert missing_from_example == []
+
+
+def test_device_config_example_loads_without_validation_errors():
+    Setting(config_path=str(EXAMPLE_CONFIG_PATH))
