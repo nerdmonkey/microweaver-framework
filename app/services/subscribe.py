@@ -247,13 +247,13 @@ class SubscribeService:
 
     def run(self):
         while True:
-            if setting.MQTT_ENABLED:
-                self.connect_to_mqtt()
-            if self.bootloop_guard:
-                self.bootloop_guard.confirm()
-            if self.ota_service:
-                self.ota_service.confirm_update()
             try:
+                if setting.MQTT_ENABLED:
+                    self.connect_to_mqtt()
+                if self.bootloop_guard:
+                    self.bootloop_guard.confirm()
+                if self.ota_service:
+                    self.ota_service.confirm_update()
                 while True:
                     self._run_tick()
                     time.sleep(1)

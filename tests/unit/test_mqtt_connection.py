@@ -232,6 +232,28 @@ def test_connect_omits_last_will_when_not_configured(mocker):
     mock_client.set_last_will.assert_not_called()
 
 
+def test_connect_retries_when_broker_denies_connection_by_acl_policy(mocker):
+    # CONNACK rc=5 ("Connection Refused: not authorised") is what a broker
+    # sends when the client is blocked by an ACL/policy rule rather than a
+    # network failure. MqttConnection has no way to tell that apart from any
+    # other connect() failure, so it should fall back to the same retry loop.
+    mock_client_cls = mocker.patch("app.services.mqtt.MQTTClient")
+    denied_client = MagicMock()
+    denied_client.connect.side_effect = OSError(5, "Connection Refused: not authorised")
+    allowed_client = MagicMock()
+    mock_client_cls.side_effect = [denied_client, allowed_client]
+    mock_sleep = mocker.patch("time.sleep")
+    wifi = make_wifi_service(connected=True)
+
+    connection = MqttConnection(
+        "client", "broker", 1883, wifi, reconnect_delay_seconds=2
+    )
+    result = connection.connect()
+
+    assert result is allowed_client
+    mock_sleep.assert_called_once_with(2)
+
+
 def test_disconnect_clears_client():
     wifi = make_wifi_service(connected=True)
     connection = MqttConnection("client", "broker", 1883, wifi)
