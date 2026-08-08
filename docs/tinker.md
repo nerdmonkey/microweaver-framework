@@ -29,10 +29,10 @@
 | Tool | Required for | Install |
 |---|---|---|
 | `mpy-cross-multi` | `build` | bundled with the project's build deps |
-| `mpremote` | `download`, `provision`, `watch`, `fleet push`, `device info` (firmware read), `device health`, `device repl`, `device logs`/`monitor`, `device rm`, `device mkdir`, `device test-adapter` | `pip install mpremote` |
+| `mpremote` | `download`, `provision`, `watch`, `fleet push`, `device repl`, `device logs`/`monitor` | `pip install mpremote` |
 | `esptool` (Python API) | `device reset`, `device info` (chip read) | installed as a project dependency, no separate CLI install needed |
 
-The commands above check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`. `upload`, `device ls`, and `device tree` talk to the device directly over a raw-REPL serial connection ([`DeviceTransport`](../device_transport.py)) and do not require `mpremote` on `PATH`.
+The commands above check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`. `upload`, `device ls`, `device tree`, `device info` (firmware read), `device health`, `device rm`, `device mkdir`, and `device test-adapter` talk to the device directly over a raw-REPL serial connection ([`DeviceTransport`](../device_transport.py)) and do not require `mpremote` on `PATH`.
 
 ## Global concepts
 
@@ -293,7 +293,7 @@ This bypasses the REPL entirely — unlike `mpremote reset` (which is just `mach
 
 ### `device info`
 
-Show device hardware (chip/flash/MAC, read via `esptool`) and firmware (MicroPython `os.uname()` and reset/boot reason, read via `mpremote`) details.
+Show device hardware (chip/flash/MAC, read via `esptool`) and firmware (MicroPython `os.uname()` and reset/boot reason, read over a raw-REPL serial connection) details.
 
 ```shell
 python tinker.py device info [OPTIONS]
@@ -324,7 +324,7 @@ MicroPython          (sysname='esp32', nodename='esp32', ...)
 Reset Reason         power_on
 ```
 
-Chip/flash/MAC are read at the ROM bootloader level (same mechanism as `device reset`), so this works even if the firmware itself is unresponsive. The MicroPython and Reset Reason rows only appear if `mpremote` is installed and the firmware answers within 10 seconds; otherwise each reports `unavailable (device unresponsive)` or `unavailable (timed out, device may be busy)`. Reset Reason is read on-device via `app.services.reset.ResetService` (`power_on`, `software`, `watchdog`, `deep_sleep`, `sdio`, `intrusion`, `external`, `brownout`, or `unknown`).
+Chip/flash/MAC are read at the ROM bootloader level (same mechanism as `device reset`), so this works even if the firmware itself is unresponsive. The MicroPython and Reset Reason rows are opportunistic: if raw-REPL entry or the on-device read fails (after retrying), both report `unavailable (device unresponsive)` instead of failing the whole command. Reset Reason is read on-device via `app.services.reset.ResetService` (`power_on`, `software`, `watchdog`, `deep_sleep`, `sdio`, `intrusion`, `external`, `brownout`, or `unknown`).
 
 ---
 
@@ -386,7 +386,7 @@ python tinker.py device tree --human :app
 
 ### `device test-adapter`
 
-Bench-test a single adapter against real hardware without deploying the full app. Runs the adapter's `setup()` / `read()` (if it has one) / `deinit()` cycle on-device via `mpremote exec` and prints the result — useful for verifying wiring/config before wiring the adapter into a `PublishService`/`SubscribeService` run. Requires the adapter's module to already be present on the device (via `upload`).
+Bench-test a single adapter against real hardware without deploying the full app. Runs the adapter's `setup()` / `read()` (if it has one) / `deinit()` cycle over a raw-REPL serial connection and prints the result — useful for verifying wiring/config before wiring the adapter into a `PublishService`/`SubscribeService` run. Requires the adapter's module to already be present on the device (via `upload`).
 
 ```shell
 python tinker.py device test-adapter [OPTIONS] MODULE
@@ -455,8 +455,8 @@ python tinker.py upload ./backup-before-experiment --reset
 |---|---|
 | `ERROR: 'mpremote' not found on PATH.` | `pip install mpremote` |
 | `ERROR: No serial ports found and none set in .microweaver.` | Connect the device, or run `tinker.py config set --port <port>` |
-| `could not enter raw REPL` (upload/device ls/device tree) | Firmware likely stuck or still rebooting — already retried automatically; if it still fails, retry with `upload --reset` |
-| `mpremote fails with 'could not enter raw repl'` (fleet push/download/provision/test-adapter) | Firmware likely stuck or still rebooting — retry with `--reset` where supported, or `device reset --port <port>` first |
+| `could not enter raw REPL` (upload/device ls/tree/info/health/rm/mkdir/test-adapter) | Firmware likely stuck or still rebooting — already retried automatically; if it still fails, retry with `upload --reset` or `device reset --port <port>` first |
+| `mpremote fails with 'could not enter raw repl'` (fleet push/download/provision) | Firmware likely stuck or still rebooting — retry with `--reset` where supported, or `device reset --port <port>` first |
 | `NOTE: mpremote ignores --baud ...` | Expected — `mpremote`'s CLI hardcodes 115200; not a bug in `tinker.py` |
-| `device info` shows `MicroPython: unavailable` | `mpremote` not installed, or firmware busy/unresponsive within the 10s timeout |
+| `device info` shows `MicroPython: unavailable` | Firmware busy/unresponsive after retrying — not related to `mpremote` being installed |
 | Wrong device picked automatically | Only happens when exactly one port is present; unplug other USB-serial adapters or pass `--port` explicitly |

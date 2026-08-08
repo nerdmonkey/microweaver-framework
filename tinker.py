@@ -936,26 +936,6 @@ def device_reset(
     print(f"Reset {resolved_port}")
 
 
-def _mpremote_field(resolved_port: str, script: str) -> str:
-    """Run `script` on-device via `mpremote exec` and return its last output line.
-
-    Used for opportunistic `device info` rows: any print output before the
-    final line (e.g. a service's own startup logging) is discarded.
-    """
-    try:
-        result = subprocess.run(  # nosec B603 B607
-            ["mpremote", "connect", resolved_port, "exec", script],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0:
-            return result.stdout.strip().splitlines()[-1]
-        return "unavailable (device unresponsive)"
-    except subprocess.TimeoutExpired:
-        return "unavailable (timed out, device may be busy)"
-
-
 @device_app.command("info")
 def device_info(
     port: Optional[str] = typer.Option(
@@ -1000,23 +980,18 @@ def device_info(
     finally:
         esp._port.close()
 
-    if shutil.which("mpremote") is not None:
-        rows.append(
-            (
-                "MicroPython",
-                _mpremote_field(resolved_port, "import os; print(os.uname())"),
+    try:
+        with _raw_repl_session(resolved_port, "device info") as transport:
+            uname = transport.exec("import os; print(os.uname())")
+            reset_reason = transport.exec(
+                "from app.services.reset import ResetService; "
+                "print(ResetService().read())"
             )
-        )
-        rows.append(
-            (
-                "Reset Reason",
-                _mpremote_field(
-                    resolved_port,
-                    "from app.services.reset import ResetService; "
-                    "print(ResetService().read())",
-                ),
-            )
-        )
+        rows.append(("MicroPython", uname.strip()))
+        rows.append(("Reset Reason", reset_reason.strip()))
+    except (RawReplEntryError, DeviceExecError):
+        rows.append(("MicroPython", "unavailable (device unresponsive)"))
+        rows.append(("Reset Reason", "unavailable (device unresponsive)"))
 
     if not rows:
         print("No device details could be read.")
@@ -1038,14 +1013,6 @@ def device_health(
     MQTT subscriber is needed to see the current health snapshot. Metrics
     reflect this fresh instance, not the running loop's accumulated counters.
     """
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
     config = load_config()
     resolved_port = port or config.get("port")
     if resolved_port is None:
@@ -1066,10 +1033,19 @@ def device_health(
         "health.poll(); "
         "print(json.dumps(health.report()))"
     )
-    raw = _mpremote_field(resolved_port, script)
-    if raw.startswith("unavailable"):
-        print(f"ERROR: {raw}", file=sys.stderr)
-        raise typer.Exit(code=1)
+    try:
+        with _raw_repl_session(resolved_port, "device health") as transport:
+            output = transport.exec(script)
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
+
+    # Any startup print (e.g. LogService) before the final JSON line is
+    # discarded, matching the previous mpremote-exec-based behavior.
+    raw = output.strip().splitlines()[-1] if output.strip() else ""
 
     try:
         report = json.loads(raw)
@@ -1204,14 +1180,6 @@ def device_test_adapter(
     ),
 ) -> None:
     """Run one adapter's setup()/read()/deinit() cycle on-device."""
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
     module_path, _, class_name = module.rpartition(".")
     if not module_path:
         print(
@@ -1237,10 +1205,17 @@ def device_test_adapter(
         "    adapter.deinit()\n"
     )
 
-    cmd = ["mpremote", "connect", resolved_port, "exec", script]
-    result = _run_mpremote_cmd(cmd, resolved_port)
-    if result.returncode != 0:
-        raise typer.Exit(code=result.returncode)
+    try:
+        with _raw_repl_session(resolved_port, "device test-adapter") as transport:
+            output = transport.exec(script)
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
+
+    print(output, end="")
 
 
 @device_app.command("repl")
@@ -1419,30 +1394,25 @@ def device_rm(
     ),
 ) -> None:
     """Remove a file or directory on the device."""
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
     config = load_config()
     resolved_port = port or config.get("port")
     if resolved_port is None:
         resolved_port = prompt_for_port()
 
-    cmd = ["mpremote", "connect", resolved_port, "fs"]
-    if recursive:
-        cmd.append("--recursive")
-        cmd += ["rm", path]
-    elif dir:
-        cmd += ["rmdir", path]
-    else:
-        cmd += ["rm", path]
-    result = _run_mpremote_cmd(cmd, resolved_port)
-    if result.returncode != 0:
-        raise typer.Exit(code=result.returncode)
+    try:
+        with _raw_repl_session(resolved_port, "device rm") as transport:
+            if recursive:
+                transport.rm_recursive(path)
+            elif dir:
+                transport.rmdir(path)
+            else:
+                transport.rm(path)
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
 
 
 @device_app.command("mkdir")
@@ -1452,24 +1422,21 @@ def device_mkdir(
     ),
     path: str = typer.Argument(..., help="Device path to create"),
 ) -> None:
-    """Create a directory on the device."""
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
+    """Create a directory on the device. A no-op if it already exists."""
     config = load_config()
     resolved_port = port or config.get("port")
     if resolved_port is None:
         resolved_port = prompt_for_port()
 
-    cmd = ["mpremote", "connect", resolved_port, "fs", "mkdir", path]
-    result = _run_mpremote_cmd(cmd, resolved_port)
-    if result.returncode != 0:
-        raise typer.Exit(code=result.returncode)
+    try:
+        with _raw_repl_session(resolved_port, "device mkdir") as transport:
+            transport.mkdir(path)
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
 
 
 @app.command(name="port")

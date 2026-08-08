@@ -35,18 +35,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the current health/metrics snapshot can be read without a full MQTT subscriber.
 
 ### Changed
-- `tinker.py device ls`, `device tree`, and `upload` now talk to the device directly
-  over a raw-REPL serial connection (`device_transport.py`'s new `DeviceTransport`)
-  instead of shelling out to the `mpremote` CLI, and no longer require `mpremote` on
-  `PATH`. `download`, `provision`, `watch`, `fleet push`, and the other `device`
-  subcommands still use `mpremote`. All three enter raw REPL without a soft reset, since
-  a soft reset on firmware with a permanently-running `main.py` (like this project's
-  `PublishService.run()`) hangs the handshake waiting for a prompt that never returns;
-  raw-REPL entry retries with the same linear backoff `upload --reset` used to reserve
-  for reset races, now applied on every attempt (previously a plain `upload` with no
-  `--reset` got exactly one try). `upload` also now prints each file as it's sent
-  (`[i/N] local -> remote`), and its recursive directory walk creates remote
-  subdirectories as it goes.
+- `tinker.py device ls`, `device tree`, `device info` (firmware read), `device health`,
+  `device rm`, `device mkdir`, `device test-adapter`, and `upload` now talk to the device
+  directly over a raw-REPL serial connection (`device_transport.py`'s new
+  `DeviceTransport`) instead of shelling out to the `mpremote` CLI, and no longer require
+  `mpremote` on `PATH`. `download`, `provision`, `watch`, `fleet push`, `device repl`,
+  and `device logs`/`monitor` still use `mpremote`. All of them enter raw REPL without a
+  soft reset, since a soft reset on firmware with a permanently-running `main.py` (like
+  this project's `PublishService.run()`) hangs the handshake waiting for a prompt that
+  never returns; raw-REPL entry retries with the same linear backoff `upload --reset`
+  used to reserve for reset races, now applied on every attempt (previously a plain
+  `upload` with no `--reset` got exactly one try). `upload` also now prints each file as
+  it's sent (`[i/N] local -> remote`), and its recursive directory walk creates remote
+  subdirectories as it goes. `device info`'s MicroPython/Reset Reason rows are read in
+  one batched raw-REPL session instead of two separate `mpremote exec` calls, and now
+  report a single `unavailable (device unresponsive)` instead of distinguishing a timeout
+  from a plain failure. `device mkdir` on an already-existing directory now succeeds
+  silently instead of erroring.
 
 ### Removed
 - `tinker.py upload`'s `--resume` flag. It existed to skip mpremote's soft-reset step;

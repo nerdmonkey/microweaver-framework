@@ -367,6 +367,66 @@ def test_mkdir_strips_leading_colon(mocker):
 
 
 # --------------------------------------------------------------------------
+# rm / rmdir / rm_recursive
+# --------------------------------------------------------------------------
+
+
+def test_rm_execs_os_remove(mocker):
+    transport = make_device_transport(serial_double=FakeSerial())
+    exec_mock = mocker.patch.object(transport, "exec", return_value="")
+
+    transport.rm(":boot.py")
+
+    assert exec_mock.call_args[0][0] == "import os\nos.remove('boot.py')"
+
+
+def test_rmdir_execs_os_rmdir(mocker):
+    transport = make_device_transport(serial_double=FakeSerial())
+    exec_mock = mocker.patch.object(transport, "exec", return_value="")
+
+    transport.rmdir(":lib")
+
+    assert exec_mock.call_args[0][0] == "import os\nos.rmdir('lib')"
+
+
+def test_rm_recursive_removes_files_then_subdirs_then_self(mocker):
+    transport = make_device_transport(serial_double=FakeSerial())
+    mocker.patch.object(
+        transport,
+        "ls",
+        side_effect=lambda path: {
+            "lib": [("boot.py", 10, False), ("nested", 0, True)],
+            "lib/nested": [("deep.py", 5, False)],
+        }[path],
+    )
+    rm_mock = mocker.patch.object(transport, "rm")
+    rmdir_mock = mocker.patch.object(transport, "rmdir")
+
+    transport.rm_recursive(":lib")
+
+    assert rm_mock.call_args_list == [
+        mocker.call("lib/boot.py"),
+        mocker.call("lib/nested/deep.py"),
+    ]
+    assert rmdir_mock.call_args_list == [
+        mocker.call("lib/nested"),
+        mocker.call("lib"),
+    ]
+
+
+def test_rm_recursive_empty_dir_just_rmdirs(mocker):
+    transport = make_device_transport(serial_double=FakeSerial())
+    mocker.patch.object(transport, "ls", return_value=[])
+    rm_mock = mocker.patch.object(transport, "rm")
+    rmdir_mock = mocker.patch.object(transport, "rmdir")
+
+    transport.rm_recursive(":empty")
+
+    rm_mock.assert_not_called()
+    rmdir_mock.assert_called_once_with("empty")
+
+
+# --------------------------------------------------------------------------
 # put_file
 # --------------------------------------------------------------------------
 

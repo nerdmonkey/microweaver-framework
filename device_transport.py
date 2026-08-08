@@ -160,6 +160,27 @@ class DeviceTransport:
             "        raise\n"
         )
 
+    def rm(self, path: str) -> None:
+        """Remove a remote file."""
+        remote_path = self._strip_colon(path)
+        self.exec(f"import os\nos.remove({remote_path!r})")
+
+    def rmdir(self, path: str) -> None:
+        """Remove a remote empty directory."""
+        remote_path = self._strip_colon(path)
+        self.exec(f"import os\nos.rmdir({remote_path!r})")
+
+    def rm_recursive(self, path: str) -> None:
+        """Remove a remote directory and everything under it."""
+        remote_path = self._strip_colon(path)
+        for name, _size, is_dir in self.ls(remote_path):
+            child = remote_path.rstrip("/") + "/" + name
+            if is_dir:
+                self.rm_recursive(child)
+            else:
+                self.rm(child)
+        self.rmdir(remote_path)
+
     def put_file(
         self,
         local: Path,
