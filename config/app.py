@@ -58,6 +58,8 @@ _SCHEMA = {
     "service_restart_max_attempts": {"type": "int", "min": 0},
     "log_format": {"type": str, "choices": ("json", "kv")},
     "log_level": {"type": str, "choices": ("debug", "info", "warning", "error")},
+    "log_level_override_enabled": {"type": bool},
+    "log_level_topic": {"type": str},
     "crash_log_enabled": {"type": bool},
     "crash_log_path": {"type": str},
     "crash_log_max_bytes": {"type": "int", "min": 0},
