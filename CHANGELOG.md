@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `MqttConnection.connect()` now inspects the MQTT CONNACK return code: rc=1/2/4/5
+  (bad protocol version, rejected client ID, bad credentials, ACL denial) are
+  permanent for the current config and raise `MqttConnectionRejected` instead of
+  retrying forever, while rc=3 (server unavailable) and network-level errors keep
+  the existing exponential-backoff retry. `PublishService`/`SubscribeService` catch
+  the new exception, log a distinct `mqtt_connection_rejected` event, and back off
+  for `mqtt_rejection_retry_seconds` (default 300s) before trying again, instead of
+  hammering the broker every few seconds with credentials/ACLs that won't change on
+  their own.
 - `CrashLogService` now caps a persisted crash entry at `crash_log_max_bytes`
   (default 4096, configurable), truncating the largest string field (typically the
   stack trace) so a single write can't consume unbounded flash on-device.
@@ -77,6 +86,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   topic subscription (e.g. an ACL/policy denial). `connect_to_mqtt()` moved inside the
   loop's exception handler, so a failed `subscribe()` call is now logged and retried the
   same way a mid-session connection drop already was.
+- `PublishService.run()` had the same latent issue: `connect_to_mqtt()` ran outside the
+  loop's `try`/`except`, so any exception raised there (previously only theoretical since
+  `MqttConnection.connect()` retried forever internally, but now possible via the new
+  `MqttConnectionRejected`) would have crashed the device loop uncaught. Moved inside the
+  `try` block to match `SubscribeService`.
 - `tinker.py provision`'s interactive prompts no longer echo an existing WiFi/MQTT
   password in plaintext as the prompt's `[default]` hint. `hide_input` only masked what
   you typed, not the default value already sitting in `device_config.json`, so every

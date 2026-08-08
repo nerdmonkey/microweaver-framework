@@ -1,6 +1,8 @@
 from unittest.mock import MagicMock
 
-from app.services.mqtt import MqttConnection
+import pytest
+
+from app.services.mqtt import MqttConnection, MqttConnectionRejected, MQTTException
 
 
 def make_wifi_service(connected=True):
@@ -232,16 +234,85 @@ def test_connect_omits_last_will_when_not_configured(mocker):
     mock_client.set_last_will.assert_not_called()
 
 
-def test_connect_retries_when_broker_denies_connection_by_acl_policy(mocker):
-    # CONNACK rc=5 ("Connection Refused: not authorised") is what a broker
-    # sends when the client is blocked by an ACL/policy rule rather than a
-    # network failure. MqttConnection has no way to tell that apart from any
-    # other connect() failure, so it should fall back to the same retry loop.
+@pytest.mark.parametrize(
+    "rc,reason",
+    [
+        (1, "unacceptable_protocol_version"),
+        (2, "client_identifier_rejected"),
+        (4, "bad_username_or_password"),
+        (5, "not_authorized"),
+    ],
+)
+def test_connect_raises_without_retrying_on_permanent_connack_rejection(
+    mocker, rc, reason
+):
+    # rc 1/2/4/5 mean the broker has permanently rejected this client's
+    # config/credentials - retrying with the same config every few seconds
+    # can never succeed and only hammers the broker, so connect() should
+    # surface it immediately instead of looping.
     mock_client_cls = mocker.patch("app.services.mqtt.MQTTClient")
     denied_client = MagicMock()
-    denied_client.connect.side_effect = OSError(5, "Connection Refused: not authorised")
+    denied_client.connect.side_effect = MQTTException(rc)
+    mock_client_cls.return_value = denied_client
+    mock_sleep = mocker.patch("time.sleep")
+    wifi = make_wifi_service(connected=True)
+
+    connection = MqttConnection("client", "broker", 1883, wifi)
+
+    with pytest.raises(MqttConnectionRejected) as excinfo:
+        connection.connect()
+
+    assert excinfo.value.rc == rc
+    assert excinfo.value.reason == reason
+    mock_sleep.assert_not_called()
+    assert mock_client_cls.call_count == 1
+
+
+def test_connect_retries_with_backoff_on_transient_connack_rejection(mocker):
+    # rc=3 ("server unavailable") is the broker itself being down/overloaded
+    # rather than a rejection of this client - that can recover on its own,
+    # so it keeps the normal exponential-backoff retry loop.
+    mock_client_cls = mocker.patch("app.services.mqtt.MQTTClient")
+    unavailable_client = MagicMock()
+    unavailable_client.connect.side_effect = MQTTException(3)
     allowed_client = MagicMock()
-    mock_client_cls.side_effect = [denied_client, allowed_client]
+    mock_client_cls.side_effect = [unavailable_client, allowed_client]
+    mock_sleep = mocker.patch("time.sleep")
+    wifi = make_wifi_service(connected=True)
+
+    connection = MqttConnection(
+        "client", "broker", 1883, wifi, reconnect_delay_seconds=2
+    )
+    result = connection.connect()
+
+    assert result is allowed_client
+    mock_sleep.assert_called_once_with(2)
+
+
+def test_connect_treats_unrecognized_connack_rc_as_transient(mocker):
+    mock_client_cls = mocker.patch("app.services.mqtt.MQTTClient")
+    odd_client = MagicMock()
+    odd_client.connect.side_effect = MQTTException(99)
+    allowed_client = MagicMock()
+    mock_client_cls.side_effect = [odd_client, allowed_client]
+    mock_sleep = mocker.patch("time.sleep")
+    wifi = make_wifi_service(connected=True)
+
+    connection = MqttConnection(
+        "client", "broker", 1883, wifi, reconnect_delay_seconds=2
+    )
+    result = connection.connect()
+
+    assert result is allowed_client
+    mock_sleep.assert_called_once_with(2)
+
+
+def test_connect_treats_connack_exception_with_no_rc_as_transient(mocker):
+    mock_client_cls = mocker.patch("app.services.mqtt.MQTTClient")
+    blank_client = MagicMock()
+    blank_client.connect.side_effect = MQTTException()
+    allowed_client = MagicMock()
+    mock_client_cls.side_effect = [blank_client, allowed_client]
     mock_sleep = mocker.patch("time.sleep")
     wifi = make_wifi_service(connected=True)
 

@@ -12,7 +12,7 @@ from app.services.health import HealthCheckService
 from app.services.logger import LogService
 from app.services.memory_monitor import MemoryMonitorService
 from app.services.metrics import MetricsService
-from app.services.mqtt import MqttConnection
+from app.services.mqtt import MqttConnection, MqttConnectionRejected
 from app.services.ota import OtaService
 from app.services.poll_scheduler import PollScheduler
 from app.services.registry import ServiceRegistry
@@ -233,16 +233,27 @@ class PublishService:
 
     def run(self, message="Hello from Agnes agent"):
         while True:
-            if setting.MQTT_ENABLED:
-                self.connect_to_mqtt()
-            if self.bootloop_guard:
-                self.bootloop_guard.confirm()
-            if self.ota_service:
-                self.ota_service.confirm_update()
             try:
+                if setting.MQTT_ENABLED:
+                    self.connect_to_mqtt()
+                if self.bootloop_guard:
+                    self.bootloop_guard.confirm()
+                if self.ota_service:
+                    self.ota_service.confirm_update()
                 while True:
                     self._run_tick(message)
                     time.sleep(1)
+            except MqttConnectionRejected as e:
+                self.log_service.log(
+                    "mqtt_connection_rejected",
+                    level="error",
+                    error=str(e),
+                    rc=e.rc,
+                    reason=e.reason,
+                    trace=format_exception(e),
+                )
+                self.metrics_service.record_error()
+                time.sleep(setting.MQTT_REJECTION_RETRY_SECONDS)
             except Exception as e:
                 self.log_service.log(
                     "connection_lost",
