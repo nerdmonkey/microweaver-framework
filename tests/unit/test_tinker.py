@@ -1,6 +1,5 @@
 import json
 import shutil
-import subprocess
 from unittest.mock import MagicMock
 
 import pytest
@@ -354,239 +353,141 @@ def test_clean_backup_flag_but_only_dist_exists(fake_artifacts):
 
 
 # --------------------------------------------------------------------------
-# upload command
+# deploy command
 # --------------------------------------------------------------------------
 
 
-def test_upload_missing_mpremote(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value=None)
-    result = runner.invoke(tinker.app, ["upload"])
-    assert result.exit_code == 1
-    assert "mpremote" in result.stderr
-
-
-def test_upload_path_missing(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+def test_deploy_path_missing(tmp_path):
     missing = tmp_path / "nope"
     result = runner.invoke(
-        tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(missing)]
+        tinker.app, ["deploy", "--port", "/dev/ttyUSB0", str(missing)]
     )
     assert result.exit_code == 1
     assert "does not exist" in result.stderr
 
 
-def test_upload_success(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        return_value=MagicMock(returncode=0, stdout="", stderr=""),
+def test_deploy_directory_success(tmp_path, mocker):
+    fake_transport = FakeDeviceTransport()
+    mock_transport_cls = mocker.patch.object(
+        tinker, "DeviceTransport", return_value=fake_transport
     )
     src = tmp_path / "dist"
     src.mkdir()
-    result = runner.invoke(tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(src)])
+    result = runner.invoke(tinker.app, ["deploy", "--port", "/dev/ttyUSB0", str(src)])
     assert result.exit_code == 0
     assert tinker.load_config()["port"] == "/dev/ttyUSB0"
+    assert mock_transport_cls.call_args[0][0] == "/dev/ttyUSB0"
+    assert ("put_dir", src, ":") in fake_transport.calls
+    assert "[1/1]" in result.stdout
+    assert "boot.py" in result.stdout
 
 
-def test_upload_custom_baud_warns(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        return_value=MagicMock(returncode=0, stdout="", stderr=""),
-    )
+def test_deploy_single_file_success(tmp_path, mocker):
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    src = tmp_path / "firmware.mpy"
+    src.write_bytes(b"data")
+    result = runner.invoke(tinker.app, ["deploy", "--port", "/dev/ttyUSB0", str(src)])
+    assert result.exit_code == 0
+    assert ("put_file", src, ":firmware.mpy") in fake_transport.calls
+    assert f"{src} -> :firmware.mpy" in result.stdout
+    assert "[1/1]" not in result.stdout
+
+
+def test_deploy_custom_baud_warns(tmp_path, mocker):
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     src = tmp_path / "dist"
     src.mkdir()
     result = runner.invoke(
         tinker.app,
-        ["upload", "--port", "/dev/ttyUSB0", "--baud", "9600", str(src)],
+        ["deploy", "--port", "/dev/ttyUSB0", "--baud", "9600", str(src)],
     )
     assert result.exit_code == 0
     assert "ignores --baud" in result.stderr
 
 
-def test_upload_resume_uses_resume_connect_prefix(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        return_value=MagicMock(returncode=0, stdout="", stderr=""),
-    )
-    src = tmp_path / "dist"
-    src.mkdir()
-    result = runner.invoke(
-        tinker.app, ["upload", "--port", "/dev/ttyUSB0", "--resume", str(src)]
-    )
-    assert result.exit_code == 0
-    assert mock_run.call_args[0][0][:5] == [
-        "mpremote",
-        "connect",
-        "/dev/ttyUSB0",
-        "resume",
-        "fs",
-    ]
-
-
-def test_upload_rejects_reset_and_resume_combination(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    src = tmp_path / "dist"
-    src.mkdir()
-    result = runner.invoke(
-        tinker.app,
-        ["upload", "--port", "/dev/ttyUSB0", "--reset", "--resume", str(src)],
-    )
-    assert result.exit_code == 1
-    assert "mutually exclusive" in result.stderr
-
-
-def test_upload_with_reset_flag(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        return_value=MagicMock(returncode=0, stdout="", stderr=""),
-    )
+def test_deploy_with_reset_flag(tmp_path, mocker):
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     mock_reset = mocker.patch.object(tinker, "hard_reset")
     mocker.patch.object(tinker.time, "sleep")
     src = tmp_path / "dist"
     src.mkdir()
     result = runner.invoke(
-        tinker.app, ["upload", "--port", "/dev/ttyUSB0", "--reset", str(src)]
+        tinker.app, ["deploy", "--port", "/dev/ttyUSB0", "--reset", str(src)]
     )
     assert result.exit_code == 0
     mock_reset.assert_called_once_with("/dev/ttyUSB0")
-    assert mock_run.call_count == 1
 
 
-def test_upload_retries_after_reset_race(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        side_effect=[
-            MagicMock(
-                returncode=1,
-                stdout="",
-                stderr="mpremote.transport.TransportError: could not enter raw repl\n",
-            ),
-            MagicMock(returncode=0, stdout="", stderr=""),
-        ],
-    )
-    mocker.patch.object(tinker, "hard_reset")
-    mock_sleep = mocker.patch.object(tinker.time, "sleep")
-    src = tmp_path / "dist"
-    src.mkdir()
-    result = runner.invoke(
-        tinker.app, ["upload", "--port", "/dev/ttyUSB0", "--reset", str(src)]
-    )
-    assert result.exit_code == 0
-    assert mock_run.call_count == 2
-    assert "retrying" in result.stderr
-    assert mock_sleep.call_count == 2
-
-
-def test_upload_exhausts_retries_after_reset(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        return_value=MagicMock(
-            returncode=1,
-            stdout="",
-            stderr="mpremote.transport.TransportError: could not enter raw repl\n",
-        ),
-    )
-    mocker.patch.object(tinker, "hard_reset")
+def test_deploy_retries_raw_repl_race_then_succeeds(tmp_path, mocker):
+    """Retry now happens regardless of --reset, unlike the old mpremote path."""
     mocker.patch.object(tinker.time, "sleep")
+    fake_transport = FakeDeviceTransport(
+        error=tinker.RawReplEntryError("could not enter raw repl"),
+        fail_attempts=2,
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     src = tmp_path / "dist"
     src.mkdir()
-    result = runner.invoke(
-        tinker.app, ["upload", "--port", "/dev/ttyUSB0", "--reset", str(src)]
-    )
-    assert result.exit_code == 1
-    assert mock_run.call_count == tinker.UPLOAD_RETRY_ATTEMPTS
+    result = runner.invoke(tinker.app, ["deploy", "--port", "/dev/ttyUSB0", str(src)])
+    assert result.exit_code == 0
+    assert fake_transport.attempt == 3
+    assert "retrying" in result.stderr
 
 
-def test_upload_without_reset_does_not_retry(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        return_value=MagicMock(
-            returncode=1,
-            stdout="",
-            stderr="mpremote.transport.TransportError: could not enter raw repl\n",
-        ),
+def test_deploy_exhausts_retries(tmp_path, mocker):
+    mocker.patch.object(tinker.time, "sleep")
+    fake_transport = FakeDeviceTransport(
+        raise_on="enter_raw_repl",
+        error=tinker.RawReplEntryError("could not enter raw repl"),
     )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     src = tmp_path / "dist"
     src.mkdir()
-    result = runner.invoke(tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(src)])
+    result = runner.invoke(tinker.app, ["deploy", "--port", "/dev/ttyUSB0", str(src)])
     assert result.exit_code == 1
-    assert mock_run.call_count == 1
+    assert fake_transport.attempt == tinker.UPLOAD_RETRY_ATTEMPTS
+    assert "could not enter raw REPL on /dev/ttyUSB0" in result.stderr
 
 
-def test_upload_prompts_for_port_when_missing(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        return_value=MagicMock(returncode=0, stdout="", stderr=""),
-    )
+def test_deploy_prompts_for_port_when_missing(tmp_path, mocker):
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
     src = tmp_path / "dist"
     src.mkdir()
-    result = runner.invoke(tinker.app, ["upload", str(src)])
+    result = runner.invoke(tinker.app, ["deploy", str(src)])
     assert result.exit_code == 0
     assert tinker.load_config()["port"] == "/dev/ttyUSB9"
 
 
-def test_upload_uses_config_defaults(tmp_path, mocker):
+def test_deploy_uses_config_defaults(tmp_path, mocker):
     tinker.save_config(port="/dev/ttyUSB2", baud=115200)
     src = tmp_path / "dist"
     src.mkdir()
     tinker.save_config(path=src)
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        return_value=MagicMock(returncode=0, stdout="", stderr=""),
+    fake_transport = FakeDeviceTransport()
+    mock_transport_cls = mocker.patch.object(
+        tinker, "DeviceTransport", return_value=fake_transport
     )
-    result = runner.invoke(tinker.app, ["upload"])
+    result = runner.invoke(tinker.app, ["deploy"])
     assert result.exit_code == 0
-    called_cmd = mock_run.call_args[0][0]
-    assert "/dev/ttyUSB2" in called_cmd
+    assert mock_transport_cls.call_args[0][0] == "/dev/ttyUSB2"
 
 
-def test_upload_subprocess_failure(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        return_value=MagicMock(returncode=2, stdout="", stderr="plain failure\n"),
+def test_deploy_exec_error(tmp_path, mocker):
+    fake_transport = FakeDeviceTransport(
+        raise_on="put_dir",
+        error=tinker.DeviceExecError("", "OSError: [Errno 28] ENOSPC"),
     )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     src = tmp_path / "dist"
     src.mkdir()
-    result = runner.invoke(tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(src)])
-    assert result.exit_code == 2
-
-
-def test_upload_non_raw_repl_failure_does_not_retry_after_reset(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        return_value=MagicMock(returncode=2, stdout="", stderr="plain failure\n"),
-    )
-    mocker.patch.object(tinker, "hard_reset")
-    mocker.patch.object(tinker.time, "sleep")
-    src = tmp_path / "dist"
-    src.mkdir()
-    result = runner.invoke(
-        tinker.app, ["upload", "--port", "/dev/ttyUSB0", "--reset", str(src)]
-    )
-    assert result.exit_code == 2
-    assert mock_run.call_count == 1
+    result = runner.invoke(tinker.app, ["deploy", "--port", "/dev/ttyUSB0", str(src)])
+    assert result.exit_code == 1
+    assert "OSError: [Errno 28] ENOSPC" in result.stderr
 
 
 # --------------------------------------------------------------------------
@@ -758,6 +659,77 @@ def test_fleet_push_with_reset_resets_each_device(tmp_path, mocker):
     ]
 
 
+def test_fleet_push_retries_after_reset_race(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        side_effect=[
+            MagicMock(
+                returncode=1,
+                stdout="",
+                stderr="mpremote.transport.TransportError: could not enter raw repl\n",
+            ),
+            MagicMock(returncode=0, stdout="", stderr=""),
+        ],
+    )
+    mocker.patch.object(tinker, "hard_reset")
+    mock_sleep = mocker.patch.object(tinker.time, "sleep")
+    src = tmp_path / "dist"
+    src.mkdir()
+    result = runner.invoke(
+        tinker.app,
+        ["fleet", "push", "--port", "/dev/ttyUSB0", "--reset", str(src)],
+    )
+    assert result.exit_code == 0
+    assert mock_run.call_count == 2
+    assert "retrying" in result.stderr
+    assert mock_sleep.call_count == 2
+
+
+def test_fleet_push_exhausts_retries_after_reset(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="mpremote.transport.TransportError: could not enter raw repl\n",
+        ),
+    )
+    mocker.patch.object(tinker, "hard_reset")
+    mocker.patch.object(tinker.time, "sleep")
+    src = tmp_path / "dist"
+    src.mkdir()
+    result = runner.invoke(
+        tinker.app,
+        ["fleet", "push", "--port", "/dev/ttyUSB0", "--reset", str(src)],
+    )
+    assert result.exit_code == 1
+    assert mock_run.call_count == tinker.UPLOAD_RETRY_ATTEMPTS
+    assert "could not enter raw REPL on /dev/ttyUSB0" in result.stderr
+
+
+def test_fleet_push_non_raw_repl_failure_does_not_retry_after_reset(tmp_path, mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mock_run = mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(returncode=2, stdout="", stderr="plain failure\n"),
+    )
+    mocker.patch.object(tinker, "hard_reset")
+    mocker.patch.object(tinker.time, "sleep")
+    src = tmp_path / "dist"
+    src.mkdir()
+    result = runner.invoke(
+        tinker.app,
+        ["fleet", "push", "--port", "/dev/ttyUSB0", "--reset", str(src)],
+    )
+    assert result.exit_code == 1
+    assert mock_run.call_count == 1
+
+
 def test_fleet_push_reset_failure_marks_device_failed_and_continues(tmp_path, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mock_run = mocker.patch.object(
@@ -792,78 +764,190 @@ def test_fleet_push_reset_failure_marks_device_failed_and_continues(tmp_path, mo
 
 
 # --------------------------------------------------------------------------
-# download command
+# backup command
 # --------------------------------------------------------------------------
 
 
-def test_download_missing_mpremote(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value=None)
-    result = runner.invoke(tinker.app, ["download"])
-    assert result.exit_code == 1
-    assert "mpremote" in result.stderr
-
-
-def test_download_success(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
+def test_backup_success(tmp_path, mocker):
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     dest = tmp_path / "backup"
-    result = runner.invoke(
-        tinker.app, ["download", "--port", "/dev/ttyUSB0", str(dest)]
-    )
+    result = runner.invoke(tinker.app, ["backup", "--port", "/dev/ttyUSB0", str(dest)])
     assert result.exit_code == 0
     assert dest.exists()
     assert tinker.load_config()["port"] == "/dev/ttyUSB0"
+    assert ("get_dir", ":", dest) in fake_transport.calls
 
 
-def test_download_preserves_config_guard(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+def test_backup_preserves_config_guard(tmp_path, mocker):
     dest = tmp_path / "backup"
     dest.mkdir()
     guard_file = dest / tinker.CONFIG_PATH.name
     guard_file.write_bytes(b"original-config")
 
-    def fake_run(cmd, **kwargs):
-        # simulate mpremote clobbering the guarded file
+    def clobber(local):
+        # simulate the backup pulling in and overwriting the guarded file
         guard_file.write_bytes(b"clobbered")
-        return MagicMock(returncode=0, stdout="", stderr="")
 
-    mocker.patch.object(tinker.subprocess, "run", side_effect=fake_run)
-    result = runner.invoke(
-        tinker.app, ["download", "--port", "/dev/ttyUSB0", str(dest)]
-    )
+    fake_transport = FakeDeviceTransport(get_dir_side_effect=clobber)
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(tinker.app, ["backup", "--port", "/dev/ttyUSB0", str(dest)])
     assert result.exit_code == 0
     assert guard_file.read_bytes() == b"original-config"
 
 
-def test_download_custom_baud_warns(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
+def test_backup_custom_baud_warns(tmp_path, mocker):
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     dest = tmp_path / "backup"
     result = runner.invoke(
         tinker.app,
-        ["download", "--port", "/dev/ttyUSB0", "--baud", "9600", str(dest)],
+        ["backup", "--port", "/dev/ttyUSB0", "--baud", "9600", str(dest)],
     )
     assert "ignores --baud" in result.stderr
 
 
-def test_download_prompts_for_port(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
+def test_backup_prompts_for_port(tmp_path, mocker):
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
     dest = tmp_path / "backup"
-    result = runner.invoke(tinker.app, ["download", str(dest)])
+    result = runner.invoke(tinker.app, ["backup", str(dest)])
     assert result.exit_code == 0
     assert tinker.load_config()["port"] == "/dev/ttyUSB9"
 
 
-def test_download_subprocess_failure(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=3))
-    dest = tmp_path / "backup"
-    result = runner.invoke(
-        tinker.app, ["download", "--port", "/dev/ttyUSB0", str(dest)]
+def test_backup_raw_repl_failure(tmp_path, mocker):
+    mocker.patch.object(tinker.time, "sleep")
+    fake_transport = FakeDeviceTransport(
+        raise_on="enter_raw_repl",
+        error=tinker.RawReplEntryError("could not enter raw repl"),
     )
-    assert result.exit_code == 3
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    dest = tmp_path / "backup"
+    result = runner.invoke(tinker.app, ["backup", "--port", "/dev/ttyUSB0", str(dest)])
+    assert result.exit_code == 1
+    assert "could not enter raw REPL on /dev/ttyUSB0" in result.stderr
+
+
+def test_backup_exec_error(tmp_path, mocker):
+    fake_transport = FakeDeviceTransport(
+        raise_on="get_dir",
+        error=tinker.DeviceExecError("", "OSError: device busy"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    dest = tmp_path / "backup"
+    result = runner.invoke(tinker.app, ["backup", "--port", "/dev/ttyUSB0", str(dest)])
+    assert result.exit_code == 1
+    assert "OSError: device busy" in result.stderr
+
+
+# --------------------------------------------------------------------------
+# restore command
+# --------------------------------------------------------------------------
+
+
+def test_restore_defaults_to_backup_dir(mocker):
+    # typer bakes the Argument default at decoration time (matches backup's
+    # own path argument), so it can't be overridden via monkeypatching
+    # tinker.BACKUP after import - assert the documented default instead.
+    result = runner.invoke(tinker.app, ["restore", "--help"])
+    assert result.exit_code == 0
+    assert "./backup" in result.stdout
+
+
+def test_restore_success_with_explicit_path(tmp_path, mocker):
+    src = tmp_path / "old-backup"
+    src.mkdir()
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(tinker.app, ["restore", "--port", "/dev/ttyUSB0", str(src)])
+    assert result.exit_code == 0
+    assert ("put_dir", src, ":") in fake_transport.calls
+    assert "Restored" in result.stdout
+
+
+def test_restore_does_not_persist_path_to_config(tmp_path, mocker):
+    src = tmp_path / "old-backup"
+    src.mkdir()
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(tinker.app, ["restore", "--port", "/dev/ttyUSB0", str(src)])
+    assert result.exit_code == 0
+    assert "path" not in tinker.load_config()
+
+
+def test_restore_path_missing(tmp_path, mocker):
+    missing = tmp_path / "nope"
+    result = runner.invoke(
+        tinker.app, ["restore", "--port", "/dev/ttyUSB0", str(missing)]
+    )
+    assert result.exit_code == 1
+    assert "does not exist" in result.stderr
+
+
+def test_restore_with_reset_flag(tmp_path, mocker):
+    src = tmp_path / "old-backup"
+    src.mkdir()
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    mock_reset = mocker.patch.object(tinker, "hard_reset")
+    mocker.patch.object(tinker.time, "sleep")
+    result = runner.invoke(
+        tinker.app, ["restore", "--port", "/dev/ttyUSB0", "--reset", str(src)]
+    )
+    assert result.exit_code == 0
+    mock_reset.assert_called_once_with("/dev/ttyUSB0")
+
+
+def test_restore_custom_baud_warns(tmp_path, mocker):
+    src = tmp_path / "old-backup"
+    src.mkdir()
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(
+        tinker.app,
+        ["restore", "--port", "/dev/ttyUSB0", "--baud", "9600", str(src)],
+    )
+    assert "ignores --baud" in result.stderr
+
+
+def test_restore_prompts_for_port(tmp_path, mocker):
+    src = tmp_path / "old-backup"
+    src.mkdir()
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
+    result = runner.invoke(tinker.app, ["restore", str(src)])
+    assert result.exit_code == 0
+    assert tinker.load_config()["port"] == "/dev/ttyUSB9"
+
+
+def test_restore_raw_repl_failure(tmp_path, mocker):
+    src = tmp_path / "old-backup"
+    src.mkdir()
+    mocker.patch.object(tinker.time, "sleep")
+    fake_transport = FakeDeviceTransport(
+        raise_on="enter_raw_repl",
+        error=tinker.RawReplEntryError("could not enter raw repl"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(tinker.app, ["restore", "--port", "/dev/ttyUSB0", str(src)])
+    assert result.exit_code == 1
+    assert "could not enter raw REPL on /dev/ttyUSB0" in result.stderr
+
+
+def test_restore_exec_error(tmp_path, mocker):
+    src = tmp_path / "old-backup"
+    src.mkdir()
+    fake_transport = FakeDeviceTransport(
+        raise_on="put_dir",
+        error=tinker.DeviceExecError("", "OSError: device busy"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(tinker.app, ["restore", "--port", "/dev/ttyUSB0", str(src)])
+    assert result.exit_code == 1
+    assert "OSError: device busy" in result.stderr
 
 
 PROVISION_FLAGS = [
@@ -893,18 +977,9 @@ PROVISION_FLAGS = [
 # --------------------------------------------------------------------------
 
 
-def test_provision_missing_mpremote(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value=None)
-    result = runner.invoke(tinker.app, ["provision"])
-    assert result.exit_code == 1
-    assert "mpremote" in result.stderr
-
-
 def test_provision_success_via_flags(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
-    )
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(
         tinker.app,
         ["provision", "--port", "/dev/ttyUSB0", *PROVISION_FLAGS],
@@ -917,22 +992,13 @@ def test_provision_success_via_flags(tmp_path, mocker):
     assert written["mqtt_broker"] == "broker.local"
     assert written["mqtt_port"] == 1884
 
-    called_cmd = mock_run.call_args[0][0]
-    assert called_cmd == [
-        "mpremote",
-        "connect",
-        "/dev/ttyUSB0",
-        "fs",
-        "cp",
-        str(config_path),
-        ":device_config.json",
-    ]
+    assert ("put_file", config_path, ":device_config.json") in fake_transport.calls
     assert tinker.load_config()["port"] == "/dev/ttyUSB0"
 
 
 def test_provision_custom_baud_warns(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(
         tinker.app,
         ["provision", "--port", "/dev/ttyUSB0", "--baud", "9600", *PROVISION_FLAGS],
@@ -942,8 +1008,8 @@ def test_provision_custom_baud_warns(mocker):
 
 
 def test_provision_prompts_for_port_when_missing(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
     result = runner.invoke(tinker.app, ["provision", *PROVISION_FLAGS])
     assert result.exit_code == 0
@@ -951,26 +1017,44 @@ def test_provision_prompts_for_port_when_missing(mocker):
 
 
 def test_provision_missing_fields_not_tty(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     result = runner.invoke(tinker.app, ["provision", "--port", "/dev/ttyUSB0"])
     assert result.exit_code == 1
     assert "no TTY to prompt for" in result.stderr
     assert "--wifi-ssid" in result.stderr
 
 
-def test_provision_subprocess_failure(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=2))
+def test_provision_raw_repl_failure(mocker):
+    mocker.patch.object(tinker.time, "sleep")
+    fake_transport = FakeDeviceTransport(
+        raise_on="enter_raw_repl",
+        error=tinker.RawReplEntryError("could not enter raw repl"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(
         tinker.app,
         ["provision", "--port", "/dev/ttyUSB0", *PROVISION_FLAGS],
     )
-    assert result.exit_code == 2
+    assert result.exit_code == 1
+    assert "could not enter raw REPL on /dev/ttyUSB0" in result.stderr
+
+
+def test_provision_exec_error(mocker):
+    fake_transport = FakeDeviceTransport(
+        raise_on="put_file",
+        error=tinker.DeviceExecError("", "OSError: device busy"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(
+        tinker.app,
+        ["provision", "--port", "/dev/ttyUSB0", *PROVISION_FLAGS],
+    )
+    assert result.exit_code == 1
+    assert "OSError: device busy" in result.stderr
 
 
 def test_provision_invalid_config_rejected(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     flags = list(PROVISION_FLAGS)
     flags[flags.index("1884")] = "999999"  # out of the schema's 1-65535 range
     result = runner.invoke(tinker.app, ["provision", "--port", "/dev/ttyUSB0", *flags])
@@ -986,8 +1070,8 @@ def test_provision_interactive_prompts_fill_only_missing(tmp_path, mocker):
         json.dumps({"mqtt_broker": "example-broker"})
     )
     mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=0))
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     mocker.patch.object(
         tinker.typer,
         "prompt",
@@ -1021,6 +1105,56 @@ def test_provision_interactive_prompts_fill_only_missing(tmp_path, mocker):
     assert written["wifi_ssid"] == "GivenSSID"
     assert written["wifi_password"] == "prompted-pass"
     assert written["mqtt_broker"] == "example-broker"
+
+
+def test_provision_masks_existing_secret_default(tmp_path, mocker):
+    # An existing device_config.json already has a real secret - it must
+    # never be echoed back in the prompt's [default] hint.
+    (tmp_path / "device_config.json").write_text(
+        json.dumps({"wifi_password": "super-secret", "mqtt_broker": "localhost"})
+    )
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    mock_prompt = mocker.patch.object(
+        tinker.typer,
+        "prompt",
+        side_effect=[
+            "GivenSSID",  # wifi_ssid
+            "",  # wifi_password - blank keeps the existing secret
+            "localhost",  # mqtt_broker
+            1883,  # mqtt_port
+            "microweaver",  # mqtt_client_id
+            "pub/topic",  # mqtt_topic_pub
+            "sub/topic",  # mqtt_topic_sub
+            "muser",  # mqtt_username
+            "new-mqtt-pass",  # mqtt_password - overrides the (empty) default
+        ],
+    )
+
+    tinker.provision(
+        port="/dev/ttyUSB5",
+        baud=None,
+        wifi_ssid=None,
+        wifi_password=None,
+        mqtt_broker=None,
+        mqtt_port=None,
+        mqtt_client_id=None,
+        mqtt_topic_pub=None,
+        mqtt_topic_sub=None,
+        mqtt_username=None,
+        mqtt_password=None,
+    )
+
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["wifi_password"] == "super-secret"
+    assert written["mqtt_password"] == "new-mqtt-pass"
+
+    wifi_password_call = mock_prompt.call_args_list[1]
+    assert wifi_password_call.args[0] == "WiFi password [unchanged]"
+    assert wifi_password_call.kwargs["default"] == ""
+    assert wifi_password_call.kwargs["hide_input"] is True
+    assert wifi_password_call.kwargs["show_default"] is False
 
 
 def test_load_provision_defaults_prefers_existing_config(tmp_path):
@@ -1071,15 +1205,7 @@ def test_scan_mtimes_skips_missing_file(tmp_path):
     assert missing not in snapshot
 
 
-def test_watch_missing_mpremote(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value=None)
-    result = runner.invoke(tinker.app, ["watch"])
-    assert result.exit_code == 1
-    assert "mpremote" in result.stderr
-
-
 def test_watch_no_source_files(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mocker.patch.object(tinker, "ROOT", tmp_path)
     mocker.patch.object(tinker, "DIST", tmp_path / "dist")
     result = runner.invoke(tinker.app, ["watch"])
@@ -1088,23 +1214,21 @@ def test_watch_no_source_files(tmp_path, mocker):
 
 
 def test_watch_stops_on_keyboard_interrupt_with_no_change(fake_project, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mock_sleep = mocker.patch.object(
         tinker.time, "sleep", side_effect=[None, KeyboardInterrupt()]
     )
     mock_build = mocker.patch.object(tinker, "build")
-    mock_upload = mocker.patch.object(tinker, "upload")
+    mock_deploy = mocker.patch.object(tinker, "deploy")
     result = runner.invoke(tinker.app, ["watch"])
     assert result.exit_code == 0
     assert "Stopped watching" in result.stdout
     assert mock_sleep.call_count == 2
     mock_build.assert_not_called()
-    mock_upload.assert_not_called()
+    mock_deploy.assert_not_called()
 
 
-def test_watch_rebuilds_and_uploads_on_change(fake_project, mocker):
+def test_watch_rebuilds_and_deploys_on_change(fake_project, mocker):
     root, dist = fake_project
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
 
     def touch_then_stop(*args, **kwargs):
         touch_then_stop.calls += 1
@@ -1116,21 +1240,20 @@ def test_watch_rebuilds_and_uploads_on_change(fake_project, mocker):
     touch_then_stop.calls = 0
     mocker.patch.object(tinker.time, "sleep", side_effect=touch_then_stop)
     mock_build = mocker.patch.object(tinker, "build")
-    mock_upload = mocker.patch.object(tinker, "upload")
+    mock_deploy = mocker.patch.object(tinker, "deploy")
     result = runner.invoke(tinker.app, ["watch", "--port", "/dev/ttyUSB0", "--reset"])
     assert result.exit_code == 0
     assert "Change detected, rebuilding..." in result.stdout
     mock_build.assert_called_once_with(
         micropython="1.28", march="xtensawin", no_clean=False
     )
-    mock_upload.assert_called_once_with(
+    mock_deploy.assert_called_once_with(
         port="/dev/ttyUSB0", baud=None, reset=True, path=None
     )
 
 
-def test_watch_build_failure_skips_upload(fake_project, mocker):
+def test_watch_build_failure_skips_deploy(fake_project, mocker):
     root, dist = fake_project
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
 
     def touch_then_stop(*args, **kwargs):
         touch_then_stop.calls += 1
@@ -1142,16 +1265,15 @@ def test_watch_build_failure_skips_upload(fake_project, mocker):
     touch_then_stop.calls = 0
     mocker.patch.object(tinker.time, "sleep", side_effect=touch_then_stop)
     mocker.patch.object(tinker, "build", side_effect=typer.Exit(code=1))
-    mock_upload = mocker.patch.object(tinker, "upload")
+    mock_deploy = mocker.patch.object(tinker, "deploy")
     result = runner.invoke(tinker.app, ["watch"])
     assert result.exit_code == 0
-    assert "Build failed, skipping upload." in result.stderr
-    mock_upload.assert_not_called()
+    assert "Build failed, skipping deploy." in result.stderr
+    mock_deploy.assert_not_called()
 
 
-def test_watch_upload_failure_reported(fake_project, mocker):
+def test_watch_deploy_failure_reported(fake_project, mocker):
     root, dist = fake_project
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
 
     def touch_then_stop(*args, **kwargs):
         touch_then_stop.calls += 1
@@ -1163,10 +1285,10 @@ def test_watch_upload_failure_reported(fake_project, mocker):
     touch_then_stop.calls = 0
     mocker.patch.object(tinker.time, "sleep", side_effect=touch_then_stop)
     mocker.patch.object(tinker, "build")
-    mocker.patch.object(tinker, "upload", side_effect=typer.Exit(code=1))
+    mocker.patch.object(tinker, "deploy", side_effect=typer.Exit(code=1))
     result = runner.invoke(tinker.app, ["watch"])
     assert result.exit_code == 0
-    assert "Upload failed." in result.stderr
+    assert "Deploy failed." in result.stderr
 
 
 # --------------------------------------------------------------------------
@@ -1244,16 +1366,22 @@ def _fake_esp():
     return esp
 
 
-def test_device_info_success_no_mpremote(mocker):
+def test_device_info_success(mocker):
     esp = _fake_esp()
     mocker.patch.object(tinker, "connect_esp", return_value=esp)
     mocker.patch.object(tinker, "attach_flash")
     mocker.patch.object(tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB"))
     mocker.patch.object(tinker, "reset_chip")
-    mocker.patch.object(tinker.shutil, "which", return_value=None)
+    fake_transport = FakeDeviceTransport(
+        exec_results=["(sysname='esp32')\n", "power_on\n"]
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(tinker.app, ["device", "info", "--port", "/dev/ttyUSB0"])
     assert result.exit_code == 0
     assert "ESP32" in result.stdout
+    assert "esp32" in result.stdout
+    assert "Reset Reason" in result.stdout
+    assert "power_on" in result.stdout
     esp._port.close.assert_called_once()
 
 
@@ -1264,128 +1392,65 @@ def test_device_info_prompts_for_port(mocker):
     mocker.patch.object(tinker, "attach_flash")
     mocker.patch.object(tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB"))
     mocker.patch.object(tinker, "reset_chip")
-    mocker.patch.object(tinker.shutil, "which", return_value=None)
+    fake_transport = FakeDeviceTransport(
+        exec_results=["(sysname='esp32')\n", "power_on\n"]
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(tinker.app, ["device", "info"])
     assert result.exit_code == 0
     tinker.connect_esp.assert_called_once_with("/dev/ttyUSB9")
 
 
-def test_device_info_with_usb_mode_and_mpremote(mocker):
+def test_device_info_with_usb_mode(mocker):
     esp = _fake_esp()
     esp.get_usb_mode.return_value = "CDC"
     mocker.patch.object(tinker, "connect_esp", return_value=esp)
     mocker.patch.object(tinker, "attach_flash")
     mocker.patch.object(tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB"))
     mocker.patch.object(tinker, "reset_chip")
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        return_value=MagicMock(returncode=0, stdout="(sysname='esp32')"),
+    fake_transport = FakeDeviceTransport(
+        exec_results=["(sysname='esp32')\n", "power_on\n"]
     )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(tinker.app, ["device", "info", "--port", "/dev/ttyUSB0"])
     assert result.exit_code == 0
     assert "CDC" in result.stdout
     assert "esp32" in result.stdout
 
 
-def test_device_info_mpremote_unresponsive(mocker):
+def test_device_info_firmware_fields_unavailable_on_raw_repl_failure(mocker):
     esp = _fake_esp()
     mocker.patch.object(tinker, "connect_esp", return_value=esp)
     mocker.patch.object(tinker, "attach_flash")
     mocker.patch.object(tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB"))
     mocker.patch.object(tinker, "reset_chip")
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=1, stdout="")
+    mocker.patch.object(tinker.time, "sleep")
+    fake_transport = FakeDeviceTransport(
+        raise_on="enter_raw_repl",
+        error=tinker.RawReplEntryError("could not enter raw repl"),
     )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(tinker.app, ["device", "info", "--port", "/dev/ttyUSB0"])
     assert result.exit_code == 0
-    assert "unavailable (device unresponsive)" in result.stdout
-
-
-def test_device_info_mpremote_timeout(mocker):
-    esp = _fake_esp()
-    mocker.patch.object(tinker, "connect_esp", return_value=esp)
-    mocker.patch.object(tinker, "attach_flash")
-    mocker.patch.object(tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB"))
-    mocker.patch.object(tinker, "reset_chip")
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        side_effect=subprocess.TimeoutExpired(cmd="mpremote", timeout=10),
-    )
-    result = runner.invoke(tinker.app, ["device", "info", "--port", "/dev/ttyUSB0"])
-    assert result.exit_code == 0
-    assert "timed out" in result.stdout
-
-
-def test_device_info_shows_reset_reason(mocker):
-    esp = _fake_esp()
-    mocker.patch.object(tinker, "connect_esp", return_value=esp)
-    mocker.patch.object(tinker, "attach_flash")
-    mocker.patch.object(tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB"))
-    mocker.patch.object(tinker, "reset_chip")
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        side_effect=[
-            MagicMock(returncode=0, stdout="(sysname='esp32')"),
-            MagicMock(returncode=0, stdout="Reset reason: power_on\npower_on"),
-        ],
-    )
-    result = runner.invoke(tinker.app, ["device", "info", "--port", "/dev/ttyUSB0"])
-    assert result.exit_code == 0
+    assert "MicroPython" in result.stdout
     assert "Reset Reason" in result.stdout
-    assert "power_on" in result.stdout
-    reset_cmd = mock_run.call_args_list[1][0][0]
-    assert reset_cmd[-1] == (
-        "from app.services.reset import ResetService; print(ResetService().read())"
-    )
+    assert result.stdout.count("unavailable (device unresponsive)") == 2
 
 
-def test_device_info_reset_reason_unresponsive(mocker):
+def test_device_info_firmware_fields_unavailable_on_exec_error(mocker):
     esp = _fake_esp()
     mocker.patch.object(tinker, "connect_esp", return_value=esp)
     mocker.patch.object(tinker, "attach_flash")
     mocker.patch.object(tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB"))
     mocker.patch.object(tinker, "reset_chip")
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        side_effect=[
-            MagicMock(returncode=0, stdout="(sysname='esp32')"),
-            MagicMock(returncode=1, stdout=""),
-        ],
+    fake_transport = FakeDeviceTransport(
+        raise_on="exec",
+        error=tinker.DeviceExecError("", "OSError: device busy"),
     )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(tinker.app, ["device", "info", "--port", "/dev/ttyUSB0"])
     assert result.exit_code == 0
-    assert "Reset Reason" in result.stdout
-    assert "unavailable (device unresponsive)" in result.stdout
-
-
-def test_device_info_reset_reason_timeout(mocker):
-    esp = _fake_esp()
-    mocker.patch.object(tinker, "connect_esp", return_value=esp)
-    mocker.patch.object(tinker, "attach_flash")
-    mocker.patch.object(tinker, "get_flash_info", return_value=(0xEF, 0x4016, "4MB"))
-    mocker.patch.object(tinker, "reset_chip")
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        side_effect=[
-            MagicMock(returncode=0, stdout="(sysname='esp32')"),
-            subprocess.TimeoutExpired(cmd="mpremote", timeout=10),
-        ],
-    )
-    result = runner.invoke(tinker.app, ["device", "info", "--port", "/dev/ttyUSB0"])
-    assert result.exit_code == 0
-    assert "Reset Reason" in result.stdout
-    assert "timed out" in result.stdout
+    assert result.stdout.count("unavailable (device unresponsive)") == 2
 
 
 def test_device_info_read_failure(mocker):
@@ -1404,29 +1469,17 @@ def test_device_info_read_failure(mocker):
 # --------------------------------------------------------------------------
 
 
-def test_device_health_no_mpremote(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value=None)
-    result = runner.invoke(tinker.app, ["device", "health", "--port", "/dev/ttyUSB0"])
-    assert result.exit_code == 1
-    assert "mpremote' not found" in result.stderr
-
-
 def test_device_health_prompts_for_port(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
     report = {"app_version": "1.0.0", "healthy": True, "checks": {}, "metrics": {}}
-    mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        return_value=MagicMock(returncode=0, stdout=json.dumps(report)),
-    )
+    fake_transport = FakeDeviceTransport(exec_results=[json.dumps(report)])
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(tinker.app, ["device", "health"])
     assert result.exit_code == 0
     tinker.prompt_for_port.assert_called_once()
 
 
 def test_device_health_success(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     report = {
         "app_version": "1.2.3",
         "healthy": False,
@@ -1441,11 +1494,8 @@ def test_device_health_success(mocker):
             "errors": 1,
         },
     }
-    mock_run = mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        return_value=MagicMock(returncode=0, stdout=json.dumps(report)),
-    )
+    fake_transport = FakeDeviceTransport(exec_results=[json.dumps(report)])
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(tinker.app, ["device", "health", "--port", "/dev/ttyUSB0"])
     assert result.exit_code == 0
     assert "1.2.3" in result.stdout
@@ -1455,40 +1505,37 @@ def test_device_health_success(mocker):
     assert "failed (broker down)" in result.stdout
     assert "12.3" in result.stdout
     assert "Messages Published" in result.stdout
-    script = mock_run.call_args[0][0][-1]
+    script = next(c[1] for c in fake_transport.calls if c[0] == "exec")
     assert "HealthCheckService" in script
     assert "WiFiService(setting.WIFI_SSID, setting.WIFI_PASSWORD)" in script
 
 
-def test_device_health_mpremote_unresponsive(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=1, stdout="")
+def test_device_health_raw_repl_failure(mocker):
+    mocker.patch.object(tinker.time, "sleep")
+    fake_transport = FakeDeviceTransport(
+        raise_on="enter_raw_repl",
+        error=tinker.RawReplEntryError("could not enter raw repl"),
     )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(tinker.app, ["device", "health", "--port", "/dev/ttyUSB0"])
     assert result.exit_code == 1
-    assert "unavailable (device unresponsive)" in result.stderr
+    assert "could not enter raw REPL on /dev/ttyUSB0" in result.stderr
 
 
-def test_device_health_mpremote_timeout(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        side_effect=subprocess.TimeoutExpired(cmd="mpremote", timeout=10),
+def test_device_health_exec_error(mocker):
+    fake_transport = FakeDeviceTransport(
+        raise_on="exec",
+        error=tinker.DeviceExecError("", "OSError: device busy"),
     )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(tinker.app, ["device", "health", "--port", "/dev/ttyUSB0"])
     assert result.exit_code == 1
-    assert "timed out" in result.stderr
+    assert "OSError: device busy" in result.stderr
 
 
 def test_device_health_unparseable_report(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(
-        tinker.subprocess,
-        "run",
-        return_value=MagicMock(returncode=0, stdout="not json"),
-    )
+    fake_transport = FakeDeviceTransport(exec_results=["not json"])
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(tinker.app, ["device", "health", "--port", "/dev/ttyUSB0"])
     assert result.exit_code == 1
     assert "could not parse health report" in result.stderr
@@ -1516,53 +1563,185 @@ def test_run_mpremote_cmd_raw_repl_failure_prints_recovery(mocker, capsys):
     assert "device reset --port /dev/ttyUSB0" in captured.err
 
 
-def test_device_ls_missing_mpremote(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value=None)
-    result = runner.invoke(tinker.app, ["device", "ls"])
-    assert result.exit_code == 1
-    assert "mpremote" in result.stderr
+class FakeDeviceTransport:
+    """Stand-in for DeviceTransport used by tinker's ls/tree/deploy commands."""
+
+    def __init__(
+        self,
+        entries=None,
+        raise_on=None,
+        error=None,
+        fail_attempts=0,
+        exec_results=None,
+        get_dir_side_effect=None,
+    ):
+        self.entries = entries or []
+        self.raise_on = raise_on
+        self.error = error
+        self.fail_attempts = fail_attempts
+        self.attempt = 0
+        self.calls = []
+        self.exec_results = list(exec_results) if exec_results is not None else None
+        self.get_dir_side_effect = get_dir_side_effect
+
+    def connect(self):
+        self.attempt += 1
+        self.calls.append("connect")
+
+    def close(self):
+        self.calls.append("close")
+
+    def interrupt(self):
+        self.calls.append("interrupt")
+        if self.raise_on == "interrupt":
+            raise self.error
+
+    def enter_raw_repl(self, soft_reset=True):
+        self.calls.append(("enter_raw_repl", soft_reset))
+        if self.attempt <= self.fail_attempts or self.raise_on == "enter_raw_repl":
+            raise self.error
+
+    def ls(self, path):
+        self.calls.append(("ls", path))
+        if self.raise_on == "ls":
+            raise self.error
+        if isinstance(self.entries, dict):
+            return self.entries.get(path, [])
+        return self.entries
+
+    def exit_raw_repl(self):
+        self.calls.append("exit_raw_repl")
+
+    def put_dir(self, local, remote, on_file=None):
+        self.calls.append(("put_dir", local, remote))
+        if on_file is not None:
+            on_file(local / "boot.py", f"{remote}boot.py", 1, 1)
+        if self.raise_on == "put_dir":
+            raise self.error
+
+    def put_file(self, local, remote, on_start=None):
+        self.calls.append(("put_file", local, remote))
+        if on_start is not None:
+            on_start(local, remote)
+        if self.raise_on == "put_file":
+            raise self.error
+
+    def get_dir(self, remote, local, on_file=None):
+        self.calls.append(("get_dir", remote, local))
+        if on_file is not None:
+            on_file(f"{remote}boot.py", local / "boot.py", 1, 1)
+        if self.get_dir_side_effect is not None:
+            self.get_dir_side_effect(local)
+        if self.raise_on == "get_dir":
+            raise self.error
+
+    def get_file(self, remote, local, on_start=None):
+        self.calls.append(("get_file", remote, local))
+        if on_start is not None:
+            on_start(remote, local)
+        if self.raise_on == "get_file":
+            raise self.error
+
+    def exec(self, script):
+        self.calls.append(("exec", script))
+        if self.raise_on == "exec":
+            raise self.error
+        if self.exec_results is not None:
+            return self.exec_results.pop(0)
+        return ""
+
+    def rm(self, path):
+        self.calls.append(("rm", path))
+        if self.raise_on == "rm":
+            raise self.error
+
+    def rmdir(self, path):
+        self.calls.append(("rmdir", path))
+        if self.raise_on == "rmdir":
+            raise self.error
+
+    def rm_recursive(self, path):
+        self.calls.append(("rm_recursive", path))
+        if self.raise_on == "rm_recursive":
+            raise self.error
+
+    def mkdir(self, path):
+        self.calls.append(("mkdir", path))
+        if self.raise_on == "mkdir":
+            raise self.error
 
 
 def test_device_ls_success(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
+    fake_transport = FakeDeviceTransport(
+        entries=[("boot.py", 1024, False), ("lib", 0, True)]
     )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(tinker.app, ["device", "ls", "--port", "/dev/ttyUSB0"])
     assert result.exit_code == 0
-    assert mock_run.call_args[0][0][-1] == ":"
+    assert "boot.py" in result.stdout
+    assert "lib/" in result.stdout
+    assert fake_transport.calls == [
+        "connect",
+        "interrupt",
+        ("enter_raw_repl", False),
+        ("ls", ":"),
+        "exit_raw_repl",
+        "close",
+    ]
 
 
-def test_device_ls_prompts_for_port_and_failure(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+def test_device_ls_retries_raw_repl_race_then_succeeds(mocker):
+    mocker.patch.object(tinker.time, "sleep")
+    fake_transport = FakeDeviceTransport(
+        entries=[("boot.py", 1024, False)],
+        error=tinker.RawReplEntryError("could not enter raw repl"),
+        fail_attempts=2,
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(tinker.app, ["device", "ls", "--port", "/dev/ttyUSB0"])
+    assert result.exit_code == 0
+    assert "boot.py" in result.stdout
+    assert fake_transport.attempt == 3
+
+
+def test_device_ls_prompts_for_port_and_raw_repl_failure(mocker):
     mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=1))
+    mocker.patch.object(tinker.time, "sleep")
+    fake_transport = FakeDeviceTransport(
+        raise_on="enter_raw_repl",
+        error=tinker.RawReplEntryError("could not enter raw repl"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(tinker.app, ["device", "ls"])
     assert result.exit_code == 1
-
-
-def test_device_test_adapter_missing_mpremote(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value=None)
-    result = runner.invoke(
-        tinker.app,
-        ["device", "test-adapter", "app.adapters.sensors.dht22.DHT22Adapter"],
+    assert (
+        f"could not enter raw REPL on /dev/ttyUSB9 after "
+        f"{tinker.UPLOAD_RETRY_ATTEMPTS} attempts" in result.stderr
     )
+    assert "device reset --port /dev/ttyUSB9" in result.stderr
+    assert fake_transport.attempt == tinker.UPLOAD_RETRY_ATTEMPTS
+
+
+def test_device_ls_exec_error(mocker):
+    fake_transport = FakeDeviceTransport(
+        raise_on="ls",
+        error=tinker.DeviceExecError("", "OSError: [Errno 2] ENOENT"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(tinker.app, ["device", "ls", "--port", "/dev/ttyUSB0"])
     assert result.exit_code == 1
-    assert "mpremote" in result.stderr
+    assert "OSError: [Errno 2] ENOENT" in result.stderr
 
 
 def test_device_test_adapter_rejects_bare_name(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     result = runner.invoke(tinker.app, ["device", "test-adapter", "DHT22Adapter"])
     assert result.exit_code == 1
     assert "dotted path" in result.stderr
 
 
 def test_device_test_adapter_success(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
-    )
+    fake_transport = FakeDeviceTransport(exec_results=["25.3\n"])
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(
         tinker.app,
         [
@@ -1574,9 +1753,8 @@ def test_device_test_adapter_success(mocker):
         ],
     )
     assert result.exit_code == 0
-    cmd = mock_run.call_args[0][0]
-    assert cmd[:4] == ["mpremote", "connect", "/dev/ttyUSB0", "exec"]
-    script = cmd[-1]
+    assert "25.3" in result.stdout
+    script = next(c[1] for c in fake_transport.calls if c[0] == "exec")
     assert "from app.adapters.sensors.dht22 import DHT22Adapter" in script
     assert "adapter = DHT22Adapter()" in script
     assert "adapter.setup()" in script
@@ -1584,14 +1762,38 @@ def test_device_test_adapter_success(mocker):
 
 
 def test_device_test_adapter_prompts_for_port_and_failure(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=1))
+    fake_transport = FakeDeviceTransport(
+        raise_on="exec",
+        error=tinker.DeviceExecError("", "AttributeError: no such adapter"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(
         tinker.app,
         ["device", "test-adapter", "app.adapters.sensors.dht22.DHT22Adapter"],
     )
     assert result.exit_code == 1
+
+
+def test_device_test_adapter_raw_repl_failure(mocker):
+    mocker.patch.object(tinker.time, "sleep")
+    fake_transport = FakeDeviceTransport(
+        raise_on="enter_raw_repl",
+        error=tinker.RawReplEntryError("could not enter raw repl"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(
+        tinker.app,
+        [
+            "device",
+            "test-adapter",
+            "app.adapters.sensors.dht22.DHT22Adapter",
+            "--port",
+            "/dev/ttyUSB0",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "could not enter raw REPL on /dev/ttyUSB0" in result.stderr
 
 
 def test_device_repl_missing_mpremote(mocker):
@@ -1694,154 +1896,196 @@ def test_device_logs_prompts_for_port_and_failure(subcommand, mocker):
     assert result.exit_code == 1
 
 
-def test_device_tree_missing_mpremote(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value=None)
-    result = runner.invoke(tinker.app, ["device", "tree"])
-    assert result.exit_code == 1
-    assert "mpremote" in result.stderr
-
-
-def test_device_tree_success_with_flags(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
+def test_device_tree_recurses_into_subdirectories(mocker):
+    fake_transport = FakeDeviceTransport(
+        entries={
+            "/": [("boot.py", 100, False), ("lib", 0, True)],
+            "/lib": [("foo.py", 50, False)],
+        }
     )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(tinker.app, ["device", "tree", "--port", "/dev/ttyUSB0"])
+    assert result.exit_code == 0
+    assert result.stdout == (":/\n" "├── boot.py\n" "└── lib\n" "    └── foo.py\n")
+
+
+def test_device_tree_with_size_flag(mocker):
+    fake_transport = FakeDeviceTransport(entries={"/": [("boot.py", 1024, False)]})
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(
-        tinker.app,
-        ["device", "tree", "--port", "/dev/ttyUSB0", "--size", "--human", "/lib"],
+        tinker.app, ["device", "tree", "--port", "/dev/ttyUSB0", "--size"]
     )
     assert result.exit_code == 0
-    cmd = mock_run.call_args[0][0]
-    assert "--size" in cmd
-    assert "--human" in cmd
-    assert cmd[-1] == "/lib"
+    assert "[     1024]  boot.py" in result.stdout
 
 
-def test_device_tree_failure(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=1))
+def test_human_size_bytes():
+    assert tinker._human_size(500) == "500"
+
+
+def test_human_size_kilobytes():
+    assert tinker._human_size(2048) == "2.0K"
+
+
+def test_human_size_megabytes():
+    assert tinker._human_size(2 * 1024**2) == "2.0M"
+
+
+def test_human_size_gigabytes():
+    assert tinker._human_size(3 * 1024**3) == "3.0G"
+
+
+def test_human_size_terabytes():
+    assert tinker._human_size(5 * 1024**4) == "5.0T"
+
+
+def test_device_tree_with_human_flag(mocker):
+    fake_transport = FakeDeviceTransport(
+        entries={"/": [("firmware.bin", 2_097_152, False)]}
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(
+        tinker.app, ["device", "tree", "--port", "/dev/ttyUSB0", "--human"]
+    )
+    assert result.exit_code == 0
+    assert "[  2.0M]  firmware.bin" in result.stdout
+
+
+def test_device_tree_empty_dir_hides_size_column(mocker):
+    fake_transport = FakeDeviceTransport(
+        entries={"/": [("lib", 0, True), ("empty", 0, True)]}
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(
+        tinker.app, ["device", "tree", "--port", "/dev/ttyUSB0", "--size"]
+    )
+    assert result.exit_code == 0
+    assert "[" not in result.stdout.splitlines()[1]
+
+
+def test_device_tree_starts_at_given_path(mocker):
+    fake_transport = FakeDeviceTransport(entries={"lib": [("foo.py", 10, False)]})
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(
+        tinker.app, ["device", "tree", "--port", "/dev/ttyUSB0", ":lib"]
+    )
+    assert result.exit_code == 0
+    assert result.stdout == ":lib\n└── foo.py\n"
+
+
+def test_device_tree_raw_repl_failure(mocker):
+    mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
+    mocker.patch.object(tinker.time, "sleep")
+    fake_transport = FakeDeviceTransport(
+        raise_on="enter_raw_repl",
+        error=tinker.RawReplEntryError("could not enter raw repl"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(tinker.app, ["device", "tree"])
+    assert result.exit_code == 1
+    assert "could not enter raw REPL on /dev/ttyUSB9" in result.stderr
+
+
+def test_device_tree_exec_error(mocker):
+    fake_transport = FakeDeviceTransport(
+        raise_on="ls",
+        error=tinker.DeviceExecError("", "OSError: [Errno 20] ENOTDIR"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(tinker.app, ["device", "tree", "--port", "/dev/ttyUSB0"])
     assert result.exit_code == 1
-
-
-def test_device_tree_prompts_for_port(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
-    mock_run = mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
-    )
-    result = runner.invoke(tinker.app, ["device", "tree"])
-    assert result.exit_code == 0
-    cmd = mock_run.call_args[0][0]
-    assert "/dev/ttyUSB9" in cmd
-
-
-def test_device_rm_missing_mpremote(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value=None)
-    result = runner.invoke(tinker.app, ["device", "rm", ":foo.txt"])
-    assert result.exit_code == 1
-    assert "mpremote" in result.stderr
+    assert "OSError: [Errno 20] ENOTDIR" in result.stderr
 
 
 def test_device_rm_file(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
-    )
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(
         tinker.app, ["device", "rm", "--port", "/dev/ttyUSB0", ":foo.txt"]
     )
     assert result.exit_code == 0
-    assert mock_run.call_args[0][0] == [
-        "mpremote",
-        "connect",
-        "/dev/ttyUSB0",
-        "fs",
-        "rm",
-        ":foo.txt",
-    ]
+    assert ("rm", ":foo.txt") in fake_transport.calls
 
 
 def test_device_rm_recursive(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
-    )
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(
         tinker.app,
         ["device", "rm", "--port", "/dev/ttyUSB0", "--recursive", ":lib"],
     )
     assert result.exit_code == 0
-    assert mock_run.call_args[0][0] == [
-        "mpremote",
-        "connect",
-        "/dev/ttyUSB0",
-        "fs",
-        "--recursive",
-        "rm",
-        ":lib",
-    ]
+    assert ("rm_recursive", ":lib") in fake_transport.calls
 
 
 def test_device_rm_dir(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
-    )
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(
         tinker.app, ["device", "rm", "--port", "/dev/ttyUSB0", "--dir", ":empty"]
     )
     assert result.exit_code == 0
-    assert mock_run.call_args[0][0] == [
-        "mpremote",
-        "connect",
-        "/dev/ttyUSB0",
-        "fs",
-        "rmdir",
-        ":empty",
-    ]
+    assert ("rmdir", ":empty") in fake_transport.calls
 
 
 def test_device_rm_prompts_for_port_and_failure(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=1))
+    fake_transport = FakeDeviceTransport(
+        raise_on="rm",
+        error=tinker.DeviceExecError("", "OSError: [Errno 2] ENOENT"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(tinker.app, ["device", "rm", ":foo.txt"])
     assert result.exit_code == 1
 
 
-def test_device_mkdir_missing_mpremote(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value=None)
-    result = runner.invoke(tinker.app, ["device", "mkdir", ":lib"])
+def test_device_rm_raw_repl_failure(mocker):
+    mocker.patch.object(tinker.time, "sleep")
+    fake_transport = FakeDeviceTransport(
+        raise_on="enter_raw_repl",
+        error=tinker.RawReplEntryError("could not enter raw repl"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(
+        tinker.app, ["device", "rm", "--port", "/dev/ttyUSB0", ":foo.txt"]
+    )
     assert result.exit_code == 1
-    assert "mpremote" in result.stderr
+    assert "could not enter raw REPL on /dev/ttyUSB0" in result.stderr
 
 
 def test_device_mkdir_success(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
-    )
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(
         tinker.app, ["device", "mkdir", "--port", "/dev/ttyUSB0", ":lib"]
     )
     assert result.exit_code == 0
-    assert mock_run.call_args[0][0] == [
-        "mpremote",
-        "connect",
-        "/dev/ttyUSB0",
-        "fs",
-        "mkdir",
-        ":lib",
-    ]
+    assert ("mkdir", ":lib") in fake_transport.calls
 
 
 def test_device_mkdir_prompts_for_port_and_failure(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=1))
+    fake_transport = FakeDeviceTransport(
+        raise_on="mkdir",
+        error=tinker.DeviceExecError("", "OSError: [Errno 2] ENOENT"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(tinker.app, ["device", "mkdir", ":lib"])
     assert result.exit_code == 1
+
+
+def test_device_mkdir_raw_repl_failure(mocker):
+    mocker.patch.object(tinker.time, "sleep")
+    fake_transport = FakeDeviceTransport(
+        raise_on="enter_raw_repl",
+        error=tinker.RawReplEntryError("could not enter raw repl"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(
+        tinker.app, ["device", "mkdir", "--port", "/dev/ttyUSB0", ":lib"]
+    )
+    assert result.exit_code == 1
+    assert "could not enter raw REPL on /dev/ttyUSB0" in result.stderr
 
 
 # --------------------------------------------------------------------------

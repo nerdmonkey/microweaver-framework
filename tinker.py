@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build, upload, and manage microweaver firmware."""
+"""Build, deploy, and manage microweaver firmware."""
 
 import configparser
 import json
@@ -8,6 +8,7 @@ import subprocess  # nosec B404
 import sys
 import time
 import tomllib
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +20,7 @@ from esptool.util import FatalError
 from serial.tools import list_ports
 
 from config.app import ConfigError, Setting
+from device_transport import DeviceExecError, DeviceTransport, RawReplEntryError
 
 ROOT = Path(__file__).parent
 DIST = ROOT / "dist"
@@ -52,7 +54,7 @@ VERSION = _read_version()
 
 app = typer.Typer(
     no_args_is_help=True,
-    help="Build, upload, and manage microweaver firmware.",
+    help="Build, deploy, and manage microweaver firmware.",
 )
 config_app = typer.Typer(
     no_args_is_help=True, help="View or set default port/baud/path."
@@ -279,12 +281,9 @@ def _run_mpremote_interactive(
     return result
 
 
-def _mpremote_connect_cmd(resolved_port: str, *, resume: bool = False) -> list[str]:
+def _mpremote_connect_cmd(resolved_port: str) -> list[str]:
     """Build an mpremote connect command prefix for this port."""
-    cmd = ["mpremote", "connect", resolved_port]
-    if resume:
-        cmd.append("resume")
-    return cmd
+    return ["mpremote", "connect", resolved_port]
 
 
 def compile_file(src: Path, dst: Path, mp_version: str, march: str) -> bool:
@@ -417,7 +416,7 @@ def _run_upload_cmd(
 
 
 @app.command()
-def upload(
+def deploy(
     port: Optional[str] = typer.Option(
         None, "--port", "-p", help="Serial port of device (see 'tinker.py port')"
     ),
@@ -426,31 +425,15 @@ def upload(
         False,
         "--reset",
         help=(
-            "Hard-reset the device before uploading. Use this if the device "
-            "is stuck (e.g. mpremote fails with 'could not enter raw repl')."
-        ),
-    ),
-    resume: bool = typer.Option(
-        False,
-        "--resume",
-        help=(
-            "Use an already-idle interpreter session instead of letting "
-            "mpremote soft-reset into raw REPL. Recovery-oriented upload path."
+            "Hard-reset the device before deploying. Use this if the device "
+            "is stuck (e.g. raw REPL entry fails after several retries)."
         ),
     ),
     path: Optional[Path] = typer.Argument(
-        None, help="Local file/folder to upload (default: ./dist)"
+        None, help="Local file/folder to deploy (default: ./dist)"
     ),
 ) -> None:
-    """Upload compiled firmware to a device over serial."""
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
+    """Deploy compiled firmware to a device over serial."""
     # Resolution order: CLI flag > .microweaver > hardcoded default.
     config = load_config()
     resolved_port = port or config.get("port")
@@ -465,39 +448,94 @@ def upload(
         print(f"ERROR: {resolved_path} does not exist.", file=sys.stderr)
         raise typer.Exit(code=1)
 
-    if reset and resume:
-        print(
-            "ERROR: --reset and --resume are mutually exclusive. "
-            "Use --resume only after you already have the device at an idle >>>.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
-    # mpremote's CLI hardcodes 115200 baud (no override flag exists upstream
-    # as of 1.28.0); --baud is accepted for interface parity but has no
-    # effect on the actual transfer today.
+    # DeviceTransport always runs at 115200 baud; --baud is accepted for
+    # interface/config-file compatibility but has no effect on the transfer.
     if resolved_baud != 115200:
         print(
-            f"NOTE: mpremote ignores --baud (requested {resolved_baud}), "
+            f"NOTE: deploy ignores --baud (requested {resolved_baud}), "
             "connection always runs at 115200.",
             file=sys.stderr,
         )
 
+    _upload_path(resolved_port, resolved_path, reset, "deploy")
+
+    save_config(port=port, baud=baud, path=path)
+    print(f"\nDeployed {resolved_path} -> {resolved_port}")
+
+
+@app.command()
+def restore(
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Serial port of device (see 'tinker.py port')"
+    ),
+    baud: Optional[int] = typer.Option(None, "--baud", "-b", help="Baud rate"),
+    reset: bool = typer.Option(
+        False, "--reset", help="Hard-reset the device before restoring"
+    ),
+    path: Path = typer.Argument(
+        BACKUP, help="Local backup folder to restore (default: ./backup)"
+    ),
+) -> None:
+    """Deploy a previous `backup` folder's contents back onto the device."""
+    # Resolution order: CLI flag > .microweaver > hardcoded default. Unlike
+    # deploy, the restore source is always BACKUP unless overridden - it
+    # never reads or writes .microweaver's "path" default, so it can't
+    # clobber deploy's own default path.
+    config = load_config()
+    resolved_port = port or config.get("port")
+    resolved_baud = baud if baud is not None else int(config.get("baud", DEFAULT_BAUD))
+
+    if resolved_port is None:
+        resolved_port = prompt_for_port()
+        port = resolved_port
+
+    if not path.exists():
+        print(f"ERROR: {path} does not exist.", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    if resolved_baud != 115200:
+        print(
+            f"NOTE: restore ignores --baud (requested {resolved_baud}), "
+            "connection always runs at 115200.",
+            file=sys.stderr,
+        )
+
+    _upload_path(resolved_port, path, reset, "restore")
+
+    save_config(port=port, baud=baud)
+    print(f"\nRestored {path} -> {resolved_port}")
+
+
+def _upload_path(
+    resolved_port: str, resolved_path: Path, reset: bool, command_label: str
+) -> None:
+    """Push a local file/folder to the device over raw REPL; shared with restore()."""
     if reset:
         print(f"Resetting {resolved_port}...")
         hard_reset(resolved_port)
         time.sleep(UPLOAD_RESET_SETTLE_SECONDS)
 
-    src = f"{resolved_path}/." if resolved_path.is_dir() else str(resolved_path)
-    cmd = _mpremote_connect_cmd(resolved_port, resume=resume)
-    cmd += ["fs", "cp", "-r", src, ":"]
-    attempts = UPLOAD_RETRY_ATTEMPTS if reset else 1
-    result = _run_upload_cmd(cmd, resolved_port, attempts)
-    if result.returncode != 0:
-        raise typer.Exit(code=result.returncode)
+    try:
+        with _raw_repl_session(resolved_port, command_label) as transport:
+            if resolved_path.is_dir():
+                transport.put_dir(resolved_path, ":", on_file=_print_upload_file)
+            else:
+                transport.put_file(
+                    resolved_path, f":{resolved_path.name}", on_start=_print_upload_file
+                )
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
 
-    save_config(port=port, baud=baud, path=path)
-    print(f"\nUploaded {resolved_path} -> {resolved_port}")
+
+def _print_upload_file(
+    local: Path, remote: str, index: int | None = None, total: int | None = None
+) -> None:
+    prefix = f"[{index}/{total}] " if index is not None else ""
+    print(f"{prefix}{local} -> {remote}")
 
 
 @fleet_app.command("push")
@@ -590,7 +628,7 @@ def fleet_push(
 
 
 @app.command()
-def download(
+def backup(
     port: Optional[str] = typer.Option(
         None, "--port", "-p", help="Serial port of device (see 'tinker.py port')"
     ),
@@ -601,15 +639,7 @@ def download(
         "(relative or absolute path, default: ./backup)",
     ),
 ) -> None:
-    """Download the device's filesystem to a local folder."""
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
+    """Back up the device's filesystem to a local folder."""
     # Resolution order: CLI flag > .microweaver > hardcoded default.
     config = load_config()
     resolved_port = port or config.get("port")
@@ -619,35 +649,45 @@ def download(
         resolved_port = prompt_for_port()
         port = resolved_port
 
-    # mpremote's CLI hardcodes 115200 baud (no override flag exists upstream
-    # as of 1.28.0); --baud is accepted for interface parity but has no
-    # effect on the actual transfer today.
+    # DeviceTransport always runs at 115200 baud; --baud is accepted for
+    # interface/config-file compatibility but has no effect on the transfer.
     if resolved_baud != 115200:
         print(
-            f"NOTE: mpremote ignores --baud (requested {resolved_baud}), "
+            f"NOTE: backup ignores --baud (requested {resolved_baud}), "
             "connection always runs at 115200.",
             file=sys.stderr,
         )
 
     path.mkdir(parents=True, exist_ok=True)
 
-    # mpremote's fs cp has no include/exclude filter, so if the destination
-    # is (or contains) the project root, guard our own config file from
-    # being clobbered by whatever the copy pulls in.
+    # get_dir has no include/exclude filter, so if the destination is (or
+    # contains) the project root, guard our own config file from being
+    # clobbered by whatever the backup pulls in.
     guard_path = path / CONFIG_PATH.name
     guard_backup = guard_path.read_bytes() if guard_path.exists() else None
 
-    cmd = ["mpremote", "connect", resolved_port, "fs", "cp", "-r", ":.", str(path)]
-    result = _run_mpremote_cmd(cmd, resolved_port)
-
-    if guard_backup is not None:
-        guard_path.write_bytes(guard_backup)
-
-    if result.returncode != 0:
-        raise typer.Exit(code=result.returncode)
+    try:
+        with _raw_repl_session(resolved_port, "backup") as transport:
+            transport.get_dir(":", path, on_file=_print_download_file)
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
+    finally:
+        if guard_backup is not None:
+            guard_path.write_bytes(guard_backup)
 
     save_config(port=port, baud=baud)
-    print(f"\nDownloaded {resolved_port} -> {path}")
+    print(f"\nBacked up {resolved_port} -> {path}")
+
+
+def _print_download_file(
+    remote: str, local: Path, index: int | None = None, total: int | None = None
+) -> None:
+    prefix = f"[{index}/{total}] " if index is not None else ""
+    print(f"{prefix}{remote} -> {local}")
 
 
 PROVISION_FIELDS = [
@@ -683,12 +723,26 @@ def _prompt_missing_fields(given: dict, defaults: dict) -> None:
     for key, label, fallback, secret in PROVISION_FIELDS:
         if given[key] is not None:
             continue
-        given[key] = typer.prompt(
-            label,
-            default=defaults.get(key, fallback),
-            type=int if isinstance(fallback, int) else str,
-            hide_input=secret,
-        )
+        default_value = defaults.get(key, fallback)
+        if secret and default_value:
+            # An existing secret must never be echoed - not even as the
+            # prompt's own [default] hint - so show a placeholder and only
+            # reveal the real value if the user leaves the line blank.
+            typed = typer.prompt(
+                f"{label} [unchanged]",
+                default="",
+                type=str,
+                hide_input=True,
+                show_default=False,
+            )
+            given[key] = default_value if typed == "" else typed
+        else:
+            given[key] = typer.prompt(
+                label,
+                default=default_value,
+                type=int if isinstance(fallback, int) else str,
+                hide_input=secret,
+            )
 
 
 def _require_tty_for_missing(missing: list) -> None:
@@ -719,16 +773,8 @@ def provision(
     Bench/headless alternative to the SoftAP captive-portal setup flow: no
     phone or laptop needs to join the device's access point, since settings
     are entered locally and pushed over the same serial connection used by
-    upload/download.
+    deploy/backup.
     """
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
     # Resolution order: CLI flag > .microweaver > hardcoded default.
     config = load_config()
     resolved_port = port or config.get("port")
@@ -738,12 +784,11 @@ def provision(
         resolved_port = prompt_for_port()
         port = resolved_port
 
-    # mpremote's CLI hardcodes 115200 baud (no override flag exists upstream
-    # as of 1.28.0); --baud is accepted for interface parity but has no
-    # effect on the actual transfer today.
+    # DeviceTransport always runs at 115200 baud; --baud is accepted for
+    # interface/config-file compatibility but has no effect on the transfer.
     if resolved_baud != 115200:
         print(
-            f"NOTE: mpremote ignores --baud (requested {resolved_baud}), "
+            f"NOTE: provision ignores --baud (requested {resolved_baud}), "
             "connection always runs at 115200.",
             file=sys.stderr,
         )
@@ -776,18 +821,15 @@ def provision(
         print(f"ERROR: {exc}", file=sys.stderr)
         raise typer.Exit(code=1)
 
-    cmd = [
-        "mpremote",
-        "connect",
-        resolved_port,
-        "fs",
-        "cp",
-        str(config_path),
-        ":device_config.json",
-    ]
-    result = _run_mpremote_cmd(cmd, resolved_port)
-    if result.returncode != 0:
-        raise typer.Exit(code=result.returncode)
+    try:
+        with _raw_repl_session(resolved_port, "provision") as transport:
+            transport.put_file(config_path, ":device_config.json")
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
 
     save_config(port=port, baud=baud)
     print(f"\nProvisioned {resolved_port} with {config_path.name}")
@@ -819,27 +861,27 @@ def _scan_mtimes(paths: list) -> dict:
     return snapshot
 
 
-def _rebuild_and_upload(
+def _rebuild_and_deploy(
     port: Optional[str],
     baud: Optional[int],
     reset: bool,
     micropython: str,
     march: str,
 ) -> None:
-    """Run build() then upload() for watch(), skipping upload if the build failed."""
+    """Run build() then deploy() for watch(), skipping deploy if the build failed."""
     print("\nChange detected, rebuilding...")
     try:
         build(micropython=micropython, march=march, no_clean=False)
     except typer.Exit as exc:
         if exc.exit_code:
-            print("Build failed, skipping upload.", file=sys.stderr)
+            print("Build failed, skipping deploy.", file=sys.stderr)
             return
 
     try:
-        upload(port=port, baud=baud, reset=reset, path=None)
+        deploy(port=port, baud=baud, reset=reset, path=None)
     except typer.Exit as exc:
         if exc.exit_code:
-            print("Upload failed.", file=sys.stderr)
+            print("Deploy failed.", file=sys.stderr)
 
 
 @app.command()
@@ -849,7 +891,7 @@ def watch(
     ),
     baud: Optional[int] = typer.Option(None, "--baud", "-b", help="Baud rate"),
     reset: bool = typer.Option(
-        False, "--reset", help="Hard-reset the device before each upload"
+        False, "--reset", help="Hard-reset the device before each deploy"
     ),
     micropython: str = typer.Option("1.28", help="Target MicroPython version"),
     march: str = typer.Option(
@@ -859,15 +901,7 @@ def watch(
         1.0, "--interval", help="Polling interval in seconds"
     ),
 ) -> None:
-    """Watch app/, config/, and root source files; rebuild + upload on change."""
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
+    """Watch app/, config/, and root source files; rebuild + deploy on change."""
     watched = _watched_files()
     if not watched:
         print("ERROR: no source files found to watch.", file=sys.stderr)
@@ -886,7 +920,7 @@ def watch(
             if current == snapshot:
                 continue
             snapshot = current
-            _rebuild_and_upload(port, baud, reset, micropython, march)
+            _rebuild_and_deploy(port, baud, reset, micropython, march)
     except KeyboardInterrupt:
         print("\nStopped watching.")
 
@@ -907,7 +941,7 @@ def config_set(
         None, "--port", "-p", help="Default serial port"
     ),
     baud: Optional[int] = typer.Option(None, "--baud", "-b", help="Default baud rate"),
-    path: Optional[Path] = typer.Option(None, "--path", help="Default upload path"),
+    path: Optional[Path] = typer.Option(None, "--path", help="Default deploy path"),
 ) -> None:
     """Set default port/baud/path in .microweaver."""
     if port is None and baud is None and path is None:
@@ -946,26 +980,6 @@ def device_reset(
 
     hard_reset(resolved_port)
     print(f"Reset {resolved_port}")
-
-
-def _mpremote_field(resolved_port: str, script: str) -> str:
-    """Run `script` on-device via `mpremote exec` and return its last output line.
-
-    Used for opportunistic `device info` rows: any print output before the
-    final line (e.g. a service's own startup logging) is discarded.
-    """
-    try:
-        result = subprocess.run(  # nosec B603 B607
-            ["mpremote", "connect", resolved_port, "exec", script],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0:
-            return result.stdout.strip().splitlines()[-1]
-        return "unavailable (device unresponsive)"
-    except subprocess.TimeoutExpired:
-        return "unavailable (timed out, device may be busy)"
 
 
 @device_app.command("info")
@@ -1012,23 +1026,18 @@ def device_info(
     finally:
         esp._port.close()
 
-    if shutil.which("mpremote") is not None:
-        rows.append(
-            (
-                "MicroPython",
-                _mpremote_field(resolved_port, "import os; print(os.uname())"),
+    try:
+        with _raw_repl_session(resolved_port, "device info") as transport:
+            uname = transport.exec("import os; print(os.uname())")
+            reset_reason = transport.exec(
+                "from app.services.reset import ResetService; "
+                "print(ResetService().read())"
             )
-        )
-        rows.append(
-            (
-                "Reset Reason",
-                _mpremote_field(
-                    resolved_port,
-                    "from app.services.reset import ResetService; "
-                    "print(ResetService().read())",
-                ),
-            )
-        )
+        rows.append(("MicroPython", uname.strip()))
+        rows.append(("Reset Reason", reset_reason.strip()))
+    except (RawReplEntryError, DeviceExecError):
+        rows.append(("MicroPython", "unavailable (device unresponsive)"))
+        rows.append(("Reset Reason", "unavailable (device unresponsive)"))
 
     if not rows:
         print("No device details could be read.")
@@ -1050,14 +1059,6 @@ def device_health(
     MQTT subscriber is needed to see the current health snapshot. Metrics
     reflect this fresh instance, not the running loop's accumulated counters.
     """
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
     config = load_config()
     resolved_port = port or config.get("port")
     if resolved_port is None:
@@ -1078,10 +1079,19 @@ def device_health(
         "health.poll(); "
         "print(json.dumps(health.report()))"
     )
-    raw = _mpremote_field(resolved_port, script)
-    if raw.startswith("unavailable"):
-        print(f"ERROR: {raw}", file=sys.stderr)
-        raise typer.Exit(code=1)
+    try:
+        with _raw_repl_session(resolved_port, "device health") as transport:
+            output = transport.exec(script)
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
+
+    # Any startup print (e.g. LogService) before the final JSON line is
+    # discarded, matching the previous mpremote-exec-based behavior.
+    raw = output.strip().splitlines()[-1] if output.strip() else ""
 
     try:
         report = json.loads(raw)
@@ -1110,6 +1120,71 @@ def device_health(
     print_table(["Field", "Value"], rows)
 
 
+def _enter_raw_repl_with_retries(
+    resolved_port: str, command_label: str
+) -> DeviceTransport:
+    """Open a DeviceTransport and enter raw REPL, retrying the handshake only.
+
+    Enters raw REPL with soft_reset=False: `interrupt()` alone (ctrl-C)
+    already lands a running device at a clean idle prompt, so a read-only
+    command has no reason to also reboot it. This matters beyond style -
+    on firmware whose `main.py` runs an intentionally infinite loop (this
+    project's own `PublishService.run()`), a soft-reset (ctrl-D) reboots
+    straight back into that loop, which never returns control to print
+    the second raw-REPL banner a soft-reset entry waits for, so the
+    handshake hangs until timeout every time, not just intermittently.
+
+    Retried in case opening the serial port itself triggers a board
+    auto-reset (DTR toggling on connect, common on ESP32 dev boards),
+    racing the raw-REPL handshake against that reboot - the same race
+    `deploy --reset` already retries around.
+    """
+    last_error: RawReplEntryError | None = None
+    for attempt in range(1, UPLOAD_RETRY_ATTEMPTS + 1):
+        if attempt > 1:
+            print(
+                f"NOTE: {command_label} failed (raw-REPL race), retrying "
+                f"({attempt}/{UPLOAD_RETRY_ATTEMPTS})...",
+                file=sys.stderr,
+            )
+            time.sleep(UPLOAD_RESET_SETTLE_SECONDS * (attempt - 1))
+        transport = DeviceTransport(resolved_port)
+        try:
+            transport.connect()
+            transport.interrupt()
+            transport.enter_raw_repl(soft_reset=False)
+            return transport
+        except RawReplEntryError as exc:
+            transport.close()
+            last_error = exc
+    raise last_error
+
+
+@contextmanager
+def _raw_repl_session(resolved_port: str, command_label: str):
+    """Yield a DeviceTransport already in raw REPL; always exits+closes after."""
+    transport = _enter_raw_repl_with_retries(resolved_port, command_label)
+    try:
+        yield transport
+    finally:
+        transport.exit_raw_repl()
+        transport.close()
+
+
+def _print_raw_repl_failure(resolved_port: str) -> None:
+    print(
+        f"ERROR: could not enter raw REPL on {resolved_port} after "
+        f"{UPLOAD_RETRY_ATTEMPTS} attempts. Firmware may be stuck or "
+        "the board may still be rebooting.",
+        file=sys.stderr,
+    )
+    print(
+        f"Retry with 'python tinker.py device reset --port {resolved_port}' "
+        "and try again.",
+        file=sys.stderr,
+    )
+
+
 @device_app.command("ls")
 def device_ls(
     port: Optional[str] = typer.Option(
@@ -1118,23 +1193,23 @@ def device_ls(
     path: str = typer.Argument(":", help="Device path to list (default: root)"),
 ) -> None:
     """List files and folders on the device."""
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
     config = load_config()
     resolved_port = port or config.get("port")
     if resolved_port is None:
         resolved_port = prompt_for_port()
 
-    cmd = ["mpremote", "connect", resolved_port, "fs", "ls", path]
-    result = _run_mpremote_cmd(cmd, resolved_port)
-    if result.returncode != 0:
-        raise typer.Exit(code=result.returncode)
+    try:
+        with _raw_repl_session(resolved_port, "device ls") as transport:
+            entries = transport.ls(path)
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
+
+    for name, size, is_dir in entries:
+        print("{:12} {}{}".format(size, name, "/" if is_dir else ""))
 
 
 @device_app.command("test-adapter")
@@ -1151,14 +1226,6 @@ def device_test_adapter(
     ),
 ) -> None:
     """Run one adapter's setup()/read()/deinit() cycle on-device."""
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
     module_path, _, class_name = module.rpartition(".")
     if not module_path:
         print(
@@ -1184,10 +1251,17 @@ def device_test_adapter(
         "    adapter.deinit()\n"
     )
 
-    cmd = ["mpremote", "connect", resolved_port, "exec", script]
-    result = _run_mpremote_cmd(cmd, resolved_port)
-    if result.returncode != 0:
-        raise typer.Exit(code=result.returncode)
+    try:
+        with _raw_repl_session(resolved_port, "device test-adapter") as transport:
+            output = transport.exec(script)
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
+
+    print(output, end="")
 
 
 @device_app.command("repl")
@@ -1282,28 +1356,71 @@ def device_tree(
     ),
 ) -> None:
     """Show a tree view of files and folders on the device."""
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
     config = load_config()
     resolved_port = port or config.get("port")
     if resolved_port is None:
         resolved_port = prompt_for_port()
 
-    cmd = ["mpremote", "connect", resolved_port, "fs"]
-    if size:
-        cmd.append("--size")
-    if human:
-        cmd.append("--human")
-    cmd += ["tree", path]
-    result = _run_mpremote_cmd(cmd, resolved_port)
-    if result.returncode != 0:
-        raise typer.Exit(code=result.returncode)
+    remote_path = path[1:] if path.startswith(":") else path
+    remote_path = remote_path or "/"
+
+    try:
+        with _raw_repl_session(resolved_port, "device tree") as transport:
+            print(f":{remote_path}")
+            _print_tree(transport, remote_path, size=size, human=human)
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
+
+
+_SIZE_UNIT_THRESHOLDS = (
+    (1024**4, "T"),
+    (1024**3, "G"),
+    (1024**2, "M"),
+    (1024, "K"),
+)
+
+
+def _human_size(size: int, decimals: int = 1) -> str:
+    for threshold, unit in _SIZE_UNIT_THRESHOLDS:
+        if size >= threshold:
+            return f"{size / threshold:.{decimals}f}{unit}"
+    return str(size)
+
+
+def _print_tree(
+    transport: DeviceTransport,
+    path: str,
+    *,
+    size: bool,
+    human: bool,
+    prefix: str = "",
+) -> None:
+    """Recursively print a tree, walking one `DeviceTransport.ls()` call per dir.
+
+    There's no raw-REPL primitive for a recursive listing, so this walks
+    directories via repeated `ls()` calls and formats the output itself
+    (connectors, size columns) on top of the same `ls()` `device ls` uses.
+    """
+    entries = transport.ls(path)
+    for i, (name, entry_size, is_dir) in enumerate(entries):
+        connector = "└── " if i == len(entries) - 1 else "├── "
+        size_str = ""
+        if entry_size > 0 or not is_dir:
+            if size:
+                size_str = f"[{entry_size:>9}]  "
+            elif human:
+                size_str = f"[{_human_size(entry_size):>6}]  "
+        print(f"{prefix}{connector}{size_str}{name}")
+        if is_dir:
+            child_path = path.rstrip("/") + "/" + name
+            next_prefix = prefix + ("    " if i == len(entries) - 1 else "│   ")
+            _print_tree(
+                transport, child_path, size=size, human=human, prefix=next_prefix
+            )
 
 
 @device_app.command("rm")
@@ -1323,30 +1440,25 @@ def device_rm(
     ),
 ) -> None:
     """Remove a file or directory on the device."""
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
     config = load_config()
     resolved_port = port or config.get("port")
     if resolved_port is None:
         resolved_port = prompt_for_port()
 
-    cmd = ["mpremote", "connect", resolved_port, "fs"]
-    if recursive:
-        cmd.append("--recursive")
-        cmd += ["rm", path]
-    elif dir:
-        cmd += ["rmdir", path]
-    else:
-        cmd += ["rm", path]
-    result = _run_mpremote_cmd(cmd, resolved_port)
-    if result.returncode != 0:
-        raise typer.Exit(code=result.returncode)
+    try:
+        with _raw_repl_session(resolved_port, "device rm") as transport:
+            if recursive:
+                transport.rm_recursive(path)
+            elif dir:
+                transport.rmdir(path)
+            else:
+                transport.rm(path)
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
 
 
 @device_app.command("mkdir")
@@ -1356,24 +1468,21 @@ def device_mkdir(
     ),
     path: str = typer.Argument(..., help="Device path to create"),
 ) -> None:
-    """Create a directory on the device."""
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
+    """Create a directory on the device. A no-op if it already exists."""
     config = load_config()
     resolved_port = port or config.get("port")
     if resolved_port is None:
         resolved_port = prompt_for_port()
 
-    cmd = ["mpremote", "connect", resolved_port, "fs", "mkdir", path]
-    result = _run_mpremote_cmd(cmd, resolved_port)
-    if result.returncode != 0:
-        raise typer.Exit(code=result.returncode)
+    try:
+        with _raw_repl_session(resolved_port, "device mkdir") as transport:
+            transport.mkdir(path)
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
 
 
 @app.command(name="port")

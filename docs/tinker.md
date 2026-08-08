@@ -1,6 +1,6 @@
 # `tinker.py` CLI Reference
 
-`tinker.py` builds, uploads, downloads, and manages firmware for ESP32 (and other MicroPython-supported) devices. It is a [Typer](https://typer.tiangolo.com/) CLI built on top of [`esptool`](https://github.com/espressif/esptool) (chip-level access) and [`mpremote`](https://github.com/micropython/micropython/tree/master/tools/mpremote) (filesystem/REPL access over serial).
+`tinker.py` builds, deploys, backs up, and manages firmware for ESP32 (and other MicroPython-supported) devices. It is a [Typer](https://typer.tiangolo.com/) CLI built on top of [`esptool`](https://github.com/espressif/esptool) (chip-level access) and [`mpremote`](https://github.com/micropython/micropython/tree/master/tools/mpremote) (filesystem/REPL access over serial).
 
 - [Prerequisites](#prerequisites)
 - [Global concepts](#global-concepts)
@@ -10,8 +10,9 @@
   - [Port auto-detection](#port-auto-detection)
 - [Command reference](#command-reference)
   - [`build`](#build)
-  - [`upload`](#upload)
-  - [`download`](#download)
+  - [`deploy`](#deploy)
+  - [`backup`](#backup)
+  - [`restore`](#restore)
   - [`watch`](#watch)
   - [`port`](#port)
   - [`config show`](#config-show)
@@ -29,10 +30,10 @@
 | Tool | Required for | Install |
 |---|---|---|
 | `mpy-cross-multi` | `build` | bundled with the project's build deps |
-| `mpremote` | `upload`, `download`, `device info` (firmware read), `device ls`, `device tree`, `device test-adapter` | `pip install mpremote` |
+| `mpremote` | `fleet push`, `device repl`, `device logs`/`monitor` | `pip install mpremote` |
 | `esptool` (Python API) | `device reset`, `device info` (chip read) | installed as a project dependency, no separate CLI install needed |
 
-`upload`, `download`, `device ls`, `device tree`, and `device test-adapter` check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`.
+The commands above check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`. `deploy`, `restore`, `watch`, `backup`, `provision`, `device ls`, `device tree`, `device info` (firmware read), `device health`, `device rm`, `device mkdir`, and `device test-adapter` talk to the device directly over a raw-REPL serial connection ([`DeviceTransport`](../device_transport.py)) (`watch` via `deploy`, `restore` via the same shared deploy path) and do not require `mpremote` on `PATH`.
 
 ## Global concepts
 
@@ -60,7 +61,7 @@ If stdin isn't a TTY (e.g. running in CI) and no port is resolvable, the command
 
 ### The `.microweaver` config file
 
-An INI file at the project root, written by `config set` and updated automatically by `upload`/`download` after a successful run:
+An INI file at the project root, written by `config set` and updated automatically by `deploy`/`backup` after a successful run:
 
 ```ini
 [default]
@@ -112,52 +113,50 @@ Exits with code `1` and a summary if any file fails to compile.
 
 ---
 
-### `upload`
+### `deploy`
 
-Upload compiled firmware (or any local file/folder) to a device over serial, via `mpremote fs cp -r`.
+Deploy compiled firmware (or any local file/folder) to a device over serial, over a direct raw-REPL connection (does not require `mpremote`). Prints each file as it's sent (`[i/N] local -> remote`).
 
 ```shell
-python tinker.py upload [OPTIONS] [PATH]
+python tinker.py deploy [OPTIONS] [PATH]
 ```
 
 | Argument/Option | Default | Description |
 |---|---|---|
-| `PATH` | `./dist` | Local file or folder to upload |
+| `PATH` | `./dist` | Local file or folder to deploy |
 | `--port`, `-p` | resolved (see [above](#config-resolution-order)) | Serial port |
-| `--baud`, `-b` | `115200` | Baud rate (accepted for parity; `mpremote` ignores it — see note above) |
-| `--reset` | off | Hard-reset the device via `esptool` before uploading |
-| `--resume` | off | Recovery-mode upload: reuse an already-idle interpreter session instead of letting `mpremote` soft-reset first |
+| `--baud`, `-b` | `115200` | Baud rate (accepted for parity; the transfer always runs at 115200 — see note above) |
+| `--reset` | off | Hard-reset the device via `esptool` before deploying |
+
+Raw-REPL entry never soft-resets and always retries on a handshake race (same as [`device ls`](#device-ls)), so there is no longer a separate recovery flag - a plain `deploy` (no `--reset`) already does what `--resume` used to.
 
 Examples:
 
 ```shell
-# Build then upload the default dist/ output, auto-detecting the port
+# Build then deploy the default dist/ output, auto-detecting the port
 python tinker.py build
-python tinker.py upload
+python tinker.py deploy
 
-# Upload to a specific port
-python tinker.py upload --port /dev/tty.usbserial-0001
+# Deploy to a specific port
+python tinker.py deploy --port /dev/tty.usbserial-0001
 
-# Device stuck / mpremote can't enter raw REPL — hard-reset first
-python tinker.py upload --reset
+# Device stuck / raw REPL entry exhausts its retries — hard-reset first
+python tinker.py deploy --reset
 
-# Recovery path: after you've already interrupted to a stable >>> prompt
-python tinker.py upload --resume
-
-# Upload a single file instead of the whole dist/ folder
-python tinker.py upload dist/main.mpy
+# Deploy a single file instead of the whole dist/ folder
+python tinker.py deploy dist/main.mpy
 ```
 
 On success, the resolved `port`/`baud`/`path` are saved to `.microweaver` as new defaults.
 
 ---
 
-### `download`
+### `backup`
 
-Download the device's entire filesystem to a local folder via `mpremote fs cp -r :. <path>`.
+Back up the device's entire filesystem to a local folder over a direct raw-REPL serial connection (does not require `mpremote`). Prints each file as it's received (`[i/N] remote -> local`).
 
 ```shell
-python tinker.py download [OPTIONS] [PATH]
+python tinker.py backup [OPTIONS] [PATH]
 ```
 
 | Argument/Option | Default | Description |
@@ -170,19 +169,48 @@ Examples:
 
 ```shell
 # Back up the device filesystem to ./backup
-python tinker.py download
+python tinker.py backup
 
 # Back up to a named folder, e.g. before a risky firmware change
-python tinker.py download ./backup-2026-08-05
+python tinker.py backup ./backup-2026-08-05
 ```
 
 If the destination folder is (or contains) the project root, `tinker.py` guards its own `.microweaver` file from being overwritten by the copy and restores it afterward.
 
 ---
 
+### `restore`
+
+Deploy a previous `backup` folder's contents back onto the device - the reverse of `backup`, using the same underlying transfer as `deploy` (raw-REPL, no `mpremote` required, retries on a handshake race).
+
+```shell
+python tinker.py restore [OPTIONS] [PATH]
+```
+
+| Argument/Option | Default | Description |
+|---|---|---|
+| `PATH` | `./backup` | Local backup folder to restore |
+| `--port`, `-p` | resolved | Serial port |
+| `--baud`, `-b` | `115200` | Baud rate (see note above — no effect) |
+| `--reset` | off | Hard-reset the device before restoring |
+
+Examples:
+
+```shell
+# Restore the default ./backup folder back onto the device
+python tinker.py restore
+
+# Restore a specific, named backup
+python tinker.py restore ./backup-2026-08-05
+```
+
+Unlike `deploy`, `restore` never reads or writes the `.microweaver` config file's `path` default - only `port`/`baud` are persisted - so restoring from a backup folder can't silently change what a plain `deploy` uploads next time.
+
+---
+
 ### `watch`
 
-Poll `app/`, `config/`, and the root source files (`_boot.py`, `main.py`, `boot.py`, `device_config.json`) for changes, and automatically re-run `build` + `upload` whenever one changes. Stop with `Ctrl+C`.
+Poll `app/`, `config/`, and the root source files (`_boot.py`, `main.py`, `boot.py`, `device_config.json`) for changes, and automatically re-run `build` + `deploy` whenever one changes. Stop with `Ctrl+C`.
 
 ```shell
 python tinker.py watch [OPTIONS]
@@ -192,7 +220,7 @@ python tinker.py watch [OPTIONS]
 |---|---|---|
 | `--port`, `-p` | resolved (see [above](#config-resolution-order)) | Serial port |
 | `--baud`, `-b` | `115200` | Baud rate (accepted for parity; see note above) |
-| `--reset` | off | Hard-reset the device before each upload |
+| `--reset` | off | Hard-reset the device before each deploy |
 | `--micropython` | `1.28` | Target MicroPython version, passed to each rebuild |
 | `--march` | `xtensawin` | Target architecture, passed to each rebuild |
 | `--interval` | `1.0` | Polling interval in seconds |
@@ -200,14 +228,14 @@ python tinker.py watch [OPTIONS]
 Examples:
 
 ```shell
-# Watch and auto rebuild+upload on save, auto-detecting the port
+# Watch and auto rebuild+deploy on save, auto-detecting the port
 python tinker.py watch
 
-# Watch a specific device, resetting it before each upload
+# Watch a specific device, resetting it before each deploy
 python tinker.py watch --port /dev/tty.usbserial-0001 --reset
 ```
 
-A failed build skips that upload but keeps watching; a failed upload is reported but also keeps watching. Uses the same port/baud resolution as `upload` on every cycle.
+A failed build skips that deploy but keeps watching; a failed deploy is reported but also keeps watching. Uses the same port/baud resolution as `deploy` on every cycle.
 
 ---
 
@@ -253,7 +281,7 @@ python tinker.py config set [OPTIONS]
 |---|---|
 | `--port`, `-p` | Default serial port |
 | `--baud`, `-b` | Default baud rate |
-| `--path` | Default upload path |
+| `--path` | Default deploy path |
 
 Examples:
 
@@ -295,7 +323,7 @@ This bypasses the REPL entirely — unlike `mpremote reset` (which is just `mach
 
 ### `device info`
 
-Show device hardware (chip/flash/MAC, read via `esptool`) and firmware (MicroPython `os.uname()` and reset/boot reason, read via `mpremote`) details.
+Show device hardware (chip/flash/MAC, read via `esptool`) and firmware (MicroPython `os.uname()` and reset/boot reason, read over a raw-REPL serial connection) details.
 
 ```shell
 python tinker.py device info [OPTIONS]
@@ -326,13 +354,13 @@ MicroPython          (sysname='esp32', nodename='esp32', ...)
 Reset Reason         power_on
 ```
 
-Chip/flash/MAC are read at the ROM bootloader level (same mechanism as `device reset`), so this works even if the firmware itself is unresponsive. The MicroPython and Reset Reason rows only appear if `mpremote` is installed and the firmware answers within 10 seconds; otherwise each reports `unavailable (device unresponsive)` or `unavailable (timed out, device may be busy)`. Reset Reason is read on-device via `app.services.reset.ResetService` (`power_on`, `software`, `watchdog`, `deep_sleep`, `sdio`, `intrusion`, `external`, `brownout`, or `unknown`).
+Chip/flash/MAC are read at the ROM bootloader level (same mechanism as `device reset`), so this works even if the firmware itself is unresponsive. The MicroPython and Reset Reason rows are opportunistic: if raw-REPL entry or the on-device read fails (after retrying), both report `unavailable (device unresponsive)` instead of failing the whole command. Reset Reason is read on-device via `app.services.reset.ResetService` (`power_on`, `software`, `watchdog`, `deep_sleep`, `sdio`, `intrusion`, `external`, `brownout`, or `unknown`).
 
 ---
 
 ### `device ls`
 
-List files and folders on the device via `mpremote fs ls`.
+List files and folders on the device over a direct raw-REPL serial connection (does not require `mpremote`). Enters raw REPL without a soft reset - interrupting (ctrl-C) whatever is currently running already leaves the board at a clean idle prompt, so listing files has no reason to also reboot it (and, for firmware whose `main.py` runs forever, a soft reset would hang the handshake indefinitely). Opening the serial port can still trigger a board auto-reset on some ESP32 boards, racing the handshake against the reboot; on failure this retries up to `UPLOAD_RETRY_ATTEMPTS` times with the same linear backoff `deploy --reset` uses, before falling back to the `device reset` hint.
 
 ```shell
 python tinker.py device ls [OPTIONS] [PATH]
@@ -360,7 +388,7 @@ python tinker.py device ls --port /dev/tty.usbserial-0001 :config
 
 ### `device tree`
 
-Show a recursive tree view of files and folders on the device via `mpremote fs tree`.
+Show a recursive tree view of files and folders on the device over a direct raw-REPL serial connection (does not require `mpremote`). Walks the filesystem with repeated `DeviceTransport.ls()` calls in one raw-REPL session - `mpremote fs tree` has no raw-REPL equivalent to call directly, so the tree/connector formatting is reimplemented here to match. Same soft-reset-free raw-REPL entry and retry behavior as [`device ls`](#device-ls).
 
 ```shell
 python tinker.py device tree [OPTIONS] [PATH]
@@ -388,7 +416,7 @@ python tinker.py device tree --human :app
 
 ### `device test-adapter`
 
-Bench-test a single adapter against real hardware without deploying the full app. Runs the adapter's `setup()` / `read()` (if it has one) / `deinit()` cycle on-device via `mpremote exec` and prints the result — useful for verifying wiring/config before wiring the adapter into a `PublishService`/`SubscribeService` run. Requires the adapter's module to already be present on the device (via `upload`).
+Bench-test a single adapter against real hardware without deploying the full app. Runs the adapter's `setup()` / `read()` (if it has one) / `deinit()` cycle over a raw-REPL serial connection and prints the result — useful for verifying wiring/config before wiring the adapter into a `PublishService`/`SubscribeService` run. Requires the adapter's module to already be present on the device (via `deploy`).
 
 ```shell
 python tinker.py device test-adapter [OPTIONS] MODULE
@@ -419,7 +447,7 @@ python tinker.py device test-adapter --port /dev/tty.usbserial-0001 app.adapters
 python tinker.py port                          # find the port
 python tinker.py config set --port /dev/tty.usbserial-0001
 python tinker.py build
-python tinker.py upload
+python tinker.py deploy
 python tinker.py device info                    # sanity-check the flash
 ```
 
@@ -427,10 +455,10 @@ python tinker.py device info                    # sanity-check the flash
 
 ```shell
 python tinker.py build
-python tinker.py upload --reset                  # reset first if the board is unresponsive
+python tinker.py deploy --reset                  # reset first if the board is unresponsive
 python tinker.py device tree                     # confirm what actually landed on-device
 
-# or, to skip the manual build/upload cycle on every edit:
+# or, to skip the manual build/deploy cycle on every edit:
 python tinker.py watch --reset
 ```
 
@@ -445,10 +473,10 @@ python tinker.py device tree --port /dev/tty.usbserial-0001 --human
 **Backing up before a risky change:**
 
 ```shell
-python tinker.py download ./backup-before-experiment
-python tinker.py upload
+python tinker.py backup ./backup-before-experiment
+python tinker.py deploy
 # ...if it goes wrong:
-python tinker.py upload ./backup-before-experiment --reset
+python tinker.py restore ./backup-before-experiment --reset
 ```
 
 ## Troubleshooting
@@ -457,7 +485,8 @@ python tinker.py upload ./backup-before-experiment --reset
 |---|---|
 | `ERROR: 'mpremote' not found on PATH.` | `pip install mpremote` |
 | `ERROR: No serial ports found and none set in .microweaver.` | Connect the device, or run `tinker.py config set --port <port>` |
-| `mpremote fails with 'could not enter raw repl'` | Firmware likely stuck or still rebooting — retry with `upload --reset`, or recover to an idle `>>>` and then use `upload --resume` |
-| `NOTE: mpremote ignores --baud ...` | Expected — `mpremote`'s CLI hardcodes 115200; not a bug in `tinker.py` |
-| `device info` shows `MicroPython: unavailable` | `mpremote` not installed, or firmware busy/unresponsive within the 10s timeout |
+| `could not enter raw REPL` (deploy/restore/watch/backup/provision/device ls/tree/info/health/rm/mkdir/test-adapter) | Firmware likely stuck or still rebooting — already retried automatically; if it still fails, retry with `deploy --reset` or `device reset --port <port>` first |
+| `mpremote fails with 'could not enter raw repl'` (fleet push) | Firmware likely stuck or still rebooting — retry with `--reset`, or `device reset --port <port>` first |
+| `NOTE: mpremote ignores --baud ...` (fleet push only) | Expected — `mpremote`'s CLI hardcodes 115200; not a bug in `tinker.py` |
+| `device info` shows `MicroPython: unavailable` | Firmware busy/unresponsive after retrying — not related to `mpremote` being installed |
 | Wrong device picked automatically | Only happens when exactly one port is present; unplug other USB-serial adapters or pass `--port` explicitly |
