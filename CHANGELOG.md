@@ -35,15 +35,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the current health/metrics snapshot can be read without a full MQTT subscriber.
 
 ### Changed
-- `tinker.py device ls` and `device tree` now talk to the device directly over a
-  raw-REPL serial connection (`device_transport.py`'s new `DeviceTransport`) instead of
-  shelling out to the `mpremote` CLI, and no longer require `mpremote` on `PATH`. Output
-  and flags are unchanged; other `device`/`upload`/`download` commands still use
-  `mpremote`. Both enter raw REPL without a soft reset, since a soft reset on firmware
-  with a permanently-running `main.py` (like this project's `PublishService.run()`)
-  hangs the handshake waiting for a prompt that never returns; raw-REPL entry still
-  retries with the same linear backoff as `upload --reset` in case opening the serial
-  port itself races a board auto-reset.
+- `tinker.py device ls`, `device tree`, and `upload` now talk to the device directly
+  over a raw-REPL serial connection (`device_transport.py`'s new `DeviceTransport`)
+  instead of shelling out to the `mpremote` CLI, and no longer require `mpremote` on
+  `PATH`. `download`, `provision`, `watch`, `fleet push`, and the other `device`
+  subcommands still use `mpremote`. All three enter raw REPL without a soft reset, since
+  a soft reset on firmware with a permanently-running `main.py` (like this project's
+  `PublishService.run()`) hangs the handshake waiting for a prompt that never returns;
+  raw-REPL entry retries with the same linear backoff `upload --reset` used to reserve
+  for reset races, now applied on every attempt (previously a plain `upload` with no
+  `--reset` got exactly one try). `upload` also now prints each file as it's sent
+  (`[i/N] local -> remote`), and its recursive directory walk creates remote
+  subdirectories as it goes.
+
+### Removed
+- `tinker.py upload`'s `--resume` flag. It existed to skip mpremote's soft-reset step;
+  raw-REPL entry never soft-resets now, so every `upload` already does what `--resume`
+  used to - passing the old flag is a CLI error.
 
 ## [0.1.0] - 2026-08-08
 

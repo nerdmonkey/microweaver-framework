@@ -339,3 +339,143 @@ def test_read_until_sleeps_while_waiting_for_data(mocker):
 
     assert result == b""
     assert sleep_mock.call_count == 3
+
+
+# --------------------------------------------------------------------------
+# mkdir
+# --------------------------------------------------------------------------
+
+
+def test_mkdir_execs_idempotent_mkdir_script(mocker):
+    transport = make_device_transport(serial_double=FakeSerial())
+    exec_mock = mocker.patch.object(transport, "exec", return_value="")
+
+    transport.mkdir(":lib")
+
+    script = exec_mock.call_args[0][0]
+    assert "os.mkdir('lib')" in script
+    assert "e.args[0] != 17" in script
+
+
+def test_mkdir_strips_leading_colon(mocker):
+    transport = make_device_transport(serial_double=FakeSerial())
+    exec_mock = mocker.patch.object(transport, "exec", return_value="")
+
+    transport.mkdir("/already/absolute")
+
+    assert "os.mkdir('/already/absolute')" in exec_mock.call_args[0][0]
+
+
+# --------------------------------------------------------------------------
+# put_file
+# --------------------------------------------------------------------------
+
+
+def test_put_file_writes_open_chunks_and_close(mocker, tmp_path):
+    local_file = tmp_path / "boot.py"
+    local_file.write_bytes(b"abcdefghij")  # 10 bytes, chunk_size=4 -> 3 chunks
+    transport = make_device_transport(serial_double=FakeSerial())
+    exec_mock = mocker.patch.object(transport, "exec", return_value="")
+
+    transport.put_file(local_file, ":boot.py", chunk_size=4)
+
+    calls = [call.args[0] for call in exec_mock.call_args_list]
+    assert calls[0] == "f = open('boot.py', 'wb')\nw = f.write"
+    assert calls[1] == "w(" + repr(b"abcd") + ")"
+    assert calls[2] == "w(" + repr(b"efgh") + ")"
+    assert calls[3] == "w(" + repr(b"ij") + ")"
+    assert calls[4] == "f.close()"
+
+
+def test_put_file_calls_on_start_before_writing(mocker, tmp_path):
+    local_file = tmp_path / "boot.py"
+    local_file.write_bytes(b"data")
+    transport = make_device_transport(serial_double=FakeSerial())
+    exec_mock = mocker.patch.object(transport, "exec", return_value="")
+    seen = []
+
+    transport.put_file(
+        local_file,
+        ":boot.py",
+        on_start=lambda local, remote: seen.append((local, remote)),
+    )
+
+    assert seen == [(local_file, "boot.py")]
+    assert (
+        exec_mock.call_args_list[0].args[0] == "f = open('boot.py', 'wb')\nw = f.write"
+    )
+
+
+def test_put_file_empty_file_writes_no_chunks(mocker, tmp_path):
+    local_file = tmp_path / "empty.py"
+    local_file.write_bytes(b"")
+    transport = make_device_transport(serial_double=FakeSerial())
+    exec_mock = mocker.patch.object(transport, "exec", return_value="")
+
+    transport.put_file(local_file, ":empty.py")
+
+    calls = [call.args[0] for call in exec_mock.call_args_list]
+    assert calls == ["f = open('empty.py', 'wb')\nw = f.write", "f.close()"]
+
+
+# --------------------------------------------------------------------------
+# put_dir
+# --------------------------------------------------------------------------
+
+
+def test_put_dir_uploads_nested_tree_without_wrapping_folder(mocker, tmp_path):
+    (tmp_path / "boot.py").write_bytes(b"boot")
+    lib_dir = tmp_path / "lib"
+    lib_dir.mkdir()
+    (lib_dir / "foo.py").write_bytes(b"foo")
+
+    transport = make_device_transport(serial_double=FakeSerial())
+    mkdir_mock = mocker.patch.object(transport, "mkdir")
+    put_file_mock = mocker.patch.object(transport, "put_file")
+
+    transport.put_dir(tmp_path, ":")
+
+    mkdir_mock.assert_called_once_with("/lib")
+    put_file_calls = {
+        (str(call.args[0]), call.args[1]) for call in put_file_mock.call_args_list
+    }
+    assert put_file_calls == {
+        (str(tmp_path / "boot.py"), "/boot.py"),
+        (str(lib_dir / "foo.py"), "/lib/foo.py"),
+    }
+
+
+def test_put_dir_flat_directory_creates_no_subdirs(mocker, tmp_path):
+    (tmp_path / "a.py").write_bytes(b"a")
+    (tmp_path / "b.py").write_bytes(b"b")
+
+    transport = make_device_transport(serial_double=FakeSerial())
+    mkdir_mock = mocker.patch.object(transport, "mkdir")
+    put_file_mock = mocker.patch.object(transport, "put_file")
+
+    transport.put_dir(tmp_path, ":")
+
+    mkdir_mock.assert_not_called()
+    assert put_file_mock.call_count == 2
+
+
+def test_put_dir_calls_on_file_with_index_and_total(mocker, tmp_path):
+    (tmp_path / "a.py").write_bytes(b"a")
+    (tmp_path / "b.py").write_bytes(b"b")
+
+    transport = make_device_transport(serial_double=FakeSerial())
+    mocker.patch.object(transport, "put_file")
+    seen = []
+
+    transport.put_dir(
+        tmp_path,
+        ":",
+        on_file=lambda local, remote, index, total: seen.append(
+            (local.name, remote, index, total)
+        ),
+    )
+
+    assert seen == [
+        ("a.py", "/a.py", 1, 2),
+        ("b.py", "/b.py", 2, 2),
+    ]

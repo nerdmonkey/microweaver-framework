@@ -29,10 +29,10 @@
 | Tool | Required for | Install |
 |---|---|---|
 | `mpy-cross-multi` | `build` | bundled with the project's build deps |
-| `mpremote` | `upload`, `download`, `device info` (firmware read), `device test-adapter` | `pip install mpremote` |
+| `mpremote` | `download`, `provision`, `watch`, `fleet push`, `device info` (firmware read), `device health`, `device repl`, `device logs`/`monitor`, `device rm`, `device mkdir`, `device test-adapter` | `pip install mpremote` |
 | `esptool` (Python API) | `device reset`, `device info` (chip read) | installed as a project dependency, no separate CLI install needed |
 
-`upload`, `download`, and `device test-adapter` check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`. `device ls` and `device tree` talk to the device directly over a raw-REPL serial connection ([`DeviceTransport`](../device_transport.py)) and do not require `mpremote` on `PATH`.
+The commands above check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`. `upload`, `device ls`, and `device tree` talk to the device directly over a raw-REPL serial connection ([`DeviceTransport`](../device_transport.py)) and do not require `mpremote` on `PATH`.
 
 ## Global concepts
 
@@ -114,7 +114,7 @@ Exits with code `1` and a summary if any file fails to compile.
 
 ### `upload`
 
-Upload compiled firmware (or any local file/folder) to a device over serial, via `mpremote fs cp -r`.
+Upload compiled firmware (or any local file/folder) to a device over serial, over a direct raw-REPL connection (does not require `mpremote`). Prints each file as it's sent (`[i/N] local -> remote`).
 
 ```shell
 python tinker.py upload [OPTIONS] [PATH]
@@ -124,9 +124,10 @@ python tinker.py upload [OPTIONS] [PATH]
 |---|---|---|
 | `PATH` | `./dist` | Local file or folder to upload |
 | `--port`, `-p` | resolved (see [above](#config-resolution-order)) | Serial port |
-| `--baud`, `-b` | `115200` | Baud rate (accepted for parity; `mpremote` ignores it — see note above) |
+| `--baud`, `-b` | `115200` | Baud rate (accepted for parity; the transfer always runs at 115200 — see note above) |
 | `--reset` | off | Hard-reset the device via `esptool` before uploading |
-| `--resume` | off | Recovery-mode upload: reuse an already-idle interpreter session instead of letting `mpremote` soft-reset first |
+
+Raw-REPL entry never soft-resets and always retries on a handshake race (same as [`device ls`](#device-ls)), so there is no longer a separate recovery flag - a plain `upload` (no `--reset`) already does what `--resume` used to.
 
 Examples:
 
@@ -138,11 +139,8 @@ python tinker.py upload
 # Upload to a specific port
 python tinker.py upload --port /dev/tty.usbserial-0001
 
-# Device stuck / mpremote can't enter raw REPL — hard-reset first
+# Device stuck / raw REPL entry exhausts its retries — hard-reset first
 python tinker.py upload --reset
-
-# Recovery path: after you've already interrupted to a stable >>> prompt
-python tinker.py upload --resume
 
 # Upload a single file instead of the whole dist/ folder
 python tinker.py upload dist/main.mpy
@@ -457,7 +455,8 @@ python tinker.py upload ./backup-before-experiment --reset
 |---|---|
 | `ERROR: 'mpremote' not found on PATH.` | `pip install mpremote` |
 | `ERROR: No serial ports found and none set in .microweaver.` | Connect the device, or run `tinker.py config set --port <port>` |
-| `mpremote fails with 'could not enter raw repl'` | Firmware likely stuck or still rebooting — retry with `upload --reset`, or recover to an idle `>>>` and then use `upload --resume` |
+| `could not enter raw REPL` (upload/device ls/device tree) | Firmware likely stuck or still rebooting — already retried automatically; if it still fails, retry with `upload --reset` |
+| `mpremote fails with 'could not enter raw repl'` (fleet push/download/provision/test-adapter) | Firmware likely stuck or still rebooting — retry with `--reset` where supported, or `device reset --port <port>` first |
 | `NOTE: mpremote ignores --baud ...` | Expected — `mpremote`'s CLI hardcodes 115200; not a bug in `tinker.py` |
 | `device info` shows `MicroPython: unavailable` | `mpremote` not installed, or firmware busy/unresponsive within the 10s timeout |
 | Wrong device picked automatically | Only happens when exactly one port is present; unplug other USB-serial adapters or pass `--port` explicitly |

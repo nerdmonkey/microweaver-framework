@@ -281,12 +281,9 @@ def _run_mpremote_interactive(
     return result
 
 
-def _mpremote_connect_cmd(resolved_port: str, *, resume: bool = False) -> list[str]:
+def _mpremote_connect_cmd(resolved_port: str) -> list[str]:
     """Build an mpremote connect command prefix for this port."""
-    cmd = ["mpremote", "connect", resolved_port]
-    if resume:
-        cmd.append("resume")
-    return cmd
+    return ["mpremote", "connect", resolved_port]
 
 
 def compile_file(src: Path, dst: Path, mp_version: str, march: str) -> bool:
@@ -429,15 +426,7 @@ def upload(
         "--reset",
         help=(
             "Hard-reset the device before uploading. Use this if the device "
-            "is stuck (e.g. mpremote fails with 'could not enter raw repl')."
-        ),
-    ),
-    resume: bool = typer.Option(
-        False,
-        "--resume",
-        help=(
-            "Use an already-idle interpreter session instead of letting "
-            "mpremote soft-reset into raw REPL. Recovery-oriented upload path."
+            "is stuck (e.g. raw REPL entry fails after several retries)."
         ),
     ),
     path: Optional[Path] = typer.Argument(
@@ -445,14 +434,6 @@ def upload(
     ),
 ) -> None:
     """Upload compiled firmware to a device over serial."""
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
     # Resolution order: CLI flag > .microweaver > hardcoded default.
     config = load_config()
     resolved_port = port or config.get("port")
@@ -467,20 +448,11 @@ def upload(
         print(f"ERROR: {resolved_path} does not exist.", file=sys.stderr)
         raise typer.Exit(code=1)
 
-    if reset and resume:
-        print(
-            "ERROR: --reset and --resume are mutually exclusive. "
-            "Use --resume only after you already have the device at an idle >>>.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
-    # mpremote's CLI hardcodes 115200 baud (no override flag exists upstream
-    # as of 1.28.0); --baud is accepted for interface parity but has no
-    # effect on the actual transfer today.
+    # DeviceTransport always runs at 115200 baud; --baud is accepted for
+    # interface/config-file compatibility but has no effect on the transfer.
     if resolved_baud != 115200:
         print(
-            f"NOTE: mpremote ignores --baud (requested {resolved_baud}), "
+            f"NOTE: upload ignores --baud (requested {resolved_baud}), "
             "connection always runs at 115200.",
             file=sys.stderr,
         )
@@ -490,16 +462,30 @@ def upload(
         hard_reset(resolved_port)
         time.sleep(UPLOAD_RESET_SETTLE_SECONDS)
 
-    src = f"{resolved_path}/." if resolved_path.is_dir() else str(resolved_path)
-    cmd = _mpremote_connect_cmd(resolved_port, resume=resume)
-    cmd += ["fs", "cp", "-r", src, ":"]
-    attempts = UPLOAD_RETRY_ATTEMPTS if reset else 1
-    result = _run_upload_cmd(cmd, resolved_port, attempts)
-    if result.returncode != 0:
-        raise typer.Exit(code=result.returncode)
+    try:
+        with _raw_repl_session(resolved_port, "upload") as transport:
+            if resolved_path.is_dir():
+                transport.put_dir(resolved_path, ":", on_file=_print_upload_file)
+            else:
+                transport.put_file(
+                    resolved_path, f":{resolved_path.name}", on_start=_print_upload_file
+                )
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
 
     save_config(port=port, baud=baud, path=path)
     print(f"\nUploaded {resolved_path} -> {resolved_port}")
+
+
+def _print_upload_file(
+    local: Path, remote: str, index: int | None = None, total: int | None = None
+) -> None:
+    prefix = f"[{index}/{total}] " if index is not None else ""
+    print(f"{prefix}{local} -> {remote}")
 
 
 @fleet_app.command("push")
@@ -1394,10 +1380,9 @@ def _print_tree(
 ) -> None:
     """Recursively print a tree, walking one `DeviceTransport.ls()` call per dir.
 
-    mpremote's `fs tree` is CLI-only sugar with no raw-REPL equivalent to
-    port directly, so this reimplements its output format (connectors,
-    size columns) on top of the same `ls()` this module already uses for
-    `device ls`.
+    There's no raw-REPL primitive for a recursive listing, so this walks
+    directories via repeated `ls()` calls and formats the output itself
+    (connectors, size columns) on top of the same `ls()` `device ls` uses.
     """
     entries = transport.ls(path)
     for i, (name, entry_size, is_dir) in enumerate(entries):
