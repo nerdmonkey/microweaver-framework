@@ -31,6 +31,7 @@
     "mqtt_lwt_qos": 0,
     "mqtt_publish_retain": false,
     "mqtt_publish_qos": 0,
+    "mqtt_rejection_retry_seconds": 300,
     "watchdog_enabled": false,
     "watchdog_timeout_ms": 8000,
     "boot_loop_protection_enabled": false,

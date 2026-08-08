@@ -5,6 +5,7 @@ import pytest
 
 from app.services.error_handler import ErrorHandlerService
 from app.services.metrics import MetricsService
+from app.services.mqtt import MqttConnectionRejected
 from app.services.subscribe import SubscribeService, setting
 
 
@@ -68,6 +69,40 @@ def test_run_records_metrics_error_on_connection_lost(mocker):
         service.run()
 
     assert service.metrics_service.errors == 1
+
+
+def test_run_backs_off_and_reports_permanent_connection_rejection(mocker):
+    # A permanent CONNACK rejection (bad credentials, ACL denial, etc.)
+    # shouldn't be retried on the normal ~1s tick cadence - it needs a long
+    # cool-down and a distinct, loud log line instead of blending into the
+    # generic "connection_lost" noise.
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
+    mocker.patch("app.services.subscribe.setting.MQTT_REJECTION_RETRY_SECONDS", 300)
+    mocker.patch("app.services.subscribe.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_connection.connect.side_effect = [
+        MqttConnectionRejected(5, "not_authorized"),
+        KeyboardInterrupt("stop test"),
+    ]
+    mock_sleep = mocker.patch("time.sleep")
+
+    service = SubscribeService()
+    mocker.patch.object(service.log_service, "log")
+
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
+        service.run()
+
+    service.log_service.log.assert_called_once_with(
+        "mqtt_connection_rejected",
+        level="error",
+        error="MQTT connection rejected: not_authorized (rc=5)",
+        rc=5,
+        reason="not_authorized",
+        trace="MqttConnectionRejected: MQTT connection rejected: not_authorized (rc=5)",
+    )
+    assert service.metrics_service.errors == 1
+    mock_sleep.assert_called_once_with(300)
 
 
 def test_run_reconnects_through_repeated_drops(mocker):

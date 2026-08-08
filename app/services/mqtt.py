@@ -1,6 +1,28 @@
 import time
 
-from umqtt.simple import MQTTClient
+from umqtt.simple import MQTTClient, MQTTException
+
+# CONNACK return codes. rc=3 (server unavailable) is transient - the broker
+# itself is down/overloaded and may recover, so it gets the normal
+# exponential-backoff retry. rc=1/2/4/5 are permanent for a given
+# config/credentials - the broker has explicitly rejected this client and
+# retrying every few seconds will never succeed, only hammer the broker.
+PERMANENT_REJECTIONS = {
+    1: "unacceptable_protocol_version",
+    2: "client_identifier_rejected",
+    4: "bad_username_or_password",
+    5: "not_authorized",
+}
+TRANSIENT_REJECTIONS = {
+    3: "server_unavailable",
+}
+
+
+class MqttConnectionRejected(Exception):
+    def __init__(self, rc, reason):
+        self.rc = rc
+        self.reason = reason
+        super().__init__("MQTT connection rejected: {} (rc={})".format(reason, rc))
 
 
 class MqttConnection:
@@ -61,6 +83,13 @@ class MqttConnection:
                 qos=self.lwt_qos,
             )
 
+    @staticmethod
+    def _connack_rc(exc):
+        try:
+            return exc.args[0]
+        except (IndexError, TypeError):
+            return None
+
     def connect(self):
         if not self.wifi_service.is_connected():
             self.wifi_service.connect()
@@ -80,14 +109,29 @@ class MqttConnection:
                 self.client.connect()
                 print("Connected to MQTT Broker at", self.broker)
                 return self.client
+            except MQTTException as e:
+                rc = self._connack_rc(e)
+                if rc in PERMANENT_REJECTIONS:
+                    reason = PERMANENT_REJECTIONS[rc]
+                    print(
+                        "MQTT connection rejected:",
+                        reason,
+                        "(rc=%s)" % rc,
+                        "- not retrying, will report and back off",
+                    )
+                    raise MqttConnectionRejected(rc, reason) from e
+                reason = TRANSIENT_REJECTIONS.get(rc, "unknown_rc (%s)" % rc)
+                delay = self._retry_after_failure(reason, delay)
             except Exception as e:
-                print(
-                    "Failed to connect to MQTT broker:", e, "- retrying in", delay, "s"
-                )
-                time.sleep(delay)
-                delay = min(delay * 2, self.max_reconnect_delay_seconds)
-                if not self.wifi_service.is_connected():
-                    self.wifi_service.connect()
+                delay = self._retry_after_failure(e, delay)
+
+    def _retry_after_failure(self, reason, delay):
+        print("Failed to connect to MQTT broker:", reason, "- retrying in", delay, "s")
+        time.sleep(delay)
+        delay = min(delay * 2, self.max_reconnect_delay_seconds)
+        if not self.wifi_service.is_connected():
+            self.wifi_service.connect()
+        return delay
 
     def disconnect(self):
         if self.client:
