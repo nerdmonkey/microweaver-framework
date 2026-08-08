@@ -66,6 +66,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without `mpremote` installed. It only ever calls `build()` and `deploy()` internally,
   and `deploy` stopped needing `mpremote` earlier in this changeset - the check was
   stale and blocked `watch` even though it would have worked.
+- `tinker.py provision`'s interactive prompts no longer echo an existing WiFi/MQTT
+  password in plaintext as the prompt's `[default]` hint. `hide_input` only masked what
+  you typed, not the default value already sitting in `device_config.json`, so every
+  secret in that file was printed to the terminal (and scrollback) on every `provision`
+  run. Secret fields now show `[unchanged]` instead, and leaving the line blank keeps the
+  existing value.
 
 ### Removed
 - `tinker.py deploy`'s `--resume` flag (present when this command was still named

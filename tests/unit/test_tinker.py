@@ -1107,6 +1107,56 @@ def test_provision_interactive_prompts_fill_only_missing(tmp_path, mocker):
     assert written["mqtt_broker"] == "example-broker"
 
 
+def test_provision_masks_existing_secret_default(tmp_path, mocker):
+    # An existing device_config.json already has a real secret - it must
+    # never be echoed back in the prompt's [default] hint.
+    (tmp_path / "device_config.json").write_text(
+        json.dumps({"wifi_password": "super-secret", "mqtt_broker": "localhost"})
+    )
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    mock_prompt = mocker.patch.object(
+        tinker.typer,
+        "prompt",
+        side_effect=[
+            "GivenSSID",  # wifi_ssid
+            "",  # wifi_password - blank keeps the existing secret
+            "localhost",  # mqtt_broker
+            1883,  # mqtt_port
+            "microweaver",  # mqtt_client_id
+            "pub/topic",  # mqtt_topic_pub
+            "sub/topic",  # mqtt_topic_sub
+            "muser",  # mqtt_username
+            "new-mqtt-pass",  # mqtt_password - overrides the (empty) default
+        ],
+    )
+
+    tinker.provision(
+        port="/dev/ttyUSB5",
+        baud=None,
+        wifi_ssid=None,
+        wifi_password=None,
+        mqtt_broker=None,
+        mqtt_port=None,
+        mqtt_client_id=None,
+        mqtt_topic_pub=None,
+        mqtt_topic_sub=None,
+        mqtt_username=None,
+        mqtt_password=None,
+    )
+
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["wifi_password"] == "super-secret"
+    assert written["mqtt_password"] == "new-mqtt-pass"
+
+    wifi_password_call = mock_prompt.call_args_list[1]
+    assert wifi_password_call.args[0] == "WiFi password [unchanged]"
+    assert wifi_password_call.kwargs["default"] == ""
+    assert wifi_password_call.kwargs["hide_input"] is True
+    assert wifi_password_call.kwargs["show_default"] is False
+
+
 def test_load_provision_defaults_prefers_existing_config(tmp_path):
     (tmp_path / "device_config.json.example").write_text(
         json.dumps({"mqtt_broker": "from-example"})

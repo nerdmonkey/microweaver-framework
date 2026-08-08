@@ -723,12 +723,26 @@ def _prompt_missing_fields(given: dict, defaults: dict) -> None:
     for key, label, fallback, secret in PROVISION_FIELDS:
         if given[key] is not None:
             continue
-        given[key] = typer.prompt(
-            label,
-            default=defaults.get(key, fallback),
-            type=int if isinstance(fallback, int) else str,
-            hide_input=secret,
-        )
+        default_value = defaults.get(key, fallback)
+        if secret and default_value:
+            # An existing secret must never be echoed - not even as the
+            # prompt's own [default] hint - so show a placeholder and only
+            # reveal the real value if the user leaves the line blank.
+            typed = typer.prompt(
+                f"{label} [unchanged]",
+                default="",
+                type=str,
+                hide_input=True,
+                show_default=False,
+            )
+            given[key] = default_value if typed == "" else typed
+        else:
+            given[key] = typer.prompt(
+                label,
+                default=default_value,
+                type=int if isinstance(fallback, int) else str,
+                hide_input=secret,
+            )
 
 
 def _require_tty_for_missing(missing: list) -> None:
