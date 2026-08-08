@@ -29,10 +29,10 @@
 | Tool | Required for | Install |
 |---|---|---|
 | `mpy-cross-multi` | `build` | bundled with the project's build deps |
-| `mpremote` | `download`, `provision`, `watch`, `fleet push`, `device repl`, `device logs`/`monitor` | `pip install mpremote` |
+| `mpremote` | `download`, `provision`, `fleet push`, `device repl`, `device logs`/`monitor` | `pip install mpremote` |
 | `esptool` (Python API) | `device reset`, `device info` (chip read) | installed as a project dependency, no separate CLI install needed |
 
-The commands above check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`. `upload`, `device ls`, `device tree`, `device info` (firmware read), `device health`, `device rm`, `device mkdir`, and `device test-adapter` talk to the device directly over a raw-REPL serial connection ([`DeviceTransport`](../device_transport.py)) and do not require `mpremote` on `PATH`.
+The commands above check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`. `upload`, `watch`, `device ls`, `device tree`, `device info` (firmware read), `device health`, `device rm`, `device mkdir`, and `device test-adapter` talk to the device directly over a raw-REPL serial connection ([`DeviceTransport`](../device_transport.py)) (`watch` via `upload`) and do not require `mpremote` on `PATH`.
 
 ## Global concepts
 

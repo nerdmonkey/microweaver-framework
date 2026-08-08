@@ -848,14 +848,6 @@ def watch(
     ),
 ) -> None:
     """Watch app/, config/, and root source files; rebuild + upload on change."""
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
     watched = _watched_files()
     if not watched:
         print("ERROR: no source files found to watch.", file=sys.stderr)

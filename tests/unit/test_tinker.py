@@ -1043,15 +1043,7 @@ def test_scan_mtimes_skips_missing_file(tmp_path):
     assert missing not in snapshot
 
 
-def test_watch_missing_mpremote(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value=None)
-    result = runner.invoke(tinker.app, ["watch"])
-    assert result.exit_code == 1
-    assert "mpremote" in result.stderr
-
-
 def test_watch_no_source_files(tmp_path, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mocker.patch.object(tinker, "ROOT", tmp_path)
     mocker.patch.object(tinker, "DIST", tmp_path / "dist")
     result = runner.invoke(tinker.app, ["watch"])
@@ -1060,7 +1052,6 @@ def test_watch_no_source_files(tmp_path, mocker):
 
 
 def test_watch_stops_on_keyboard_interrupt_with_no_change(fake_project, mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
     mock_sleep = mocker.patch.object(
         tinker.time, "sleep", side_effect=[None, KeyboardInterrupt()]
     )
@@ -1076,7 +1067,6 @@ def test_watch_stops_on_keyboard_interrupt_with_no_change(fake_project, mocker):
 
 def test_watch_rebuilds_and_uploads_on_change(fake_project, mocker):
     root, dist = fake_project
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
 
     def touch_then_stop(*args, **kwargs):
         touch_then_stop.calls += 1
@@ -1102,7 +1092,6 @@ def test_watch_rebuilds_and_uploads_on_change(fake_project, mocker):
 
 def test_watch_build_failure_skips_upload(fake_project, mocker):
     root, dist = fake_project
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
 
     def touch_then_stop(*args, **kwargs):
         touch_then_stop.calls += 1
@@ -1123,7 +1112,6 @@ def test_watch_build_failure_skips_upload(fake_project, mocker):
 
 def test_watch_upload_failure_reported(fake_project, mocker):
     root, dist = fake_project
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
 
     def touch_then_stop(*args, **kwargs):
         touch_then_stop.calls += 1

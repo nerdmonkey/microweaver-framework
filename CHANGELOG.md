@@ -53,6 +53,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from a plain failure. `device mkdir` on an already-existing directory now succeeds
   silently instead of erroring.
 
+### Fixed
+- `tinker.py watch` no longer errors with `'mpremote' not found on PATH` on a machine
+  without `mpremote` installed. It only ever calls `build()` and `upload()` internally,
+  and `upload` stopped needing `mpremote` earlier in this changeset - the check was
+  stale and blocked `watch` even though it would have worked.
+
 ### Removed
 - `tinker.py upload`'s `--resume` flag. It existed to skip mpremote's soft-reset step;
   raw-REPL entry never soft-resets now, so every `upload` already does what `--resume`
