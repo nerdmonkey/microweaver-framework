@@ -28,7 +28,11 @@ def _open_boot_interrupt_window():
 
 def run_bootstrap():
     gc.collect()
-    crash_log = CrashLogService(setting.CRASH_LOG_PATH, setting.CRASH_LOG_ENABLED)
+    crash_log = CrashLogService(
+        setting.CRASH_LOG_PATH,
+        setting.CRASH_LOG_ENABLED,
+        max_bytes=setting.CRASH_LOG_MAX_BYTES,
+    )
     ResetService(
         logger=LogService(format=setting.LOG_FORMAT), crash_log=crash_log
     ).read()

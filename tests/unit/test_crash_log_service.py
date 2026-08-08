@@ -66,3 +66,53 @@ def test_write_failure_is_printed_not_raised(tmp_path, capsys):
 
     out = capsys.readouterr().out
     assert "Failed to persist crash log" in out
+
+
+def test_write_caps_file_size_when_entry_exceeds_max_bytes(tmp_path):
+    path = str(tmp_path / "crash.json")
+    service = CrashLogService(path=path, max_bytes=200)
+
+    service.write(
+        "unhandled_exception", context="mqtt_connect", error="boom", trace="x" * 5000
+    )
+
+    import os
+
+    assert os.path.getsize(path) <= 200
+    entry = service.read()
+    assert entry["event"] == "unhandled_exception"
+    assert entry["context"] == "mqtt_connect"
+    assert entry["trace"].endswith("...[truncated]")
+
+
+def test_write_truncates_longest_field_first(tmp_path):
+    path = str(tmp_path / "crash.json")
+    service = CrashLogService(path=path, max_bytes=200)
+
+    service.write(
+        "unhandled_exception", context="mqtt_connect", error="short", trace="y" * 5000
+    )
+
+    entry = service.read()
+    assert entry["error"] == "short"
+    assert entry["trace"].endswith("...[truncated]")
+
+
+def test_write_best_effort_when_max_bytes_too_small_to_shrink_into(tmp_path):
+    path = str(tmp_path / "crash.json")
+    service = CrashLogService(path=path, max_bytes=10)
+
+    service.write("unhandled_exception", context="mqtt_connect")
+
+    entry = service.read()
+    assert entry is not None
+    assert "ts" in entry
+
+
+def test_write_under_max_bytes_is_not_truncated(tmp_path):
+    service = make_service(tmp_path)
+
+    service.write("unhandled_exception", context="mqtt_connect", trace="short trace")
+
+    entry = service.read()
+    assert entry["trace"] == "short trace"

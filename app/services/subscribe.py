@@ -35,7 +35,9 @@ class SubscribeService:
             format=setting.LOG_FORMAT, level=setting.LOG_LEVEL
         )
         self.crash_log = CrashLogService(
-            setting.CRASH_LOG_PATH, setting.CRASH_LOG_ENABLED
+            setting.CRASH_LOG_PATH,
+            setting.CRASH_LOG_ENABLED,
+            max_bytes=setting.CRASH_LOG_MAX_BYTES,
         )
         self.metrics_service = MetricsService()
         self.error_handler = ErrorHandlerService(

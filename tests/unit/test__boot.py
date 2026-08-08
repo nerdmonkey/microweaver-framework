@@ -402,7 +402,9 @@ def test_run_bootstrap_writes_crash_log_before_boot_loop_reset(mocker):
     _boot.run_bootstrap()
 
     crash_log_cls.assert_called_once_with(
-        _boot.setting.CRASH_LOG_PATH, _boot.setting.CRASH_LOG_ENABLED
+        _boot.setting.CRASH_LOG_PATH,
+        _boot.setting.CRASH_LOG_ENABLED,
+        max_bytes=_boot.setting.CRASH_LOG_MAX_BYTES,
     )
     crash_log_cls.return_value.write.assert_called_once_with(
         "boot_loop_reset", attempts=6

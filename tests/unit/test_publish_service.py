@@ -438,11 +438,12 @@ def test_error_handler_is_created():
 def test_crash_log_created_from_settings(mocker):
     mocker.patch("app.services.publish.setting.CRASH_LOG_PATH", "crash.json")
     mocker.patch("app.services.publish.setting.CRASH_LOG_ENABLED", True)
+    mocker.patch("app.services.publish.setting.CRASH_LOG_MAX_BYTES", 4096)
     crash_log_cls = mocker.patch("app.services.publish.CrashLogService")
 
     service = PublishService()
 
-    crash_log_cls.assert_called_once_with("crash.json", True)
+    crash_log_cls.assert_called_once_with("crash.json", True, max_bytes=4096)
     assert service.crash_log is crash_log_cls.return_value
 
 
