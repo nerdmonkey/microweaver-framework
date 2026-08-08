@@ -1,25 +1,46 @@
 import main
 
 
-def test_start_wires_and_runs_publish_service(mocker):
-    mocker.patch("main.setting.DHT22_PIN", 15)
+def test_start_wires_and_runs_runtime_service_with_dht22_default(mocker):
+    mocker.patch("main.setting.DHT_PIN", 15)
     mocker.patch("main.setting.RELAY_PIN", 16)
+    mocker.patch("main.setting.DHT_SENSOR_TYPE", "dht22")
     mock_dht22_cls = mocker.patch("main.DHT22Adapter")
+    mock_dht11_cls = mocker.patch("main.DHT11Adapter")
     mock_relay_cls = mocker.patch("main.RelayAdapter")
-    mock_publish_cls = mocker.patch("main.PublishService")
-    mock_instance = mock_publish_cls.return_value
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
 
     main.start()
 
     mock_dht22_cls.assert_called_once_with(pin=15)
+    mock_dht11_cls.assert_not_called()
     mock_relay_cls.assert_called_once_with(pin=16)
-    mock_publish_cls.assert_called_once_with(
-        adapters=[
-            ("dht22", mock_dht22_cls.return_value),
-            ("relay", mock_relay_cls.return_value),
-        ]
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[("dht22", mock_dht22_cls.return_value)],
+        command_adapters=[("relay", mock_relay_cls.return_value)],
     )
-    mock_instance.run.assert_called_once_with()
+    mock_runtime_cls.return_value.run.assert_called_once_with()
+
+
+def test_start_wires_and_runs_runtime_service_with_dht11(mocker):
+    mocker.patch("main.setting.DHT_PIN", 15)
+    mocker.patch("main.setting.RELAY_PIN", 16)
+    mocker.patch("main.setting.DHT_SENSOR_TYPE", "dht11")
+    mock_dht11_cls = mocker.patch("main.DHT11Adapter")
+    mock_dht22_cls = mocker.patch("main.DHT22Adapter")
+    mock_relay_cls = mocker.patch("main.RelayAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_dht11_cls.assert_called_once_with(pin=15)
+    mock_dht22_cls.assert_not_called()
+    mock_relay_cls.assert_called_once_with(pin=16)
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[("dht11", mock_dht11_cls.return_value)],
+        command_adapters=[("relay", mock_relay_cls.return_value)],
+    )
+    mock_runtime_cls.return_value.run.assert_called_once_with()
 
 
 def test_start_safe_mode_wires_and_runs_safe_mode_service(mocker):
