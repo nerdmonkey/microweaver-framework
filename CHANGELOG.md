@@ -72,6 +72,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   secret in that file was printed to the terminal (and scrollback) on every `provision`
   run. Secret fields now show `[unchanged]` instead, and leaving the line blank keeps the
   existing value.
+- `main.start()` now runs sensors and relay commands through one `RuntimeService` loop
+  with a single MQTT connection, so the DHT22 publisher and relay subscriber share the
+  same reconnect/watchdog lifecycle without needing a second MicroPython thread.
+- `RuntimeService` now treats MQTT subscribe failures the same way as other connection
+  losses, logging them and re-entering the reconnect loop instead of crashing out of
+  boot before the retry boundary is reached.
+- Temperature sensor selection is now configurable via `dht_sensor_type`
+  (`dht11` or `dht22`), so boards using a DHT11 no longer need a code edit to boot
+  and publish readings.
+- The shared DHT sensor pin config is now named `dht_pin`; `dht22_pin` is still accepted
+  as a backward-compatible fallback for older device configs.
 
 ### Removed
 - `tinker.py deploy`'s `--resume` flag (present when this command was still named

@@ -60,7 +60,8 @@ _SCHEMA = {
     "log_level": {"type": str, "choices": ("debug", "info", "warning", "error")},
     "crash_log_enabled": {"type": bool},
     "crash_log_path": {"type": str},
-    "dht22_pin": {"type": "int", "min": 0, "max": 39},
+    "dht_sensor_type": {"type": str, "choices": ("dht11", "dht22")},
+    "dht_pin": {"type": "int", "min": 0, "max": 39},
     "relay_pin": {"type": "int", "min": 0, "max": 39},
     "provisioning_ap_ssid": {"type": str},
     "provisioning_ap_password": {"type": str},
@@ -108,10 +109,10 @@ class Setting:
         self.MQTT_CLIENT_ID = self._value("mqtt_client_id", "microweaver")
         self.MQTT_PORT = self._int("mqtt_port", 1883)
         self.MQTT_TOPIC_PUB = self._value(
-            "mqtt_topic_pub", "command/control/room/light"
+            "mqtt_topic_pub", "data/sensor/room/temperature"
         )
         self.MQTT_TOPIC_SUB = self._topics(
-            "mqtt_topic_sub", "data/sensor/room/temperature"
+            "mqtt_topic_sub", "command/control/room/light"
         )
         self.MQTT_USERNAME = self._value("mqtt_username", "")
         self.MQTT_PASSWORD = self._value("mqtt_password", "")
@@ -190,7 +191,8 @@ class Setting:
         self.CRASH_LOG_ENABLED = self._bool("crash_log_enabled", False)
         self.CRASH_LOG_PATH = self._value("crash_log_path", "crash.json")
 
-        self.DHT22_PIN = self._int("dht22_pin", 4)
+        self.DHT_SENSOR_TYPE = self._value("dht_sensor_type", "dht22")
+        self.DHT_PIN = self._int_alias(("dht_pin", "dht22_pin"), 4)
         self.RELAY_PIN = self._int("relay_pin", 5)
 
         self.PROVISIONING_AP_SSID = self._value(
@@ -309,6 +311,14 @@ class Setting:
 
     def _int(self, key, default):
         return int(self._value(key, default))
+
+    def _int_alias(self, keys, default):
+        for key in keys:
+            value = self._config.get(key)
+            if value is None or value == "":
+                continue
+            return int(value)
+        return int(default)
 
     def _topics(self, key, default):
         value = self._value(key, default)

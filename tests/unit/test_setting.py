@@ -62,7 +62,8 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "service_restart_max_attempts": 7,
                 "log_format": "kv",
                 "log_level": "debug",
-                "dht22_pin": 21,
+                "dht_sensor_type": "dht11",
+                "dht_pin": 21,
                 "relay_pin": 22,
                 "ota_enabled": True,
                 "ota_manifest_url": "https://api.example.com/manifest.json",
@@ -126,7 +127,8 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.SERVICE_RESTART_MAX_ATTEMPTS == 7
     assert setting.LOG_FORMAT == "kv"
     assert setting.LOG_LEVEL == "debug"
-    assert setting.DHT22_PIN == 21
+    assert setting.DHT_SENSOR_TYPE == "dht11"
+    assert setting.DHT_PIN == 21
     assert setting.RELAY_PIN == 22
     assert setting.OTA_ENABLED is True
     assert setting.OTA_MANIFEST_URL == "https://api.example.com/manifest.json"
@@ -145,7 +147,8 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.MQTT_BROKER == "localhost"
     assert setting.MQTT_CLIENT_ID == "microweaver"
     assert setting.MQTT_PORT == 1883
-    assert setting.MQTT_TOPIC_SUB == ["data/sensor/room/temperature"]
+    assert setting.MQTT_TOPIC_PUB == "data/sensor/room/temperature"
+    assert setting.MQTT_TOPIC_SUB == ["command/control/room/light"]
     assert setting.WIFI_SSID == ""
     assert setting.WIFI_PASSWORD == ""
     assert setting.WIFI_IP == ""
@@ -188,7 +191,17 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.SERVICE_RESTART_MAX_ATTEMPTS == 3
     assert setting.LOG_FORMAT == "json"
     assert setting.LOG_LEVEL == "info"
-    assert setting.DHT22_PIN == 4
+    assert setting.DHT_SENSOR_TYPE == "dht22"
+    assert setting.DHT_PIN == 4
+
+
+def test_setting_falls_back_to_legacy_dht22_pin_key(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"dht22_pin": 23}))
+
+    setting = Setting(config_path=str(config_path))
+
+    assert setting.DHT_PIN == 23
     assert setting.RELAY_PIN == 5
     assert setting.CLAIM_ENABLED is False
     assert setting.CLAIM_URL == ""
@@ -265,6 +278,14 @@ def test_setting_raises_on_invalid_log_level(tmp_path):
     config_path.write_text(json.dumps({"log_level": "verbose"}))
 
     with pytest.raises(ConfigError, match="log_level must be one of"):
+        Setting(config_path=str(config_path))
+
+
+def test_setting_raises_on_invalid_dht_sensor_type(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"dht_sensor_type": "dht12"}))
+
+    with pytest.raises(ConfigError, match="dht_sensor_type must be one of"):
         Setting(config_path=str(config_path))
 
 

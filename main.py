@@ -1,9 +1,10 @@
 from app.adapters.actuators.relay import RelayAdapter
 from app.adapters.indicators.led import StatusLEDAdapter
+from app.adapters.sensors.dht11 import DHT11Adapter
 from app.adapters.sensors.dht22 import DHT22Adapter
 from app.services.provisioning import ProvisioningService
-from app.services.publish import PublishService
 from app.services.registration import RegistrationService
+from app.services.runtime import RuntimeService
 from app.services.safe_mode import SafeModeService
 from app.services.wifi import WiFiService
 from config.app import Setting
@@ -11,13 +12,22 @@ from config.app import Setting
 setting = (Setting()).get_settings()
 
 
+def _make_temperature_adapter():
+    adapter_cls = DHT22Adapter
+    adapter_name = "dht22"
+    if setting.DHT_SENSOR_TYPE == "dht11":
+        adapter_cls = DHT11Adapter
+        adapter_name = "dht11"
+    return adapter_name, adapter_cls(pin=setting.DHT_PIN)
+
+
 def start():
-    adapters = [
-        ("dht22", DHT22Adapter(pin=setting.DHT22_PIN)),
-        ("relay", RelayAdapter(pin=setting.RELAY_PIN)),
-    ]
-    publish = PublishService(adapters=adapters)
-    publish.run()
+    sensor_name, sensor_adapter = _make_temperature_adapter()
+    runtime = RuntimeService(
+        publish_adapters=[(sensor_name, sensor_adapter)],
+        subscribe_adapters=[("relay", RelayAdapter(pin=setting.RELAY_PIN))],
+    )
+    runtime.run()
 
 
 def start_safe_mode():
