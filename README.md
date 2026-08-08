@@ -48,14 +48,17 @@ Before you can start using Microweaver, ensure you have the following prerequisi
 
    On boot, the device runs `boot.py`, which imports `main` and calls `main.start()`. `device_config.json` is read at runtime, so WiFi/MQTT credentials can be changed by editing that file and rebooting — no reflash required.
 
+   For a fuller starting point than the steps above — provisioning, WiFi/MQTT connect, sensor + actuator + indicator adapters, OTA, and observability all wired together — copy [`examples/full-device/main.py`](examples/full-device/README.md) instead of writing `main.py` from scratch.
+
 ### Project Structure
 
 - `boot.py` — thin MicroPython entry point; calls `_boot.run_bootstrap()`, logs and re-raises any unhandled boot exception.
 - `_boot.py` — does the actual bootstrap: `gc.collect()`, imports `main`, `gc.collect()` again, then calls `main.start()`. Split from `boot.py` so memory used during import is freed before the app runs.
 - `main.py` — defines `start()`, which wires up and runs the app's services.
 - `config/app.py` — `Setting` class, reads `device_config.json` with sane defaults if the file is missing.
-- `app/services/` — `WiFiService`, `MqttConnection` (shared reconnect/backoff logic), `PublishService`, `SubscribeService`.
+- `app/services/` — `WiFiService`, `MqttConnection` (shared reconnect/backoff logic), `RuntimeService` (combined publish+subscribe run loop, also composes OTA/health/metrics/logging), plus the lower-level `PublishService`/`SubscribeService` it's built from.
 - `app/adapters/{sensors,actuators,indicators}/` — extension points for hardware drivers; each should subclass `BaseAdapter` (`app/adapters/base.py`), which defines the frozen adapter contract: an `available` property, and `setup()`/`deinit()` lifecycle hooks.
+- `examples/` — reference device apps you can copy as a starting point; see [`examples/full-device`](examples/full-device/README.md).
 
 ### Running tests
 
