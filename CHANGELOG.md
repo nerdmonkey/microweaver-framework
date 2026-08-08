@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Configurable `publish_interval_seconds` (default 1, matching prior fixed-1s
+  behavior) gates how often `PublishService` publishes each tick, so sensor
+  readings (e.g. DHT temperature/humidity) can be sent every N seconds instead
+  of every tick, independently per device via `device_config.json`.
 - `MqttConnection.connect()` now inspects the MQTT CONNACK return code: rc=1/2/4/5
   (bad protocol version, rejected client ID, bad credentials, ACL denial) are
   permanent for the current config and raise `MqttConnectionRejected` instead of

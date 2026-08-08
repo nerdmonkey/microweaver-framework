@@ -43,6 +43,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "mqtt_publish_retain": True,
                 "mqtt_publish_qos": 1,
                 "mqtt_rejection_retry_seconds": 120,
+                "publish_interval_seconds": 10,
                 "watchdog_enabled": True,
                 "watchdog_timeout_ms": 5000,
                 "boot_loop_protection_enabled": True,
@@ -109,6 +110,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.MQTT_PUBLISH_RETAIN is True
     assert setting.MQTT_PUBLISH_QOS == 1
     assert setting.MQTT_REJECTION_RETRY_SECONDS == 120
+    assert setting.PUBLISH_INTERVAL_SECONDS == 10
     assert setting.WATCHDOG_ENABLED is True
     assert setting.WATCHDOG_TIMEOUT_MS == 5000
     assert setting.BOOT_LOOP_PROTECTION_ENABLED is True
@@ -174,6 +176,7 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.MQTT_PUBLISH_RETAIN is False
     assert setting.MQTT_PUBLISH_QOS == 0
     assert setting.MQTT_REJECTION_RETRY_SECONDS == 300
+    assert setting.PUBLISH_INTERVAL_SECONDS == 1
     assert setting.WATCHDOG_ENABLED is False
     assert setting.WATCHDOG_TIMEOUT_MS == 8000
     assert setting.BOOT_LOOP_PROTECTION_ENABLED is False
