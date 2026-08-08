@@ -73,6 +73,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without `mpremote` installed. It only ever calls `build()` and `deploy()` internally,
   and `deploy` stopped needing `mpremote` earlier in this changeset - the check was
   stale and blocked `watch` even though it would have worked.
+- `SubscribeService.run()` no longer crashes the device loop when the broker rejects a
+  topic subscription (e.g. an ACL/policy denial). `connect_to_mqtt()` moved inside the
+  loop's exception handler, so a failed `subscribe()` call is now logged and retried the
+  same way a mid-session connection drop already was.
 - `tinker.py provision`'s interactive prompts no longer echo an existing WiFi/MQTT
   password in plaintext as the prompt's `[default]` hint. `hide_input` only masked what
   you typed, not the default value already sitting in `device_config.json`, so every

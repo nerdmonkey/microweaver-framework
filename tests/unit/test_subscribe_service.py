@@ -15,17 +15,17 @@ def test_run_reconnects_after_connection_loss(mocker):
     mock_connection = mock_connection_cls.return_value
     mock_client = MagicMock()
     mock_client.check_msg.side_effect = OSError("dropped")
-    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mock_connection.connect.side_effect = [mock_client, KeyboardInterrupt("stop test")]
     mocker.patch("time.sleep")
 
     service = SubscribeService()
 
-    with pytest.raises(RuntimeError, match="stop test"):
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
         service.run()
 
     mock_client.set_callback.assert_called_once_with(service.on_message)
     mock_client.subscribe.assert_called_once_with(service.topics[0])
-    assert mock_connection.disconnect.call_count == 1
+    assert mock_connection.disconnect.call_count == 2
 
 
 def test_run_logs_connection_lost_with_trace(mocker):
@@ -35,13 +35,13 @@ def test_run_logs_connection_lost_with_trace(mocker):
     mock_connection = mock_connection_cls.return_value
     mock_client = MagicMock()
     mock_client.check_msg.side_effect = OSError("dropped")
-    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mock_connection.connect.side_effect = [mock_client, KeyboardInterrupt("stop test")]
     mocker.patch("time.sleep")
 
     service = SubscribeService()
     mocker.patch.object(service.log_service, "log")
 
-    with pytest.raises(RuntimeError, match="stop test"):
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
         service.run()
 
     service.log_service.log.assert_called_once_with(
@@ -59,12 +59,12 @@ def test_run_records_metrics_error_on_connection_lost(mocker):
     mock_connection = mock_connection_cls.return_value
     mock_client = MagicMock()
     mock_client.check_msg.side_effect = OSError("dropped")
-    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mock_connection.connect.side_effect = [mock_client, KeyboardInterrupt("stop test")]
     mocker.patch("time.sleep")
 
     service = SubscribeService()
 
-    with pytest.raises(RuntimeError, match="stop test"):
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
         service.run()
 
     assert service.metrics_service.errors == 1
@@ -81,17 +81,17 @@ def test_run_reconnects_through_repeated_drops(mocker):
     mock_connection.connect.side_effect = [
         client_a,
         client_b,
-        RuntimeError("stop test"),
+        KeyboardInterrupt("stop test"),
     ]
     mocker.patch("time.sleep")
 
     service = SubscribeService()
 
-    with pytest.raises(RuntimeError, match="stop test"):
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
         service.run()
 
     assert mock_connection.connect.call_count == 3
-    assert mock_connection.disconnect.call_count == 2
+    assert mock_connection.disconnect.call_count == 3
     client_a.subscribe.assert_called_once_with(service.topics[0])
     client_b.subscribe.assert_called_once_with(service.topics[0])
 
@@ -103,17 +103,50 @@ def test_run_feeds_watchdog_each_poll(mocker):
     mock_connection = mock_connection_cls.return_value
     mock_client = MagicMock()
     mock_client.check_msg.side_effect = [None, None, OSError("dropped")]
-    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mock_connection.connect.side_effect = [mock_client, KeyboardInterrupt("stop test")]
     mocker.patch("time.sleep")
 
     service = SubscribeService()
     watchdog = MagicMock()
     service.watchdog_service = watchdog
 
-    with pytest.raises(RuntimeError, match="stop test"):
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
         service.run()
 
     assert watchdog.feed.call_count == 3
+
+
+def test_run_reconnects_when_broker_denies_subscribe_by_acl_policy(mocker):
+    # A broker rejecting a topic via ACL policy manifests as client.subscribe()
+    # raising (SUBACK failure code) rather than a network-level drop. That
+    # propagates out of connect_to_mqtt() into run()'s generic reconnect
+    # handling the same as any other connection loss.
+    mocker.patch("app.services.subscribe.setting.MQTT_ENABLED", True)
+    mocker.patch("app.services.subscribe.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.subscribe.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    denied_client = MagicMock()
+    denied_client.subscribe.side_effect = OSError("Not authorized")
+    mock_connection.connect.side_effect = [
+        denied_client,
+        KeyboardInterrupt("stop test"),
+    ]
+    mocker.patch("time.sleep")
+
+    service = SubscribeService()
+    mocker.patch.object(service.log_service, "log")
+
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
+        service.run()
+
+    service.log_service.log.assert_called_once_with(
+        "connection_lost",
+        level="error",
+        error="Not authorized",
+        trace="OSError: Not authorized",
+    )
+    assert service.metrics_service.errors == 1
+    assert mock_connection.disconnect.call_count == 2
 
 
 def test_connect_subscribes_to_each_configured_topic(mocker):
@@ -175,12 +208,12 @@ def test_run_checks_wifi_drop_each_poll(mocker):
     mock_connection = mock_connection_cls.return_value
     mock_client = MagicMock()
     mock_client.check_msg.side_effect = [None, None, OSError("dropped")]
-    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mock_connection.connect.side_effect = [mock_client, KeyboardInterrupt("stop test")]
     mocker.patch("time.sleep")
 
     service = SubscribeService()
 
-    with pytest.raises(RuntimeError, match="stop test"):
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
         service.run()
 
     assert mock_wifi.ensure_connected.call_count == 3
@@ -293,14 +326,14 @@ def test_run_confirms_bootloop_guard_after_connect(mocker):
     mock_connection = mock_connection_cls.return_value
     mock_client = MagicMock()
     mock_client.check_msg.side_effect = OSError("dropped")
-    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mock_connection.connect.side_effect = [mock_client, KeyboardInterrupt("stop test")]
     mocker.patch("time.sleep")
 
     service = SubscribeService()
     guard = MagicMock()
     service.bootloop_guard = guard
 
-    with pytest.raises(RuntimeError, match="stop test"):
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
         service.run()
 
     guard.confirm.assert_called_once_with()
@@ -409,14 +442,14 @@ def test_run_confirms_ota_update_after_connect(mocker):
     mock_connection = mock_connection_cls.return_value
     mock_client = MagicMock()
     mock_client.check_msg.side_effect = OSError("dropped")
-    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mock_connection.connect.side_effect = [mock_client, KeyboardInterrupt("stop test")]
     mocker.patch("time.sleep")
 
     service = SubscribeService()
     ota_service = MagicMock()
     service.ota_service = ota_service
 
-    with pytest.raises(RuntimeError, match="stop test"):
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
         service.run()
 
     ota_service.confirm_update.assert_called_once_with()
@@ -509,14 +542,14 @@ def test_run_checks_memory_each_poll(mocker):
     mock_connection = mock_connection_cls.return_value
     mock_client = MagicMock()
     mock_client.check_msg.side_effect = [None, None, OSError("dropped")]
-    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mock_connection.connect.side_effect = [mock_client, KeyboardInterrupt("stop test")]
     mocker.patch("time.sleep")
 
     service = SubscribeService()
     memory_monitor = MagicMock()
     service.memory_monitor_service = memory_monitor
 
-    with pytest.raises(RuntimeError, match="stop test"):
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
         service.run()
 
     assert memory_monitor.check.call_count == 3
@@ -608,7 +641,7 @@ def test_run_survives_memory_monitor_exception(mocker):
     mock_connection = mock_connection_cls.return_value
     mock_client = MagicMock()
     mock_client.check_msg.side_effect = [None, ConnectionResetError("dropped")]
-    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mock_connection.connect.side_effect = [mock_client, KeyboardInterrupt("stop test")]
     mocker.patch("time.sleep")
 
     service = SubscribeService()
@@ -616,7 +649,7 @@ def test_run_survives_memory_monitor_exception(mocker):
     memory_monitor.check.side_effect = OSError("mem read failed")
     service.memory_monitor_service = memory_monitor
 
-    with pytest.raises(RuntimeError, match="stop test"):
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
         service.run()
 
     assert memory_monitor.check.call_count == 2
@@ -696,14 +729,14 @@ def test_run_polls_health_check_each_poll(mocker):
     mock_connection = mock_connection_cls.return_value
     mock_client = MagicMock()
     mock_client.check_msg.side_effect = [None, None, OSError("dropped")]
-    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mock_connection.connect.side_effect = [mock_client, KeyboardInterrupt("stop test")]
     mocker.patch("time.sleep")
 
     service = SubscribeService()
     health_check = MagicMock()
     service.health_check_service = health_check
 
-    with pytest.raises(RuntimeError, match="stop test"):
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
         service.run()
 
     assert health_check.poll.call_count == 3
@@ -746,7 +779,7 @@ def test_run_reconciles_service_restart_each_poll(mocker):
     mock_connection = mock_connection_cls.return_value
     mock_client = MagicMock()
     mock_client.check_msg.side_effect = [None, None, OSError("dropped")]
-    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mock_connection.connect.side_effect = [mock_client, KeyboardInterrupt("stop test")]
     mocker.patch("time.sleep")
 
     service = SubscribeService()
@@ -756,7 +789,7 @@ def test_run_reconciles_service_restart_each_poll(mocker):
     service_restart = MagicMock()
     service.service_restart_service = service_restart
 
-    with pytest.raises(RuntimeError, match="stop test"):
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
         service.run()
 
     assert service_restart.reconcile.call_args_list == [
@@ -813,7 +846,7 @@ def test_run_polls_health_report_scheduler_each_poll(mocker):
     mock_connection = mock_connection_cls.return_value
     mock_client = MagicMock()
     mock_client.check_msg.side_effect = [None, None, OSError("dropped")]
-    mock_connection.connect.side_effect = [mock_client, RuntimeError("stop test")]
+    mock_connection.connect.side_effect = [mock_client, KeyboardInterrupt("stop test")]
     mocker.patch("time.sleep")
 
     service = SubscribeService()
@@ -822,7 +855,7 @@ def test_run_polls_health_report_scheduler_each_poll(mocker):
     health_report_scheduler = MagicMock()
     service.health_report_scheduler = health_report_scheduler
 
-    with pytest.raises(RuntimeError, match="stop test"):
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
         service.run()
 
     assert health_report_scheduler.poll.call_args_list == [

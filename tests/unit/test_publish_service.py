@@ -772,6 +772,21 @@ def test_publish_message_records_error_on_publish_exception():
     assert service.metrics_service.errors == 1
 
 
+def test_publish_message_survives_acl_denied_publish():
+    # Broker-side ACL policy rejecting a publish surfaces to umqtt as an
+    # exception on client.publish(), same shape as any other broker-side
+    # failure - the service has no distinct handling for it, so it should
+    # log and swallow it like every other publish exception.
+    service = PublishService()
+    service.client = MagicMock()
+    service.client.publish.side_effect = OSError("Not authorized")
+
+    service.publish_message("hi")
+
+    assert service.metrics_service.messages_published == 0
+    assert service.metrics_service.errors == 1
+
+
 def test_publish_message_without_client_records_no_metrics():
     service = PublishService()
     service.client = None
