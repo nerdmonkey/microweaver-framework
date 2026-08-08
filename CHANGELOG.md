@@ -35,14 +35,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the current health/metrics snapshot can be read without a full MQTT subscriber.
 
 ### Changed
-- `tinker.py device ls` now talks to the device directly over a raw-REPL serial
-  connection (`device_transport.py`'s new `DeviceTransport`) instead of shelling out to
-  the `mpremote` CLI, and no longer requires `mpremote` on `PATH`. Output and flags are
-  unchanged; other `device`/`upload`/`download` commands still use `mpremote`. Enters raw
-  REPL without a soft reset, since a soft reset on firmware with a permanently-running
-  `main.py` (like this project's `PublishService.run()`) hangs the handshake waiting for
-  a prompt that never returns; raw-REPL entry still retries with the same linear backoff
-  as `upload --reset` in case opening the serial port itself races a board auto-reset.
+- `tinker.py device ls` and `device tree` now talk to the device directly over a
+  raw-REPL serial connection (`device_transport.py`'s new `DeviceTransport`) instead of
+  shelling out to the `mpremote` CLI, and no longer require `mpremote` on `PATH`. Output
+  and flags are unchanged; other `device`/`upload`/`download` commands still use
+  `mpremote`. Both enter raw REPL without a soft reset, since a soft reset on firmware
+  with a permanently-running `main.py` (like this project's `PublishService.run()`)
+  hangs the handshake waiting for a prompt that never returns; raw-REPL entry still
+  retries with the same linear backoff as `upload --reset` in case opening the serial
+  port itself races a board auto-reset.
 
 ## [0.1.0] - 2026-08-08
 

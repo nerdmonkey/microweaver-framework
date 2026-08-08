@@ -29,10 +29,10 @@
 | Tool | Required for | Install |
 |---|---|---|
 | `mpy-cross-multi` | `build` | bundled with the project's build deps |
-| `mpremote` | `upload`, `download`, `device info` (firmware read), `device tree`, `device test-adapter` | `pip install mpremote` |
+| `mpremote` | `upload`, `download`, `device info` (firmware read), `device test-adapter` | `pip install mpremote` |
 | `esptool` (Python API) | `device reset`, `device info` (chip read) | installed as a project dependency, no separate CLI install needed |
 
-`upload`, `download`, `device tree`, and `device test-adapter` check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`. `device ls` talks to the device directly over a raw-REPL serial connection ([`DeviceTransport`](../device_transport.py)) and does not require `mpremote` on `PATH`.
+`upload`, `download`, and `device test-adapter` check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`. `device ls` and `device tree` talk to the device directly over a raw-REPL serial connection ([`DeviceTransport`](../device_transport.py)) and do not require `mpremote` on `PATH`.
 
 ## Global concepts
 
@@ -360,7 +360,7 @@ python tinker.py device ls --port /dev/tty.usbserial-0001 :config
 
 ### `device tree`
 
-Show a recursive tree view of files and folders on the device via `mpremote fs tree`.
+Show a recursive tree view of files and folders on the device over a direct raw-REPL serial connection (does not require `mpremote`). Walks the filesystem with repeated `DeviceTransport.ls()` calls in one raw-REPL session - `mpremote fs tree` has no raw-REPL equivalent to call directly, so the tree/connector formatting is reimplemented here to match. Same soft-reset-free raw-REPL entry and retry behavior as [`device ls`](#device-ls).
 
 ```shell
 python tinker.py device tree [OPTIONS] [PATH]

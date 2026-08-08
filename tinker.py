@@ -8,6 +8,7 @@ import subprocess  # nosec B404
 import sys
 import time
 import tomllib
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -1111,6 +1112,71 @@ def device_health(
     print_table(["Field", "Value"], rows)
 
 
+def _enter_raw_repl_with_retries(
+    resolved_port: str, command_label: str
+) -> DeviceTransport:
+    """Open a DeviceTransport and enter raw REPL, retrying the handshake only.
+
+    Enters raw REPL with soft_reset=False: `interrupt()` alone (ctrl-C)
+    already lands a running device at a clean idle prompt, so a read-only
+    command has no reason to also reboot it. This matters beyond style -
+    on firmware whose `main.py` runs an intentionally infinite loop (this
+    project's own `PublishService.run()`), a soft-reset (ctrl-D) reboots
+    straight back into that loop, which never returns control to print
+    the second raw-REPL banner a soft-reset entry waits for, so the
+    handshake hangs until timeout every time, not just intermittently.
+
+    Retried in case opening the serial port itself triggers a board
+    auto-reset (DTR toggling on connect, common on ESP32 dev boards),
+    racing the raw-REPL handshake against that reboot - the same race
+    `upload --reset` already retries around.
+    """
+    last_error: RawReplEntryError | None = None
+    for attempt in range(1, UPLOAD_RETRY_ATTEMPTS + 1):
+        if attempt > 1:
+            print(
+                f"NOTE: {command_label} failed (raw-REPL race), retrying "
+                f"({attempt}/{UPLOAD_RETRY_ATTEMPTS})...",
+                file=sys.stderr,
+            )
+            time.sleep(UPLOAD_RESET_SETTLE_SECONDS * (attempt - 1))
+        transport = DeviceTransport(resolved_port)
+        try:
+            transport.connect()
+            transport.interrupt()
+            transport.enter_raw_repl(soft_reset=False)
+            return transport
+        except RawReplEntryError as exc:
+            transport.close()
+            last_error = exc
+    raise last_error
+
+
+@contextmanager
+def _raw_repl_session(resolved_port: str, command_label: str):
+    """Yield a DeviceTransport already in raw REPL; always exits+closes after."""
+    transport = _enter_raw_repl_with_retries(resolved_port, command_label)
+    try:
+        yield transport
+    finally:
+        transport.exit_raw_repl()
+        transport.close()
+
+
+def _print_raw_repl_failure(resolved_port: str) -> None:
+    print(
+        f"ERROR: could not enter raw REPL on {resolved_port} after "
+        f"{UPLOAD_RETRY_ATTEMPTS} attempts. Firmware may be stuck or "
+        "the board may still be rebooting.",
+        file=sys.stderr,
+    )
+    print(
+        f"Retry with 'python tinker.py device reset --port {resolved_port}' "
+        "and try again.",
+        file=sys.stderr,
+    )
+
+
 @device_app.command("ls")
 def device_ls(
     port: Optional[str] = typer.Option(
@@ -1125,19 +1191,10 @@ def device_ls(
         resolved_port = prompt_for_port()
 
     try:
-        entries = _device_ls_with_retries(resolved_port, path)
+        with _raw_repl_session(resolved_port, "device ls") as transport:
+            entries = transport.ls(path)
     except RawReplEntryError as exc:
-        print(
-            f"ERROR: could not enter raw REPL on {resolved_port} after "
-            f"{UPLOAD_RETRY_ATTEMPTS} attempts. Firmware may be stuck or "
-            "the board may still be rebooting.",
-            file=sys.stderr,
-        )
-        print(
-            f"Retry with 'python tinker.py device reset --port {resolved_port}' "
-            "and try again.",
-            file=sys.stderr,
-        )
+        _print_raw_repl_failure(resolved_port)
         raise typer.Exit(code=1) from exc
     except DeviceExecError as exc:
         print(f"ERROR: {exc.stderr}", file=sys.stderr)
@@ -1145,47 +1202,6 @@ def device_ls(
 
     for name, size, is_dir in entries:
         print("{:12} {}{}".format(size, name, "/" if is_dir else ""))
-
-
-def _device_ls_with_retries(
-    resolved_port: str, path: str
-) -> list[tuple[str, int, bool]]:
-    """Run the `device ls` raw-REPL sequence, retrying raw-REPL entry only.
-
-    Enters raw REPL with soft_reset=False: `interrupt()` alone (ctrl-C)
-    already lands a running device at a clean idle prompt, so a listing
-    command has no reason to also reboot it. This matters beyond style -
-    on firmware whose `main.py` runs an intentionally infinite loop (this
-    project's own `PublishService.run()`), a soft-reset (ctrl-D) reboots
-    straight back into that loop, which never returns control to print
-    the second raw-REPL banner a soft-reset entry waits for, so the
-    handshake hangs until timeout every time, not just intermittently.
-
-    Retried in case opening the serial port itself triggers a board
-    auto-reset (DTR toggling on connect, common on ESP32 dev boards),
-    racing the raw-REPL handshake against that reboot - the same race
-    `upload --reset` already retries around. `DeviceExecError` (a real
-    remote error, not a handshake failure) is never retried.
-    """
-    last_error: RawReplEntryError | None = None
-    for attempt in range(1, UPLOAD_RETRY_ATTEMPTS + 1):
-        if attempt > 1:
-            print(
-                f"NOTE: device ls failed (raw-REPL race), retrying "
-                f"({attempt}/{UPLOAD_RETRY_ATTEMPTS})...",
-                file=sys.stderr,
-            )
-            time.sleep(UPLOAD_RESET_SETTLE_SECONDS * (attempt - 1))
-        try:
-            with DeviceTransport(resolved_port) as transport:
-                transport.interrupt()
-                transport.enter_raw_repl(soft_reset=False)
-                entries = transport.ls(path)
-                transport.exit_raw_repl()
-            return entries
-        except RawReplEntryError as exc:
-            last_error = exc
-    raise last_error
 
 
 @device_app.command("test-adapter")
@@ -1333,28 +1349,72 @@ def device_tree(
     ),
 ) -> None:
     """Show a tree view of files and folders on the device."""
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
     config = load_config()
     resolved_port = port or config.get("port")
     if resolved_port is None:
         resolved_port = prompt_for_port()
 
-    cmd = ["mpremote", "connect", resolved_port, "fs"]
-    if size:
-        cmd.append("--size")
-    if human:
-        cmd.append("--human")
-    cmd += ["tree", path]
-    result = _run_mpremote_cmd(cmd, resolved_port)
-    if result.returncode != 0:
-        raise typer.Exit(code=result.returncode)
+    remote_path = path[1:] if path.startswith(":") else path
+    remote_path = remote_path or "/"
+
+    try:
+        with _raw_repl_session(resolved_port, "device tree") as transport:
+            print(f":{remote_path}")
+            _print_tree(transport, remote_path, size=size, human=human)
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
+
+
+_SIZE_UNIT_THRESHOLDS = (
+    (1024**4, "T"),
+    (1024**3, "G"),
+    (1024**2, "M"),
+    (1024, "K"),
+)
+
+
+def _human_size(size: int, decimals: int = 1) -> str:
+    for threshold, unit in _SIZE_UNIT_THRESHOLDS:
+        if size >= threshold:
+            return f"{size / threshold:.{decimals}f}{unit}"
+    return str(size)
+
+
+def _print_tree(
+    transport: DeviceTransport,
+    path: str,
+    *,
+    size: bool,
+    human: bool,
+    prefix: str = "",
+) -> None:
+    """Recursively print a tree, walking one `DeviceTransport.ls()` call per dir.
+
+    mpremote's `fs tree` is CLI-only sugar with no raw-REPL equivalent to
+    port directly, so this reimplements its output format (connectors,
+    size columns) on top of the same `ls()` this module already uses for
+    `device ls`.
+    """
+    entries = transport.ls(path)
+    for i, (name, entry_size, is_dir) in enumerate(entries):
+        connector = "└── " if i == len(entries) - 1 else "├── "
+        size_str = ""
+        if entry_size > 0 or not is_dir:
+            if size:
+                size_str = f"[{entry_size:>9}]  "
+            elif human:
+                size_str = f"[{_human_size(entry_size):>6}]  "
+        print(f"{prefix}{connector}{size_str}{name}")
+        if is_dir:
+            child_path = path.rstrip("/") + "/" + name
+            next_prefix = prefix + ("    " if i == len(entries) - 1 else "│   ")
+            _print_tree(
+                transport, child_path, size=size, human=human, prefix=next_prefix
+            )
 
 
 @device_app.command("rm")

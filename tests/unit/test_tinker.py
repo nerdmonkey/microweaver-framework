@@ -1517,7 +1517,7 @@ def test_run_mpremote_cmd_raw_repl_failure_prints_recovery(mocker, capsys):
 
 
 class FakeDeviceTransport:
-    """Stand-in for DeviceTransport used by tinker's `device ls` command."""
+    """Stand-in for DeviceTransport used by tinker's `device ls`/`tree` commands."""
 
     def __init__(self, entries=None, raise_on=None, error=None, fail_attempts=0):
         self.entries = entries or []
@@ -1527,12 +1527,12 @@ class FakeDeviceTransport:
         self.attempt = 0
         self.calls = []
 
-    def __enter__(self):
+    def connect(self):
         self.attempt += 1
-        return self
+        self.calls.append("connect")
 
-    def __exit__(self, *exc):
-        return False
+    def close(self):
+        self.calls.append("close")
 
     def interrupt(self):
         self.calls.append("interrupt")
@@ -1548,6 +1548,8 @@ class FakeDeviceTransport:
         self.calls.append(("ls", path))
         if self.raise_on == "ls":
             raise self.error
+        if isinstance(self.entries, dict):
+            return self.entries.get(path, [])
         return self.entries
 
     def exit_raw_repl(self):
@@ -1564,10 +1566,12 @@ def test_device_ls_success(mocker):
     assert "boot.py" in result.stdout
     assert "lib/" in result.stdout
     assert fake_transport.calls == [
+        "connect",
         "interrupt",
         ("enter_raw_repl", False),
         ("ls", ":"),
         "exit_raw_repl",
+        "close",
     ]
 
 
@@ -1767,46 +1771,105 @@ def test_device_logs_prompts_for_port_and_failure(subcommand, mocker):
     assert result.exit_code == 1
 
 
-def test_device_tree_missing_mpremote(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value=None)
-    result = runner.invoke(tinker.app, ["device", "tree"])
-    assert result.exit_code == 1
-    assert "mpremote" in result.stderr
-
-
-def test_device_tree_success_with_flags(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mock_run = mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
+def test_device_tree_recurses_into_subdirectories(mocker):
+    fake_transport = FakeDeviceTransport(
+        entries={
+            "/": [("boot.py", 100, False), ("lib", 0, True)],
+            "/lib": [("foo.py", 50, False)],
+        }
     )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(tinker.app, ["device", "tree", "--port", "/dev/ttyUSB0"])
+    assert result.exit_code == 0
+    assert result.stdout == (":/\n" "├── boot.py\n" "└── lib\n" "    └── foo.py\n")
+
+
+def test_device_tree_with_size_flag(mocker):
+    fake_transport = FakeDeviceTransport(entries={"/": [("boot.py", 1024, False)]})
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(
-        tinker.app,
-        ["device", "tree", "--port", "/dev/ttyUSB0", "--size", "--human", "/lib"],
+        tinker.app, ["device", "tree", "--port", "/dev/ttyUSB0", "--size"]
     )
     assert result.exit_code == 0
-    cmd = mock_run.call_args[0][0]
-    assert "--size" in cmd
-    assert "--human" in cmd
-    assert cmd[-1] == "/lib"
+    assert "[     1024]  boot.py" in result.stdout
 
 
-def test_device_tree_failure(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker.subprocess, "run", return_value=MagicMock(returncode=1))
+def test_human_size_bytes():
+    assert tinker._human_size(500) == "500"
+
+
+def test_human_size_kilobytes():
+    assert tinker._human_size(2048) == "2.0K"
+
+
+def test_human_size_megabytes():
+    assert tinker._human_size(2 * 1024**2) == "2.0M"
+
+
+def test_human_size_gigabytes():
+    assert tinker._human_size(3 * 1024**3) == "3.0G"
+
+
+def test_human_size_terabytes():
+    assert tinker._human_size(5 * 1024**4) == "5.0T"
+
+
+def test_device_tree_with_human_flag(mocker):
+    fake_transport = FakeDeviceTransport(
+        entries={"/": [("firmware.bin", 2_097_152, False)]}
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(
+        tinker.app, ["device", "tree", "--port", "/dev/ttyUSB0", "--human"]
+    )
+    assert result.exit_code == 0
+    assert "[  2.0M]  firmware.bin" in result.stdout
+
+
+def test_device_tree_empty_dir_hides_size_column(mocker):
+    fake_transport = FakeDeviceTransport(
+        entries={"/": [("lib", 0, True), ("empty", 0, True)]}
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(
+        tinker.app, ["device", "tree", "--port", "/dev/ttyUSB0", "--size"]
+    )
+    assert result.exit_code == 0
+    assert "[" not in result.stdout.splitlines()[1]
+
+
+def test_device_tree_starts_at_given_path(mocker):
+    fake_transport = FakeDeviceTransport(entries={"lib": [("foo.py", 10, False)]})
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(
+        tinker.app, ["device", "tree", "--port", "/dev/ttyUSB0", ":lib"]
+    )
+    assert result.exit_code == 0
+    assert result.stdout == ":lib\n└── foo.py\n"
+
+
+def test_device_tree_raw_repl_failure(mocker):
+    mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
+    mocker.patch.object(tinker.time, "sleep")
+    fake_transport = FakeDeviceTransport(
+        raise_on="enter_raw_repl",
+        error=tinker.RawReplEntryError("could not enter raw repl"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(tinker.app, ["device", "tree"])
+    assert result.exit_code == 1
+    assert "could not enter raw REPL on /dev/ttyUSB9" in result.stderr
+
+
+def test_device_tree_exec_error(mocker):
+    fake_transport = FakeDeviceTransport(
+        raise_on="ls",
+        error=tinker.DeviceExecError("", "OSError: [Errno 20] ENOTDIR"),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     result = runner.invoke(tinker.app, ["device", "tree", "--port", "/dev/ttyUSB0"])
     assert result.exit_code == 1
-
-
-def test_device_tree_prompts_for_port(mocker):
-    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
-    mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
-    mock_run = mocker.patch.object(
-        tinker.subprocess, "run", return_value=MagicMock(returncode=0)
-    )
-    result = runner.invoke(tinker.app, ["device", "tree"])
-    assert result.exit_code == 0
-    cmd = mock_run.call_args[0][0]
-    assert "/dev/ttyUSB9" in cmd
+    assert "OSError: [Errno 20] ENOTDIR" in result.stderr
 
 
 def test_device_rm_missing_mpremote(mocker):
