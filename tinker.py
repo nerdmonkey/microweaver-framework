@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build, upload, and manage microweaver firmware."""
+"""Build, deploy, and manage microweaver firmware."""
 
 import configparser
 import json
@@ -54,7 +54,7 @@ VERSION = _read_version()
 
 app = typer.Typer(
     no_args_is_help=True,
-    help="Build, upload, and manage microweaver firmware.",
+    help="Build, deploy, and manage microweaver firmware.",
 )
 config_app = typer.Typer(
     no_args_is_help=True, help="View or set default port/baud/path."
@@ -416,7 +416,7 @@ def _run_upload_cmd(
 
 
 @app.command()
-def upload(
+def deploy(
     port: Optional[str] = typer.Option(
         None, "--port", "-p", help="Serial port of device (see 'tinker.py port')"
     ),
@@ -425,15 +425,15 @@ def upload(
         False,
         "--reset",
         help=(
-            "Hard-reset the device before uploading. Use this if the device "
+            "Hard-reset the device before deploying. Use this if the device "
             "is stuck (e.g. raw REPL entry fails after several retries)."
         ),
     ),
     path: Optional[Path] = typer.Argument(
-        None, help="Local file/folder to upload (default: ./dist)"
+        None, help="Local file/folder to deploy (default: ./dist)"
     ),
 ) -> None:
-    """Upload compiled firmware to a device over serial."""
+    """Deploy compiled firmware to a device over serial."""
     # Resolution order: CLI flag > .microweaver > hardcoded default.
     config = load_config()
     resolved_port = port or config.get("port")
@@ -452,15 +452,15 @@ def upload(
     # interface/config-file compatibility but has no effect on the transfer.
     if resolved_baud != 115200:
         print(
-            f"NOTE: upload ignores --baud (requested {resolved_baud}), "
+            f"NOTE: deploy ignores --baud (requested {resolved_baud}), "
             "connection always runs at 115200.",
             file=sys.stderr,
         )
 
-    _upload_path(resolved_port, resolved_path, reset, "upload")
+    _upload_path(resolved_port, resolved_path, reset, "deploy")
 
     save_config(port=port, baud=baud, path=path)
-    print(f"\nUploaded {resolved_path} -> {resolved_port}")
+    print(f"\nDeployed {resolved_path} -> {resolved_port}")
 
 
 @app.command()
@@ -470,17 +470,17 @@ def restore(
     ),
     baud: Optional[int] = typer.Option(None, "--baud", "-b", help="Baud rate"),
     reset: bool = typer.Option(
-        False, "--reset", help="Hard-reset the device before uploading"
+        False, "--reset", help="Hard-reset the device before restoring"
     ),
     path: Path = typer.Argument(
         BACKUP, help="Local backup folder to restore (default: ./backup)"
     ),
 ) -> None:
-    """Upload a previous `backup` folder's contents back onto the device."""
+    """Deploy a previous `backup` folder's contents back onto the device."""
     # Resolution order: CLI flag > .microweaver > hardcoded default. Unlike
-    # upload, the restore source is always BACKUP unless overridden - it
+    # deploy, the restore source is always BACKUP unless overridden - it
     # never reads or writes .microweaver's "path" default, so it can't
-    # clobber upload's own default path.
+    # clobber deploy's own default path.
     config = load_config()
     resolved_port = port or config.get("port")
     resolved_baud = baud if baud is not None else int(config.get("baud", DEFAULT_BAUD))
@@ -759,7 +759,7 @@ def provision(
     Bench/headless alternative to the SoftAP captive-portal setup flow: no
     phone or laptop needs to join the device's access point, since settings
     are entered locally and pushed over the same serial connection used by
-    upload/backup.
+    deploy/backup.
     """
     # Resolution order: CLI flag > .microweaver > hardcoded default.
     config = load_config()
@@ -847,27 +847,27 @@ def _scan_mtimes(paths: list) -> dict:
     return snapshot
 
 
-def _rebuild_and_upload(
+def _rebuild_and_deploy(
     port: Optional[str],
     baud: Optional[int],
     reset: bool,
     micropython: str,
     march: str,
 ) -> None:
-    """Run build() then upload() for watch(), skipping upload if the build failed."""
+    """Run build() then deploy() for watch(), skipping deploy if the build failed."""
     print("\nChange detected, rebuilding...")
     try:
         build(micropython=micropython, march=march, no_clean=False)
     except typer.Exit as exc:
         if exc.exit_code:
-            print("Build failed, skipping upload.", file=sys.stderr)
+            print("Build failed, skipping deploy.", file=sys.stderr)
             return
 
     try:
-        upload(port=port, baud=baud, reset=reset, path=None)
+        deploy(port=port, baud=baud, reset=reset, path=None)
     except typer.Exit as exc:
         if exc.exit_code:
-            print("Upload failed.", file=sys.stderr)
+            print("Deploy failed.", file=sys.stderr)
 
 
 @app.command()
@@ -877,7 +877,7 @@ def watch(
     ),
     baud: Optional[int] = typer.Option(None, "--baud", "-b", help="Baud rate"),
     reset: bool = typer.Option(
-        False, "--reset", help="Hard-reset the device before each upload"
+        False, "--reset", help="Hard-reset the device before each deploy"
     ),
     micropython: str = typer.Option("1.28", help="Target MicroPython version"),
     march: str = typer.Option(
@@ -887,7 +887,7 @@ def watch(
         1.0, "--interval", help="Polling interval in seconds"
     ),
 ) -> None:
-    """Watch app/, config/, and root source files; rebuild + upload on change."""
+    """Watch app/, config/, and root source files; rebuild + deploy on change."""
     watched = _watched_files()
     if not watched:
         print("ERROR: no source files found to watch.", file=sys.stderr)
@@ -906,7 +906,7 @@ def watch(
             if current == snapshot:
                 continue
             snapshot = current
-            _rebuild_and_upload(port, baud, reset, micropython, march)
+            _rebuild_and_deploy(port, baud, reset, micropython, march)
     except KeyboardInterrupt:
         print("\nStopped watching.")
 
@@ -927,7 +927,7 @@ def config_set(
         None, "--port", "-p", help="Default serial port"
     ),
     baud: Optional[int] = typer.Option(None, "--baud", "-b", help="Default baud rate"),
-    path: Optional[Path] = typer.Option(None, "--path", help="Default upload path"),
+    path: Optional[Path] = typer.Option(None, "--path", help="Default deploy path"),
 ) -> None:
     """Set default port/baud/path in .microweaver."""
     if port is None and baud is None and path is None:
@@ -1123,7 +1123,7 @@ def _enter_raw_repl_with_retries(
     Retried in case opening the serial port itself triggers a board
     auto-reset (DTR toggling on connect, common on ESP32 dev boards),
     racing the raw-REPL handshake against that reboot - the same race
-    `upload --reset` already retries around.
+    `deploy --reset` already retries around.
     """
     last_error: RawReplEntryError | None = None
     for attempt in range(1, UPLOAD_RETRY_ATTEMPTS + 1):

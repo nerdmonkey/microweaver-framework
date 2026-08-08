@@ -353,27 +353,27 @@ def test_clean_backup_flag_but_only_dist_exists(fake_artifacts):
 
 
 # --------------------------------------------------------------------------
-# upload command
+# deploy command
 # --------------------------------------------------------------------------
 
 
-def test_upload_path_missing(tmp_path):
+def test_deploy_path_missing(tmp_path):
     missing = tmp_path / "nope"
     result = runner.invoke(
-        tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(missing)]
+        tinker.app, ["deploy", "--port", "/dev/ttyUSB0", str(missing)]
     )
     assert result.exit_code == 1
     assert "does not exist" in result.stderr
 
 
-def test_upload_directory_success(tmp_path, mocker):
+def test_deploy_directory_success(tmp_path, mocker):
     fake_transport = FakeDeviceTransport()
     mock_transport_cls = mocker.patch.object(
         tinker, "DeviceTransport", return_value=fake_transport
     )
     src = tmp_path / "dist"
     src.mkdir()
-    result = runner.invoke(tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(src)])
+    result = runner.invoke(tinker.app, ["deploy", "--port", "/dev/ttyUSB0", str(src)])
     assert result.exit_code == 0
     assert tinker.load_config()["port"] == "/dev/ttyUSB0"
     assert mock_transport_cls.call_args[0][0] == "/dev/ttyUSB0"
@@ -382,32 +382,32 @@ def test_upload_directory_success(tmp_path, mocker):
     assert "boot.py" in result.stdout
 
 
-def test_upload_single_file_success(tmp_path, mocker):
+def test_deploy_single_file_success(tmp_path, mocker):
     fake_transport = FakeDeviceTransport()
     mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     src = tmp_path / "firmware.mpy"
     src.write_bytes(b"data")
-    result = runner.invoke(tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(src)])
+    result = runner.invoke(tinker.app, ["deploy", "--port", "/dev/ttyUSB0", str(src)])
     assert result.exit_code == 0
     assert ("put_file", src, ":firmware.mpy") in fake_transport.calls
     assert f"{src} -> :firmware.mpy" in result.stdout
     assert "[1/1]" not in result.stdout
 
 
-def test_upload_custom_baud_warns(tmp_path, mocker):
+def test_deploy_custom_baud_warns(tmp_path, mocker):
     fake_transport = FakeDeviceTransport()
     mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     src = tmp_path / "dist"
     src.mkdir()
     result = runner.invoke(
         tinker.app,
-        ["upload", "--port", "/dev/ttyUSB0", "--baud", "9600", str(src)],
+        ["deploy", "--port", "/dev/ttyUSB0", "--baud", "9600", str(src)],
     )
     assert result.exit_code == 0
     assert "ignores --baud" in result.stderr
 
 
-def test_upload_with_reset_flag(tmp_path, mocker):
+def test_deploy_with_reset_flag(tmp_path, mocker):
     fake_transport = FakeDeviceTransport()
     mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     mock_reset = mocker.patch.object(tinker, "hard_reset")
@@ -415,13 +415,13 @@ def test_upload_with_reset_flag(tmp_path, mocker):
     src = tmp_path / "dist"
     src.mkdir()
     result = runner.invoke(
-        tinker.app, ["upload", "--port", "/dev/ttyUSB0", "--reset", str(src)]
+        tinker.app, ["deploy", "--port", "/dev/ttyUSB0", "--reset", str(src)]
     )
     assert result.exit_code == 0
     mock_reset.assert_called_once_with("/dev/ttyUSB0")
 
 
-def test_upload_retries_raw_repl_race_then_succeeds(tmp_path, mocker):
+def test_deploy_retries_raw_repl_race_then_succeeds(tmp_path, mocker):
     """Retry now happens regardless of --reset, unlike the old mpremote path."""
     mocker.patch.object(tinker.time, "sleep")
     fake_transport = FakeDeviceTransport(
@@ -431,13 +431,13 @@ def test_upload_retries_raw_repl_race_then_succeeds(tmp_path, mocker):
     mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     src = tmp_path / "dist"
     src.mkdir()
-    result = runner.invoke(tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(src)])
+    result = runner.invoke(tinker.app, ["deploy", "--port", "/dev/ttyUSB0", str(src)])
     assert result.exit_code == 0
     assert fake_transport.attempt == 3
     assert "retrying" in result.stderr
 
 
-def test_upload_exhausts_retries(tmp_path, mocker):
+def test_deploy_exhausts_retries(tmp_path, mocker):
     mocker.patch.object(tinker.time, "sleep")
     fake_transport = FakeDeviceTransport(
         raise_on="enter_raw_repl",
@@ -446,24 +446,24 @@ def test_upload_exhausts_retries(tmp_path, mocker):
     mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     src = tmp_path / "dist"
     src.mkdir()
-    result = runner.invoke(tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(src)])
+    result = runner.invoke(tinker.app, ["deploy", "--port", "/dev/ttyUSB0", str(src)])
     assert result.exit_code == 1
     assert fake_transport.attempt == tinker.UPLOAD_RETRY_ATTEMPTS
     assert "could not enter raw REPL on /dev/ttyUSB0" in result.stderr
 
 
-def test_upload_prompts_for_port_when_missing(tmp_path, mocker):
+def test_deploy_prompts_for_port_when_missing(tmp_path, mocker):
     fake_transport = FakeDeviceTransport()
     mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
     src = tmp_path / "dist"
     src.mkdir()
-    result = runner.invoke(tinker.app, ["upload", str(src)])
+    result = runner.invoke(tinker.app, ["deploy", str(src)])
     assert result.exit_code == 0
     assert tinker.load_config()["port"] == "/dev/ttyUSB9"
 
 
-def test_upload_uses_config_defaults(tmp_path, mocker):
+def test_deploy_uses_config_defaults(tmp_path, mocker):
     tinker.save_config(port="/dev/ttyUSB2", baud=115200)
     src = tmp_path / "dist"
     src.mkdir()
@@ -472,12 +472,12 @@ def test_upload_uses_config_defaults(tmp_path, mocker):
     mock_transport_cls = mocker.patch.object(
         tinker, "DeviceTransport", return_value=fake_transport
     )
-    result = runner.invoke(tinker.app, ["upload"])
+    result = runner.invoke(tinker.app, ["deploy"])
     assert result.exit_code == 0
     assert mock_transport_cls.call_args[0][0] == "/dev/ttyUSB2"
 
 
-def test_upload_exec_error(tmp_path, mocker):
+def test_deploy_exec_error(tmp_path, mocker):
     fake_transport = FakeDeviceTransport(
         raise_on="put_dir",
         error=tinker.DeviceExecError("", "OSError: [Errno 28] ENOSPC"),
@@ -485,7 +485,7 @@ def test_upload_exec_error(tmp_path, mocker):
     mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     src = tmp_path / "dist"
     src.mkdir()
-    result = runner.invoke(tinker.app, ["upload", "--port", "/dev/ttyUSB0", str(src)])
+    result = runner.invoke(tinker.app, ["deploy", "--port", "/dev/ttyUSB0", str(src)])
     assert result.exit_code == 1
     assert "OSError: [Errno 28] ENOSPC" in result.stderr
 
@@ -1168,16 +1168,16 @@ def test_watch_stops_on_keyboard_interrupt_with_no_change(fake_project, mocker):
         tinker.time, "sleep", side_effect=[None, KeyboardInterrupt()]
     )
     mock_build = mocker.patch.object(tinker, "build")
-    mock_upload = mocker.patch.object(tinker, "upload")
+    mock_deploy = mocker.patch.object(tinker, "deploy")
     result = runner.invoke(tinker.app, ["watch"])
     assert result.exit_code == 0
     assert "Stopped watching" in result.stdout
     assert mock_sleep.call_count == 2
     mock_build.assert_not_called()
-    mock_upload.assert_not_called()
+    mock_deploy.assert_not_called()
 
 
-def test_watch_rebuilds_and_uploads_on_change(fake_project, mocker):
+def test_watch_rebuilds_and_deploys_on_change(fake_project, mocker):
     root, dist = fake_project
 
     def touch_then_stop(*args, **kwargs):
@@ -1190,19 +1190,19 @@ def test_watch_rebuilds_and_uploads_on_change(fake_project, mocker):
     touch_then_stop.calls = 0
     mocker.patch.object(tinker.time, "sleep", side_effect=touch_then_stop)
     mock_build = mocker.patch.object(tinker, "build")
-    mock_upload = mocker.patch.object(tinker, "upload")
+    mock_deploy = mocker.patch.object(tinker, "deploy")
     result = runner.invoke(tinker.app, ["watch", "--port", "/dev/ttyUSB0", "--reset"])
     assert result.exit_code == 0
     assert "Change detected, rebuilding..." in result.stdout
     mock_build.assert_called_once_with(
         micropython="1.28", march="xtensawin", no_clean=False
     )
-    mock_upload.assert_called_once_with(
+    mock_deploy.assert_called_once_with(
         port="/dev/ttyUSB0", baud=None, reset=True, path=None
     )
 
 
-def test_watch_build_failure_skips_upload(fake_project, mocker):
+def test_watch_build_failure_skips_deploy(fake_project, mocker):
     root, dist = fake_project
 
     def touch_then_stop(*args, **kwargs):
@@ -1215,14 +1215,14 @@ def test_watch_build_failure_skips_upload(fake_project, mocker):
     touch_then_stop.calls = 0
     mocker.patch.object(tinker.time, "sleep", side_effect=touch_then_stop)
     mocker.patch.object(tinker, "build", side_effect=typer.Exit(code=1))
-    mock_upload = mocker.patch.object(tinker, "upload")
+    mock_deploy = mocker.patch.object(tinker, "deploy")
     result = runner.invoke(tinker.app, ["watch"])
     assert result.exit_code == 0
-    assert "Build failed, skipping upload." in result.stderr
-    mock_upload.assert_not_called()
+    assert "Build failed, skipping deploy." in result.stderr
+    mock_deploy.assert_not_called()
 
 
-def test_watch_upload_failure_reported(fake_project, mocker):
+def test_watch_deploy_failure_reported(fake_project, mocker):
     root, dist = fake_project
 
     def touch_then_stop(*args, **kwargs):
@@ -1235,10 +1235,10 @@ def test_watch_upload_failure_reported(fake_project, mocker):
     touch_then_stop.calls = 0
     mocker.patch.object(tinker.time, "sleep", side_effect=touch_then_stop)
     mocker.patch.object(tinker, "build")
-    mocker.patch.object(tinker, "upload", side_effect=typer.Exit(code=1))
+    mocker.patch.object(tinker, "deploy", side_effect=typer.Exit(code=1))
     result = runner.invoke(tinker.app, ["watch"])
     assert result.exit_code == 0
-    assert "Upload failed." in result.stderr
+    assert "Deploy failed." in result.stderr
 
 
 # --------------------------------------------------------------------------
@@ -1514,7 +1514,7 @@ def test_run_mpremote_cmd_raw_repl_failure_prints_recovery(mocker, capsys):
 
 
 class FakeDeviceTransport:
-    """Stand-in for DeviceTransport used by tinker's ls/tree/upload commands."""
+    """Stand-in for DeviceTransport used by tinker's ls/tree/deploy commands."""
 
     def __init__(
         self,

@@ -33,16 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tinker.py device health` fetches and prints a `HealthCheckService` report from the
   device over `mpremote exec` (same pattern as the `device info` "Reset Reason" row), so
   the current health/metrics snapshot can be read without a full MQTT subscriber.
-- `tinker.py restore` uploads a previous `backup` folder's contents back onto the device
-  - the reverse of `backup`, sharing `upload`'s raw-REPL transfer path (retries,
+- `tinker.py restore` deploys a previous `backup` folder's contents back onto the device
+  - the reverse of `backup`, sharing `deploy`'s raw-REPL transfer path (retries,
   `--reset`, per-file progress) but never persisting its `path` argument to
-  `.microweaver`, so restoring from a backup can't silently change what a plain `upload`
+  `.microweaver`, so restoring from a backup can't silently change what a plain `deploy`
   uploads next time.
 
 ### Changed
-- `tinker.py download` renamed to `backup`, to pair with the new `restore` command.
+- `tinker.py upload` renamed to `deploy`; `download` renamed to `backup`, to pair with
+  the new `restore` command.
 - `tinker.py device ls`, `device tree`, `device info` (firmware read), `device health`,
-  `device rm`, `device mkdir`, `device test-adapter`, `upload`, `backup`, and
+  `device rm`, `device mkdir`, `device test-adapter`, `deploy`, `backup`, and
   `provision` now talk to the device directly over a raw-REPL serial connection
   (`device_transport.py`'s new `DeviceTransport`) instead of shelling out to the
   `mpremote` CLI, and no longer require `mpremote` on `PATH`. `fleet push`,
@@ -50,10 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   REPL without a soft reset, since a soft reset on firmware with a permanently-running
   `main.py` (like this project's `PublishService.run()`) hangs the handshake waiting for
   a prompt that never returns; raw-REPL entry retries with the same linear backoff
-  `upload --reset` used to reserve for reset races, now applied on every attempt
-  (previously a plain `upload` with no `--reset` got exactly one try). `upload` and
+  `deploy --reset` used to reserve for reset races, now applied on every attempt
+  (previously a plain `deploy` with no `--reset` got exactly one try). `deploy` and
   `backup` now print each file as it's sent/received (`[i/N] local -> remote` /
-  `[i/N] remote -> local`), and `upload`'s recursive directory walk creates remote
+  `[i/N] remote -> local`), and `deploy`'s recursive directory walk creates remote
   subdirectories as it goes. `device info`'s MicroPython/Reset Reason rows are read in
   one batched raw-REPL session instead of two separate `mpremote exec` calls, and now
   report a single `unavailable (device unresponsive)` instead of distinguishing a timeout
@@ -62,14 +63,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `tinker.py watch` no longer errors with `'mpremote' not found on PATH` on a machine
-  without `mpremote` installed. It only ever calls `build()` and `upload()` internally,
-  and `upload` stopped needing `mpremote` earlier in this changeset - the check was
+  without `mpremote` installed. It only ever calls `build()` and `deploy()` internally,
+  and `deploy` stopped needing `mpremote` earlier in this changeset - the check was
   stale and blocked `watch` even though it would have worked.
 
 ### Removed
-- `tinker.py upload`'s `--resume` flag. It existed to skip mpremote's soft-reset step;
-  raw-REPL entry never soft-resets now, so every `upload` already does what `--resume`
-  used to - passing the old flag is a CLI error.
+- `tinker.py deploy`'s `--resume` flag (present when this command was still named
+  `upload`). It existed to skip mpremote's soft-reset step; raw-REPL entry never
+  soft-resets now, so every `deploy` already does what `--resume` used to - passing the
+  old flag is a CLI error.
 
 ## [0.1.0] - 2026-08-08
 
