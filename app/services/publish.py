@@ -99,6 +99,7 @@ class PublishService:
         self._init_health_check()
         self._init_service_restart()
         self._init_health_report()
+        self._publish_tick_count = 0
         ssl_params = {}
         if setting.MQTT_SSL_CERT_PATH:
             ssl_params["cert"] = setting.MQTT_SSL_CERT_PATH
@@ -229,7 +230,11 @@ class PublishService:
                     "health_report", self._publish_health_report
                 )
         if setting.MQTT_ENABLED:
-            self.publish_message(message)
+            if self._publish_tick_count == 0:
+                self.publish_message(message)
+            self._publish_tick_count = (
+                self._publish_tick_count + 1
+            ) % setting.PUBLISH_INTERVAL_SECONDS
 
     def run(self, message="Hello from Agnes agent"):
         while True:

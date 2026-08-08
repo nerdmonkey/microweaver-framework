@@ -544,6 +544,53 @@ def test_run_survives_memory_monitor_exception(mocker):
     assert mock_client.publish.call_count == 2
 
 
+def test_run_publishes_every_tick_by_default(mocker):
+    mocker.patch("app.services.publish.setting.MQTT_ENABLED", True)
+    mocker.patch("app.services.publish.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.publish.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_connection.connect.side_effect = [mock_client, KeyboardInterrupt("stop test")]
+    mocker.patch(
+        "time.sleep", side_effect=[None, None, ConnectionResetError("dropped")]
+    )
+
+    service = PublishService()
+
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
+        service.run(message="hi")
+
+    assert mock_client.publish.call_count == 3
+
+
+def test_run_publishes_only_every_configured_interval(mocker):
+    mocker.patch("app.services.publish.setting.MQTT_ENABLED", True)
+    mocker.patch("app.services.publish.setting.PUBLISH_INTERVAL_SECONDS", 3)
+    mocker.patch("app.services.publish.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.publish.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_client = MagicMock()
+    mock_connection.connect.side_effect = [mock_client, KeyboardInterrupt("stop test")]
+    mocker.patch(
+        "time.sleep",
+        side_effect=[None, None, None, None, None, ConnectionResetError("dropped")],
+    )
+
+    service = PublishService()
+
+    with pytest.raises(KeyboardInterrupt, match="stop test"):
+        service.run(message="hi")
+
+    assert mock_client.publish.call_count == 2
+
+
+def test_publish_interval_defaults_to_one_second():
+    service = PublishService()
+
+    assert service._publish_tick_count == 0
+    assert setting.PUBLISH_INTERVAL_SECONDS == 1
+
+
 def test_run_skips_mqtt_connect_and_publish_when_disabled(mocker):
     mocker.patch("app.services.publish.setting.MQTT_ENABLED", False)
     mocker.patch("app.services.publish.WiFiService")
