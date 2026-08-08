@@ -94,3 +94,33 @@ def test_log_treats_unknown_level_as_info(mocker, capsys):
     out = capsys.readouterr().out.strip()
     payload = json.loads(out)
     assert payload["level"] == "bogus"
+
+
+def test_set_level_accepts_known_level():
+    service = LogService(level="info")
+
+    result = service.set_level("debug")
+
+    assert result is True
+    assert service.level == "debug"
+
+
+def test_set_level_rejects_unknown_level():
+    service = LogService(level="info")
+
+    result = service.set_level("bogus")
+
+    assert result is False
+    assert service.level == "info"
+
+
+def test_set_level_takes_effect_on_next_log_call(mocker, capsys):
+    mocker.patch("time.time", return_value=100)
+    service = LogService(level="warning")
+
+    service.log("debug_probe", level="debug")
+    service.set_level("debug")
+    service.log("debug_probe", level="debug")
+
+    out = capsys.readouterr().out.strip().splitlines()
+    assert len(out) == 1

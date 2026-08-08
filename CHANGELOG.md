@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Remote `log_level` override via MQTT: `RuntimeService` subscribes to
+  `log_level_topic` (`log_level_override_enabled`) and applies a valid level to
+  `LogService` at runtime for field debugging, reverting to the configured default on
+  next reboot.
 - `PublishService` run loop now logs a `tick` heartbeat (debug level) each cycle with
   current wifi connection state, so setting `log_level: debug` gives serial proof the
   device loop is alive even when `mqtt_enabled` is off and nothing else prints.

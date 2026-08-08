@@ -80,6 +80,7 @@ class RuntimeService:
         self.publish_scheduler = PollScheduler(interval_seconds=1)
         self._register_adapters()
         self._register_command_handlers()
+        self._init_log_level_override()
         self.bootloop_guard = None
         if setting.BOOT_LOOP_PROTECTION_ENABLED:
             self.bootloop_guard = BootLoopGuard(
@@ -142,6 +143,13 @@ class RuntimeService:
     def _register_command_handlers(self):
         for topic in self.topics:
             self.message_handlers[topic] = self._handle_command_message
+
+    def _init_log_level_override(self):
+        if setting.LOG_LEVEL_OVERRIDE_ENABLED and setting.LOG_LEVEL_TOPIC:
+            self.topics.append(setting.LOG_LEVEL_TOPIC)
+            self.message_handlers[
+                setting.LOG_LEVEL_TOPIC
+            ] = self._handle_log_level_message
 
     def _init_health_check(self):
         self.health_check_service = None
@@ -244,6 +252,17 @@ class RuntimeService:
     def _handle_ota_message(self, topic, message):
         print("OTA update triggered via MQTT:", message.decode())
         self.error_handler.guard(self.ota_service.apply_update, "ota_update")
+
+    def _handle_log_level_message(self, topic, message):
+        requested = message.decode().strip().lower()
+        if self.log_service.set_level(requested):
+            self.log_service.log(
+                "log_level_overridden", level="info", new_level=requested
+            )
+        else:
+            self.log_service.log(
+                "log_level_override_rejected", level="warning", requested=requested
+            )
 
     def _handle_command_message(self, topic, message):
         adapter = self._resolve_command_adapter(topic.decode())

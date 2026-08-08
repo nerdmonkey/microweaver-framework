@@ -319,6 +319,96 @@ def test_handle_ota_message_applies_update_via_error_handler():
     ota_service.apply_update.assert_called_once_with()
 
 
+def test_log_level_topic_not_registered_by_default():
+    service = RuntimeService()
+
+    assert "device/microweaver/log-level" not in service.topics
+    assert "device/microweaver/log-level" not in service.message_handlers
+
+
+def test_log_level_topic_registered_when_enabled(mocker):
+    mocker.patch("app.services.runtime.setting.LOG_LEVEL_OVERRIDE_ENABLED", True)
+    mocker.patch(
+        "app.services.runtime.setting.LOG_LEVEL_TOPIC", "device/microweaver/log-level"
+    )
+
+    service = RuntimeService()
+
+    assert "device/microweaver/log-level" in service.topics
+    assert (
+        service.message_handlers["device/microweaver/log-level"]
+        == service._handle_log_level_message
+    )
+
+
+def test_log_level_topic_not_registered_when_topic_blank(mocker):
+    mocker.patch("app.services.runtime.setting.LOG_LEVEL_OVERRIDE_ENABLED", True)
+    mocker.patch("app.services.runtime.setting.LOG_LEVEL_TOPIC", "")
+
+    service = RuntimeService()
+
+    assert "" not in service.message_handlers
+
+
+def test_handle_log_level_message_overrides_level():
+    service = RuntimeService()
+
+    service._handle_log_level_message(b"device/microweaver/log-level", b"debug")
+
+    assert service.log_service.level == "debug"
+
+
+def test_handle_log_level_message_strips_and_lowercases_payload():
+    service = RuntimeService()
+
+    service._handle_log_level_message(b"device/microweaver/log-level", b" DEBUG \n")
+
+    assert service.log_service.level == "debug"
+
+
+def test_handle_log_level_message_logs_override(mocker):
+    service = RuntimeService()
+    mocker.patch.object(service.log_service, "log")
+
+    service._handle_log_level_message(b"device/microweaver/log-level", b"debug")
+
+    service.log_service.log.assert_called_once_with(
+        "log_level_overridden", level="info", new_level="debug"
+    )
+
+
+def test_handle_log_level_message_rejects_unknown_level():
+    service = RuntimeService()
+    service.log_service.set_level("warning")
+
+    service._handle_log_level_message(b"device/microweaver/log-level", b"bogus")
+
+    assert service.log_service.level == "warning"
+
+
+def test_handle_log_level_message_logs_rejection(mocker):
+    service = RuntimeService()
+    mocker.patch.object(service.log_service, "log")
+
+    service._handle_log_level_message(b"device/microweaver/log-level", b"bogus")
+
+    service.log_service.log.assert_called_once_with(
+        "log_level_override_rejected", level="warning", requested="bogus"
+    )
+
+
+def test_on_message_routes_log_level_topic_to_handler(mocker):
+    mocker.patch("app.services.runtime.setting.LOG_LEVEL_OVERRIDE_ENABLED", True)
+    mocker.patch(
+        "app.services.runtime.setting.LOG_LEVEL_TOPIC", "device/microweaver/log-level"
+    )
+
+    service = RuntimeService()
+    service.on_message(b"device/microweaver/log-level", b"debug")
+
+    assert service.log_service.level == "debug"
+
+
 def test_on_message_routes_ota_topic_to_ota_handler(mocker):
     mocker.patch("app.services.runtime.setting.OTA_ENABLED", True)
     mocker.patch("app.services.runtime.setting.OTA_TOPIC", "ota/update")
