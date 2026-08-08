@@ -51,6 +51,8 @@
     "service_restart_max_attempts": 3,
     "log_format": "json",
     "log_level": "info",
+    "log_level_override_enabled": false,
+    "log_level_topic": "device/microweaver/log-level",
     "crash_log_enabled": false,
     "crash_log_path": "crash.json",
     "dht_sensor_type": "dht22",

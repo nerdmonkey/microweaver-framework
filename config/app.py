@@ -187,6 +187,12 @@ class Setting:
 
         self.LOG_FORMAT = self._value("log_format", "json")
         self.LOG_LEVEL = self._value("log_level", "info")
+        self.LOG_LEVEL_OVERRIDE_ENABLED = self._bool(
+            "log_level_override_enabled", False
+        )
+        self.LOG_LEVEL_TOPIC = self._value(
+            "log_level_topic", "device/{}/log-level".format(self.MQTT_CLIENT_ID)
+        )
 
         self.CRASH_LOG_ENABLED = self._bool("crash_log_enabled", False)
         self.CRASH_LOG_PATH = self._value("crash_log_path", "crash.json")

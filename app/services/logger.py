@@ -13,6 +13,12 @@ class LogService:
         self.format = format
         self.level = level
 
+    def set_level(self, level):
+        if level not in _LEVELS:
+            return False
+        self.level = level
+        return True
+
     def log(self, event, level="info", **fields):
         if _LEVELS.get(level, 20) < _LEVELS.get(self.level, 20):
             return
