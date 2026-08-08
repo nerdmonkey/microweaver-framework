@@ -297,6 +297,24 @@ def test_setting_raises_on_non_string_field(tmp_path):
         Setting(config_path=str(config_path))
 
 
+def test_setting_raises_on_non_boolean_log_level_override_enabled(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"log_level_override_enabled": "yes"}))
+
+    with pytest.raises(
+        ConfigError, match="log_level_override_enabled must be a boolean"
+    ):
+        Setting(config_path=str(config_path))
+
+
+def test_setting_raises_on_non_string_log_level_topic(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"log_level_topic": 12345}))
+
+    with pytest.raises(ConfigError, match="log_level_topic must be a string"):
+        Setting(config_path=str(config_path))
+
+
 def test_setting_parses_comma_separated_topics(tmp_path):
     config_path = tmp_path / "device_config.json"
     config_path.write_text(json.dumps({"mqtt_topic_sub": "topic/a, topic/b ,topic/c"}))
