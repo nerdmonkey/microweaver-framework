@@ -7,6 +7,7 @@ close. See docs/tinker.md for the operations that still shell out to the
 `mpremote` CLI (interactive REPL, log tailing) rather than using this class.
 """
 
+import ast
 import os
 import time
 from pathlib import Path
@@ -238,6 +239,67 @@ class DeviceTransport:
             if on_file is not None:
                 on_file(local_file, remote_file, index, total)
             self.put_file(local_file, remote_file)
+
+    def get_file(
+        self,
+        remote: str,
+        local: Path,
+        chunk_size: int = 256,
+        on_start: Callable[[str, Path], None] | None = None,
+    ) -> None:
+        """Read a remote file to a local path, chunk_size raw bytes per exec() call.
+
+        `on_start`, if given, is called once with (remote, local) before any
+        bytes are read.
+        """
+        remote_path = self._strip_colon(remote)
+        local = Path(local)
+        if on_start is not None:
+            on_start(remote_path, local)
+        local.parent.mkdir(parents=True, exist_ok=True)
+        self.exec(f"f = open({remote_path!r}, 'rb')\nr = f.read")
+        with open(local, "wb") as fh:
+            while True:
+                chunk = ast.literal_eval(self.exec(f"print(r({chunk_size}))").strip())
+                if not chunk:
+                    break
+                fh.write(chunk)
+        self.exec("f.close()")
+
+    def get_dir(
+        self,
+        remote: str,
+        local: Path,
+        on_file: Callable[[str, Path, int, int], None] | None = None,
+    ) -> None:
+        """Download a remote directory's contents into a local directory.
+
+        Mirrors `put_dir`'s direction: the contents of `remote` land
+        directly under `local`, not inside a new subfolder named after
+        `remote`. `on_file`, if given, is called once per file as
+        (remote, local, index, total) before that file starts downloading.
+        """
+        remote_root = self._strip_colon(remote) or "/"
+        local = Path(local)
+        file_pairs = []
+        self._collect_remote_files(remote_root, local, file_pairs)
+
+        total = len(file_pairs)
+        for index, (remote_file, local_file) in enumerate(file_pairs, start=1):
+            if on_file is not None:
+                on_file(remote_file, local_file, index, total)
+            self.get_file(remote_file, local_file)
+
+    def _collect_remote_files(
+        self, remote_dir: str, local_dir: Path, file_pairs: list
+    ) -> None:
+        for name, _size, is_dir in self.ls(remote_dir):
+            remote_child = remote_dir.rstrip("/") + "/" + name
+            local_child = local_dir / name
+            if is_dir:
+                self._collect_remote_files(remote_child, local_child, file_pairs)
+            else:
+                file_pairs.append((remote_child, local_child))
 
     @staticmethod
     def _strip_colon(path: str) -> str:

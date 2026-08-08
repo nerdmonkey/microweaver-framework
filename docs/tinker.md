@@ -29,10 +29,10 @@
 | Tool | Required for | Install |
 |---|---|---|
 | `mpy-cross-multi` | `build` | bundled with the project's build deps |
-| `mpremote` | `download`, `provision`, `fleet push`, `device repl`, `device logs`/`monitor` | `pip install mpremote` |
+| `mpremote` | `fleet push`, `device repl`, `device logs`/`monitor` | `pip install mpremote` |
 | `esptool` (Python API) | `device reset`, `device info` (chip read) | installed as a project dependency, no separate CLI install needed |
 
-The commands above check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`. `upload`, `watch`, `device ls`, `device tree`, `device info` (firmware read), `device health`, `device rm`, `device mkdir`, and `device test-adapter` talk to the device directly over a raw-REPL serial connection ([`DeviceTransport`](../device_transport.py)) (`watch` via `upload`) and do not require `mpremote` on `PATH`.
+The commands above check for `mpremote` on `PATH` up front and print an install hint if it's missing, rather than failing with a raw `FileNotFoundError`. `upload`, `watch`, `download`, `provision`, `device ls`, `device tree`, `device info` (firmware read), `device health`, `device rm`, `device mkdir`, and `device test-adapter` talk to the device directly over a raw-REPL serial connection ([`DeviceTransport`](../device_transport.py)) (`watch` via `upload`) and do not require `mpremote` on `PATH`.
 
 ## Global concepts
 
@@ -152,7 +152,7 @@ On success, the resolved `port`/`baud`/`path` are saved to `.microweaver` as new
 
 ### `download`
 
-Download the device's entire filesystem to a local folder via `mpremote fs cp -r :. <path>`.
+Download the device's entire filesystem to a local folder over a direct raw-REPL serial connection (does not require `mpremote`). Prints each file as it's received (`[i/N] remote -> local`).
 
 ```shell
 python tinker.py download [OPTIONS] [PATH]
@@ -455,8 +455,8 @@ python tinker.py upload ./backup-before-experiment --reset
 |---|---|
 | `ERROR: 'mpremote' not found on PATH.` | `pip install mpremote` |
 | `ERROR: No serial ports found and none set in .microweaver.` | Connect the device, or run `tinker.py config set --port <port>` |
-| `could not enter raw REPL` (upload/device ls/tree/info/health/rm/mkdir/test-adapter) | Firmware likely stuck or still rebooting — already retried automatically; if it still fails, retry with `upload --reset` or `device reset --port <port>` first |
-| `mpremote fails with 'could not enter raw repl'` (fleet push/download/provision) | Firmware likely stuck or still rebooting — retry with `--reset` where supported, or `device reset --port <port>` first |
-| `NOTE: mpremote ignores --baud ...` | Expected — `mpremote`'s CLI hardcodes 115200; not a bug in `tinker.py` |
+| `could not enter raw REPL` (upload/watch/download/provision/device ls/tree/info/health/rm/mkdir/test-adapter) | Firmware likely stuck or still rebooting — already retried automatically; if it still fails, retry with `upload --reset` or `device reset --port <port>` first |
+| `mpremote fails with 'could not enter raw repl'` (fleet push) | Firmware likely stuck or still rebooting — retry with `--reset`, or `device reset --port <port>` first |
+| `NOTE: mpremote ignores --baud ...` (fleet push only) | Expected — `mpremote`'s CLI hardcodes 115200; not a bug in `tinker.py` |
 | `device info` shows `MicroPython: unavailable` | Firmware busy/unresponsive after retrying — not related to `mpremote` being installed |
 | Wrong device picked automatically | Only happens when exactly one port is present; unplug other USB-serial adapters or pass `--port` explicitly |

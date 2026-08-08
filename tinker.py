@@ -590,14 +590,6 @@ def download(
     ),
 ) -> None:
     """Download the device's filesystem to a local folder."""
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
     # Resolution order: CLI flag > .microweaver > hardcoded default.
     config = load_config()
     resolved_port = port or config.get("port")
@@ -607,35 +599,45 @@ def download(
         resolved_port = prompt_for_port()
         port = resolved_port
 
-    # mpremote's CLI hardcodes 115200 baud (no override flag exists upstream
-    # as of 1.28.0); --baud is accepted for interface parity but has no
-    # effect on the actual transfer today.
+    # DeviceTransport always runs at 115200 baud; --baud is accepted for
+    # interface/config-file compatibility but has no effect on the transfer.
     if resolved_baud != 115200:
         print(
-            f"NOTE: mpremote ignores --baud (requested {resolved_baud}), "
+            f"NOTE: download ignores --baud (requested {resolved_baud}), "
             "connection always runs at 115200.",
             file=sys.stderr,
         )
 
     path.mkdir(parents=True, exist_ok=True)
 
-    # mpremote's fs cp has no include/exclude filter, so if the destination
-    # is (or contains) the project root, guard our own config file from
-    # being clobbered by whatever the copy pulls in.
+    # get_dir has no include/exclude filter, so if the destination is (or
+    # contains) the project root, guard our own config file from being
+    # clobbered by whatever the download pulls in.
     guard_path = path / CONFIG_PATH.name
     guard_backup = guard_path.read_bytes() if guard_path.exists() else None
 
-    cmd = ["mpremote", "connect", resolved_port, "fs", "cp", "-r", ":.", str(path)]
-    result = _run_mpremote_cmd(cmd, resolved_port)
-
-    if guard_backup is not None:
-        guard_path.write_bytes(guard_backup)
-
-    if result.returncode != 0:
-        raise typer.Exit(code=result.returncode)
+    try:
+        with _raw_repl_session(resolved_port, "download") as transport:
+            transport.get_dir(":", path, on_file=_print_download_file)
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
+    finally:
+        if guard_backup is not None:
+            guard_path.write_bytes(guard_backup)
 
     save_config(port=port, baud=baud)
     print(f"\nDownloaded {resolved_port} -> {path}")
+
+
+def _print_download_file(
+    remote: str, local: Path, index: int | None = None, total: int | None = None
+) -> None:
+    prefix = f"[{index}/{total}] " if index is not None else ""
+    print(f"{prefix}{remote} -> {local}")
 
 
 PROVISION_FIELDS = [
@@ -709,14 +711,6 @@ def provision(
     are entered locally and pushed over the same serial connection used by
     upload/download.
     """
-    if shutil.which("mpremote") is None:
-        print(
-            "ERROR: 'mpremote' not found on PATH. Install it with "
-            "'pip install mpremote'.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
     # Resolution order: CLI flag > .microweaver > hardcoded default.
     config = load_config()
     resolved_port = port or config.get("port")
@@ -726,12 +720,11 @@ def provision(
         resolved_port = prompt_for_port()
         port = resolved_port
 
-    # mpremote's CLI hardcodes 115200 baud (no override flag exists upstream
-    # as of 1.28.0); --baud is accepted for interface parity but has no
-    # effect on the actual transfer today.
+    # DeviceTransport always runs at 115200 baud; --baud is accepted for
+    # interface/config-file compatibility but has no effect on the transfer.
     if resolved_baud != 115200:
         print(
-            f"NOTE: mpremote ignores --baud (requested {resolved_baud}), "
+            f"NOTE: provision ignores --baud (requested {resolved_baud}), "
             "connection always runs at 115200.",
             file=sys.stderr,
         )
@@ -764,18 +757,15 @@ def provision(
         print(f"ERROR: {exc}", file=sys.stderr)
         raise typer.Exit(code=1)
 
-    cmd = [
-        "mpremote",
-        "connect",
-        resolved_port,
-        "fs",
-        "cp",
-        str(config_path),
-        ":device_config.json",
-    ]
-    result = _run_mpremote_cmd(cmd, resolved_port)
-    if result.returncode != 0:
-        raise typer.Exit(code=result.returncode)
+    try:
+        with _raw_repl_session(resolved_port, "provision") as transport:
+            transport.put_file(config_path, ":device_config.json")
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
 
     save_config(port=port, baud=baud)
     print(f"\nProvisioned {resolved_port} with {config_path.name}")

@@ -539,3 +539,129 @@ def test_put_dir_calls_on_file_with_index_and_total(mocker, tmp_path):
         ("a.py", "/a.py", 1, 2),
         ("b.py", "/b.py", 2, 2),
     ]
+
+
+# --------------------------------------------------------------------------
+# get_file
+# --------------------------------------------------------------------------
+
+
+def test_get_file_reads_chunks_and_writes_local(mocker, tmp_path):
+    local_file = tmp_path / "boot.py"
+    transport = make_device_transport(serial_double=FakeSerial())
+    exec_mock = mocker.patch.object(
+        transport,
+        "exec",
+        side_effect=[
+            "",
+            repr(b"abcd") + "\r\n",
+            repr(b"ef") + "\r\n",
+            repr(b"") + "\r\n",
+            "",
+        ],
+    )
+
+    transport.get_file(":boot.py", local_file, chunk_size=4)
+
+    assert local_file.read_bytes() == b"abcdef"
+    calls = [call.args[0] for call in exec_mock.call_args_list]
+    assert calls[0] == "f = open('boot.py', 'rb')\nr = f.read"
+    assert calls[1] == "print(r(4))"
+    assert calls[-1] == "f.close()"
+
+
+def test_get_file_empty_remote_writes_empty_local_file(mocker, tmp_path):
+    local_file = tmp_path / "empty.py"
+    transport = make_device_transport(serial_double=FakeSerial())
+    mocker.patch.object(transport, "exec", side_effect=["", repr(b"") + "\r\n", ""])
+
+    transport.get_file(":empty.py", local_file)
+
+    assert local_file.read_bytes() == b""
+
+
+def test_get_file_creates_parent_dirs(mocker, tmp_path):
+    local_file = tmp_path / "nested" / "deep" / "boot.py"
+    transport = make_device_transport(serial_double=FakeSerial())
+    mocker.patch.object(transport, "exec", side_effect=["", repr(b"") + "\r\n", ""])
+
+    transport.get_file(":boot.py", local_file)
+
+    assert local_file.exists()
+
+
+def test_get_file_calls_on_start_before_reading(mocker, tmp_path):
+    local_file = tmp_path / "boot.py"
+    transport = make_device_transport(serial_double=FakeSerial())
+    mocker.patch.object(transport, "exec", side_effect=["", repr(b"") + "\r\n", ""])
+    seen = []
+
+    transport.get_file(
+        ":boot.py",
+        local_file,
+        on_start=lambda remote, local: seen.append((remote, local)),
+    )
+
+    assert seen == [("boot.py", local_file)]
+
+
+# --------------------------------------------------------------------------
+# get_dir
+# --------------------------------------------------------------------------
+
+
+def test_get_dir_downloads_nested_tree_without_wrapping_folder(mocker, tmp_path):
+    transport = make_device_transport(serial_double=FakeSerial())
+    mocker.patch.object(
+        transport,
+        "ls",
+        side_effect=lambda path: {
+            "/": [("boot.py", 4, False), ("lib", 0, True)],
+            "/lib": [("foo.py", 3, False)],
+        }[path],
+    )
+    get_file_mock = mocker.patch.object(transport, "get_file")
+
+    transport.get_dir(":", tmp_path)
+
+    calls = {
+        (str(call.args[0]), str(call.args[1])) for call in get_file_mock.call_args_list
+    }
+    assert calls == {
+        ("/boot.py", str(tmp_path / "boot.py")),
+        ("/lib/foo.py", str(tmp_path / "lib" / "foo.py")),
+    }
+
+
+def test_get_dir_empty_directory_downloads_nothing(mocker, tmp_path):
+    transport = make_device_transport(serial_double=FakeSerial())
+    mocker.patch.object(transport, "ls", return_value=[])
+    get_file_mock = mocker.patch.object(transport, "get_file")
+
+    transport.get_dir(":", tmp_path)
+
+    get_file_mock.assert_not_called()
+
+
+def test_get_dir_calls_on_file_with_index_and_total(mocker, tmp_path):
+    transport = make_device_transport(serial_double=FakeSerial())
+    mocker.patch.object(
+        transport,
+        "ls",
+        return_value=[("a.py", 1, False), ("b.py", 1, False)],
+    )
+    mocker.patch.object(transport, "get_file")
+    seen = []
+
+    transport.get_dir(
+        ":",
+        tmp_path,
+        on_file=lambda remote, local, index, total: seen.append(
+            (remote, local.name, index, total)
+        ),
+    )
+
+    assert seen == [
+        ("/a.py", "a.py", 1, 2),
+        ("/b.py", "b.py", 2, 2),
+    ]
