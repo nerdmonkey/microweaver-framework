@@ -58,6 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--reset`, per-file progress) but never persisting its `path` argument to
   `.microweaver`, so restoring from a backup can't silently change what a plain `deploy`
   uploads next time.
+- `tinker.py ota build`/`tinker.py ota validate`: `ota build` computes a sha256 for each
+  given project file and writes a `dist/ota/<version>/manifest.json` (plus mirrored
+  copies of the files, ready to upload as-is to a CDN) in the `{url, sha256}` shape
+  `app/services/ota.py`'s `apply_update()` requires; `ota validate` lint-checks a
+  manifest's structure (rejecting the checksum-less short form) and optionally
+  recomputes checksums against a local `--files-root` to catch drift before shipping an
+  OTA release.
 
 ### Changed
 - `tinker.py upload` renamed to `deploy`; `download` renamed to `backup`, to pair with

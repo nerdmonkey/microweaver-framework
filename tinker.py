@@ -2,7 +2,9 @@
 """Build, deploy, and manage microweaver firmware."""
 
 import configparser
+import hashlib
 import json
+import re
 import shutil
 import subprocess  # nosec B404
 import sys
@@ -64,6 +66,10 @@ device_app = typer.Typer(no_args_is_help=True, help="Interrupt or reset the devi
 app.add_typer(device_app, name="device")
 fleet_app = typer.Typer(no_args_is_help=True, help="Push a build to multiple devices.")
 app.add_typer(fleet_app, name="fleet")
+ota_app = typer.Typer(
+    no_args_is_help=True, help="Build and validate OTA update manifests."
+)
+app.add_typer(ota_app, name="ota")
 
 
 def _version_callback(value: bool) -> None:
@@ -376,6 +382,181 @@ def build(
         print(f"\n{errors} file(s) failed.", file=sys.stderr)
         raise typer.Exit(code=1)
     print("\nDone. Output: dist/")
+
+
+def _sha256_file(path: Path) -> str:
+    """Return the lowercase hex sha256 digest of a file's contents."""
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+@ota_app.command("build")
+def ota_build(
+    version: str = typer.Option(
+        ..., "--version", help="Release version, e.g. '2.0.0'."
+    ),
+    base_url: str = typer.Option(
+        ...,
+        "--base-url",
+        help="Base URL the files will be uploaded to, e.g. "
+        "'https://cdn.example.com/releases/2.0.0'.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite an existing dist/ota/<version>/ directory if present.",
+    ),
+    files: list[Path] = typer.Argument(
+        ...,
+        help="File paths relative to the project root to include in the release, "
+        "e.g. app_main.py app/services/mqtt.py",
+    ),
+) -> None:
+    """Build an OTA manifest.json + payload files under dist/ota/<version>/."""
+    version_dir = DIST / "ota" / version
+    if version_dir.exists():
+        if not force:
+            print(
+                f"ERROR: {version_dir} already exists. "
+                "Remove it or re-run with --force to overwrite.",
+                file=sys.stderr,
+            )
+            raise typer.Exit(code=1)
+        shutil.rmtree(version_dir)
+
+    base = base_url.rstrip("/")
+    manifest_files: dict[str, dict[str, str]] = {}
+    errors = 0
+
+    for rel in files:
+        src = ROOT / rel
+        if not src.is_file():
+            print(f"ERROR: {rel} not found or not a regular file.", file=sys.stderr)
+            errors += 1
+            continue
+
+        posix_rel = rel.as_posix()
+        try:
+            sha256 = _sha256_file(src)
+        except OSError as exc:
+            print(f"ERROR: could not read {rel}: {exc}", file=sys.stderr)
+            errors += 1
+            continue
+
+        dst = version_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+        manifest_files[posix_rel] = {"url": f"{base}/{posix_rel}", "sha256": sha256}
+        print(f"  {posix_rel} -> {dst}")
+
+    if errors:
+        shutil.rmtree(version_dir, ignore_errors=True)
+        print(f"\n{errors} file(s) failed; no output written.", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    manifest = {"version": version, "files": manifest_files}
+    manifest_path = version_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    print(f"\nDone. {len(manifest_files)} file(s), version {version}.")
+    print(f"Output: {version_dir}")
+    print_table(
+        ["File", "SHA256"], [(k, v["sha256"]) for k, v in manifest_files.items()]
+    )
+
+
+_SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+
+
+def _validate_manifest_file_entry(
+    key: str, entry, files_root: Optional[Path]
+) -> list[str]:
+    """Check a single manifest files[] entry, returning any issue strings."""
+    if not isinstance(entry, dict):
+        return [
+            f"{key}: entry is not the {{url, sha256}} object form "
+            "(short string-only form is not allowed)"
+        ]
+
+    issues = []
+    url = entry.get("url")
+    if not url or not isinstance(url, str):
+        issues.append(f"{key}: missing or invalid 'url'")
+
+    sha256 = entry.get("sha256")
+    if not sha256 or not isinstance(sha256, str) or not _SHA256_RE.match(sha256):
+        issues.append(f"{key}: missing or malformed 'sha256' (expected 64 hex chars)")
+        return issues
+
+    if files_root is not None:
+        local = files_root / key
+        if not local.is_file():
+            issues.append(f"{key}: file not found under --files-root ({local})")
+        else:
+            actual = _sha256_file(local)
+            if actual.lower() != sha256.lower():
+                issues.append(
+                    f"{key}: checksum mismatch (manifest={sha256}, actual={actual})"
+                )
+    return issues
+
+
+def _validate_manifest_structure(manifest) -> tuple[list[str], Optional[str], dict]:
+    """Check top-level manifest shape, returning (issues, version, files_field)."""
+    issues = []
+
+    version = manifest.get("version") if isinstance(manifest, dict) else None
+    if not isinstance(version, str) or not version:
+        issues.append("'version' is missing or not a non-empty string")
+
+    files_field = manifest.get("files") if isinstance(manifest, dict) else None
+    if not isinstance(files_field, dict) or not files_field:
+        issues.append("'files' is missing, not an object, or empty")
+        files_field = {}
+
+    return issues, version, files_field
+
+
+@ota_app.command("validate")
+def ota_validate(
+    manifest_path: Path = typer.Argument(
+        ..., help="Path to a manifest.json to validate."
+    ),
+    files_root: Optional[Path] = typer.Option(
+        None,
+        "--files-root",
+        help="If given, recompute and compare each file's sha256 against "
+        "<files-root>/<key> (in addition to structural checks).",
+    ),
+) -> None:
+    """Validate an OTA manifest.json's structure and (optionally) checksums."""
+    try:
+        raw = manifest_path.read_text()
+    except OSError as exc:
+        print(f"ERROR: could not read {manifest_path}: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    try:
+        manifest = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"ERROR: invalid JSON: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    issues, version, files_field = _validate_manifest_structure(manifest)
+    for key, entry in files_field.items():
+        issues.extend(_validate_manifest_file_entry(key, entry, files_root))
+
+    if issues:
+        for issue in issues:
+            print(f"ERROR: {issue}", file=sys.stderr)
+        print(f"\n{len(issues)} issue(s) found.", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    print(f"manifest OK: version {version}, {len(files_field)} file(s).")
 
 
 def _run_upload_cmd(
