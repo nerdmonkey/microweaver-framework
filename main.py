@@ -25,7 +25,7 @@ def start():
     sensor_name, sensor_adapter = _make_temperature_adapter()
     runtime = RuntimeService(
         publish_adapters=[(sensor_name, sensor_adapter)],
-        command_adapters=[("relay", RelayAdapter(pin=setting.RELAY_PIN))],
+        subscribe_adapters=[("relay", RelayAdapter(pin=setting.RELAY_PIN))],
     )
     runtime.run()
 

@@ -26,7 +26,7 @@ def test_connect_subscribes_to_each_configured_topic(mocker):
 
 def test_on_message_routes_raw_command_to_single_command_adapter():
     relay = MagicMock()
-    service = RuntimeService(command_adapters=[("relay", relay)])
+    service = RuntimeService(subscribe_adapters=[("relay", relay)])
 
     service.on_message(b"devices/relay", b"on")
 
@@ -35,7 +35,7 @@ def test_on_message_routes_raw_command_to_single_command_adapter():
 
 def test_on_message_routes_json_state_to_command_adapter():
     relay = MagicMock()
-    service = RuntimeService(command_adapters=[("relay", relay)])
+    service = RuntimeService(subscribe_adapters=[("relay", relay)])
 
     service.on_message(b"devices/relay", b'{"state": "toggle"}')
 
@@ -47,7 +47,7 @@ def test_on_message_falls_back_to_default_when_topic_does_not_match_multiple_ada
 ):
     relay = MagicMock()
     led = MagicMock()
-    service = RuntimeService(command_adapters=[("relay", relay), ("led", led)])
+    service = RuntimeService(subscribe_adapters=[("relay", relay), ("led", led)])
     default_handler = mocker.patch.object(service, "_default_handler")
 
     service.on_message(b"devices/pump", b"on")
@@ -84,7 +84,7 @@ def test_run_publishes_and_receives_with_one_connection(mocker):
 
     service = RuntimeService(
         publish_adapters=[("dht22", sensor)],
-        command_adapters=[("relay", relay)],
+        subscribe_adapters=[("relay", relay)],
     )
 
     with pytest.raises(SystemExit, match="stop test"):
@@ -117,7 +117,7 @@ def test_run_retries_when_subscribe_fails_during_connect(mocker):
     ]
     mocker.patch("time.sleep", side_effect=ConnectionResetError("dropped"))
 
-    service = RuntimeService(command_adapters=[("relay", MagicMock())])
+    service = RuntimeService(subscribe_adapters=[("relay", MagicMock())])
     mocker.patch.object(service.log_service, "log")
 
     with pytest.raises(SystemExit, match="stop test"):
@@ -644,7 +644,9 @@ def test_default_handler_prints_unmatched_topic(capsys):
 
 def test_handle_command_message_unknown_adapter_falls_back_to_default(mocker):
     relay = MagicMock()
-    service = RuntimeService(command_adapters=[("relay", relay), ("led", MagicMock())])
+    service = RuntimeService(
+        subscribe_adapters=[("relay", relay), ("led", MagicMock())]
+    )
     default_handler = mocker.patch.object(service, "_default_handler")
 
     service._handle_command_message(b"devices/pump", b"on")
@@ -655,7 +657,7 @@ def test_handle_command_message_unknown_adapter_falls_back_to_default(mocker):
 
 def test_handle_command_message_off_command():
     relay = MagicMock()
-    service = RuntimeService(command_adapters=[("relay", relay)])
+    service = RuntimeService(subscribe_adapters=[("relay", relay)])
 
     service._handle_command_message(b"devices/relay", b"off")
 
@@ -664,7 +666,7 @@ def test_handle_command_message_off_command():
 
 def test_handle_command_message_unsupported_command_prints(capsys):
     relay = MagicMock()
-    service = RuntimeService(command_adapters=[("relay", relay)])
+    service = RuntimeService(subscribe_adapters=[("relay", relay)])
 
     service._handle_command_message(b"devices/relay", b"blink")
 
@@ -677,7 +679,7 @@ def test_handle_command_message_unsupported_command_prints(capsys):
 
 def test_resolve_command_adapter_matches_full_topic():
     relay = MagicMock()
-    service = RuntimeService(command_adapters=[("devices/relay", relay)])
+    service = RuntimeService(subscribe_adapters=[("devices/relay", relay)])
 
     resolved = service._resolve_command_adapter("devices/relay")
 
@@ -781,7 +783,7 @@ def test_stop_tears_down_adapters_in_reverse_order(mocker):
     relay.deinit.side_effect = lambda: calls.append("relay.deinit")
 
     service = RuntimeService(
-        publish_adapters=[("sensor", sensor)], command_adapters=[("relay", relay)]
+        publish_adapters=[("sensor", sensor)], subscribe_adapters=[("relay", relay)]
     )
     service.stop()
 
@@ -790,7 +792,7 @@ def test_stop_tears_down_adapters_in_reverse_order(mocker):
 
 def test_resolve_command_adapter_single_adapter_fallback():
     relay = MagicMock()
-    service = RuntimeService(command_adapters=[("relay", relay)])
+    service = RuntimeService(subscribe_adapters=[("relay", relay)])
 
     resolved = service._resolve_command_adapter("unrelated/topic")
 

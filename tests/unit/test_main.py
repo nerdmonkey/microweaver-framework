@@ -17,7 +17,7 @@ def test_start_wires_and_runs_runtime_service_with_dht22_default(mocker):
     mock_relay_cls.assert_called_once_with(pin=16)
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[("dht22", mock_dht22_cls.return_value)],
-        command_adapters=[("relay", mock_relay_cls.return_value)],
+        subscribe_adapters=[("relay", mock_relay_cls.return_value)],
     )
     mock_runtime_cls.return_value.run.assert_called_once_with()
 
@@ -38,7 +38,7 @@ def test_start_wires_and_runs_runtime_service_with_dht11(mocker):
     mock_relay_cls.assert_called_once_with(pin=16)
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[("dht11", mock_dht11_cls.return_value)],
-        command_adapters=[("relay", mock_relay_cls.return_value)],
+        subscribe_adapters=[("relay", mock_relay_cls.return_value)],
     )
     mock_runtime_cls.return_value.run.assert_called_once_with()
 

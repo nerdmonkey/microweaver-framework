@@ -26,7 +26,7 @@ setting = (Setting()).get_settings()
 
 
 class RuntimeService:
-    def __init__(self, publish_adapters=None, command_adapters=None):
+    def __init__(self, publish_adapters=None, subscribe_adapters=None):
         self.topic = setting.MQTT_TOPIC_PUB
         self.topics = list(setting.MQTT_TOPIC_SUB)
         self.publish_qos = setting.MQTT_PUBLISH_QOS
@@ -75,8 +75,8 @@ class RuntimeService:
         if self.watchdog_service:
             self.registry.register("watchdog", start=self.watchdog_service.start)
         self.publish_adapters = list(publish_adapters) if publish_adapters else []
-        self.command_adapters = list(command_adapters) if command_adapters else []
-        self.command_adapter_map = dict(self.command_adapters)
+        self.subscribe_adapters = list(subscribe_adapters) if subscribe_adapters else []
+        self.subscribe_adapter_map = dict(self.subscribe_adapters)
         self.publish_scheduler = PollScheduler(interval_seconds=1)
         self._register_adapters()
         self._register_command_handlers()
@@ -134,7 +134,7 @@ class RuntimeService:
         self.registry.start_all()
 
     def _register_adapters(self):
-        for name, adapter in self.publish_adapters + self.command_adapters:
+        for name, adapter in self.publish_adapters + self.subscribe_adapters:
             self.registry.register_adapter(name, adapter)
             if (name, adapter) in self.publish_adapters:
                 self.publish_scheduler.register(name)
@@ -261,13 +261,13 @@ class RuntimeService:
             print("Unsupported command for topic:", topic.decode(), "-", command)
 
     def _resolve_command_adapter(self, topic):
-        if topic in self.command_adapter_map:
-            return self.command_adapter_map[topic]
+        if topic in self.subscribe_adapter_map:
+            return self.subscribe_adapter_map[topic]
         topic_name = topic.rsplit("/", 1)[-1]
-        if topic_name in self.command_adapter_map:
-            return self.command_adapter_map[topic_name]
-        if len(self.command_adapter_map) == 1:
-            return next(iter(self.command_adapter_map.values()))
+        if topic_name in self.subscribe_adapter_map:
+            return self.subscribe_adapter_map[topic_name]
+        if len(self.subscribe_adapter_map) == 1:
+            return next(iter(self.subscribe_adapter_map.values()))
         return None
 
     def _decode_command(self, message):
