@@ -61,6 +61,21 @@ def start_safe_mode():
         time.sleep(1)
 """
 
+RECOVERY_EVIDENCE = (
+    (
+        '"reason": "watchdog"',
+        "watchdog reset reason was not observed",
+    ),
+    (
+        "BOOT: boot-loop detected, entering safe mode",
+        "boot-loop detection was not observed",
+    ),
+    (
+        "SOAK: safe mode reached",
+        "watchdog resets did not reach safe mode",
+    ),
+)
+
 
 class SoakFailure(RuntimeError):
     """A release-gate phase failed its hardware assertion."""
@@ -657,15 +672,24 @@ class HardwareSoak:
         log_path.write_text(output)
         os.chmod(log_path, 0o600)
         print(output)
-        if "SOAK: safe mode reached" not in output:
-            raise SoakFailure("watchdog resets did not reach safe mode")
-        if '"reason": "watchdog"' not in output:
-            raise SoakFailure("watchdog reset reason was not observed")
+        positions = []
+        for marker, failure in RECOVERY_EVIDENCE:
+            position = output.find(marker)
+            if position < 0:
+                raise SoakFailure(failure)
+            positions.append(position)
+        if positions != sorted(positions):
+            raise SoakFailure(
+                "recovery evidence was not observed in watchdog, boot-loop, "
+                "safe-mode order"
+            )
         self._record(
             "recovery",
             "passed",
             watchdog_reset_observed=True,
+            boot_loop_detected=True,
             safe_mode_observed=True,
+            evidence_ordered=True,
         )
 
     def burn_in(self):

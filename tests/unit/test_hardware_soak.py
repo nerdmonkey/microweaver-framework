@@ -887,8 +887,12 @@ def test_ota_rejects_byte_comparison_failure(tmp_path, mocker, file_contents, me
         soak.ota()
 
 
-def test_recovery_captures_watchdog_and_safe_mode(tmp_path, mocker):
-    output = b'{"reason": "watchdog"}\nSOAK: safe mode reached\n'
+def test_recovery_captures_ordered_watchdog_boot_loop_and_safe_mode(tmp_path, mocker):
+    output = (
+        b'{"reason": "watchdog"}\n'
+        b"BOOT: boot-loop detected, entering safe mode\n"
+        b"SOAK: safe mode reached\n"
+    )
     soak = make_soak(
         tmp_path,
         watch_seconds=1,
@@ -905,18 +909,40 @@ def test_recovery_captures_watchdog_and_safe_mode(tmp_path, mocker):
     soak.recovery()
 
     assert soak.watchdog_probe_installed is True
-    assert soak.report["stages"]["recovery"]["safe_mode_observed"] is True
+    evidence = soak.report["stages"]["recovery"]
+    assert evidence["watchdog_reset_observed"] is True
+    assert evidence["boot_loop_detected"] is True
+    assert evidence["safe_mode_observed"] is True
+    assert evidence["evidence_ordered"] is True
     assert (soak.artifacts / "watchdog-recovery.log").read_bytes() == output
 
 
 @pytest.mark.parametrize(
     ("output", "message"),
     [
-        (b'{"reason": "watchdog"}\n', "did not reach safe mode"),
-        (b"SOAK: safe mode reached\n", "reset reason was not observed"),
+        (
+            b"BOOT: boot-loop detected, entering safe mode\n"
+            b"SOAK: safe mode reached\n",
+            "reset reason was not observed",
+        ),
+        (
+            b'{"reason": "watchdog"}\nSOAK: safe mode reached\n',
+            "boot-loop detection was not observed",
+        ),
+        (
+            b'{"reason": "watchdog"}\n'
+            b"BOOT: boot-loop detected, entering safe mode\n",
+            "did not reach safe mode",
+        ),
+        (
+            b"SOAK: safe mode reached\n"
+            b"BOOT: boot-loop detected, entering safe mode\n"
+            b'{"reason": "watchdog"}\n',
+            "watchdog, boot-loop, safe-mode order",
+        ),
     ],
 )
-def test_recovery_requires_both_reset_and_safe_mode_evidence(
+def test_recovery_requires_ordered_watchdog_boot_loop_and_safe_mode_evidence(
     tmp_path, mocker, output, message
 ):
     soak = make_soak(
