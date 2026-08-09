@@ -9,8 +9,9 @@ classic ESP32 and writes a secret-free `report.json` plus serial/tool logs. It:
 
 1. records the commit and device information;
 2. takes a private full-device backup;
-3. starts a genuinely blank SoftAP provisioning boot and pauses while the
-   operator joins the AP and submits the web form;
+3. starts a genuinely blank SoftAP provisioning boot, pauses while the operator
+   joins the AP, then fetches and submits the real web form with credentials
+   read only from the private backup;
 4. applies a checksummed manifest through the device's real HTTP OTA client,
    verifies the flash swap and `.ota_bak`, rolls back, and byte-compares the
    restored target;
@@ -58,11 +59,11 @@ python scripts/hardware_soak.py \
 ```
 
 The provisioning phase requires an explicit `PROVISION` confirmation before it
-removes the backed-up config. Join `Microweaver-Setup`, open
-`http://192.168.4.1`, submit the form, and press Enter in the runner only after
-the page says `Credentials saved. Connected!`. The runner then verifies the
-saved file itself. Credentials remain on the board and in the private backup;
-they are never copied into the report.
+removes the backed-up config. Join `Microweaver-Setup` and press Enter. The
+runner fetches the real form, submits the WiFi values held in its mode-0700
+backup, requires the `Credentials saved. Connected!` response, and then verifies
+the saved file over serial. Credentials are never printed, passed on the command
+line, or copied into the evidence report.
 
 To rerun only one phase:
 

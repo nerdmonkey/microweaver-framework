@@ -18,6 +18,8 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlencode
+from urllib.request import ProxyHandler, Request, build_opener
 
 import serial
 
@@ -114,6 +116,7 @@ class HardwareSoak:
         input_fn=input,
         command_runner=subprocess.run,
         serial_cls=serial.Serial,
+        url_opener=None,
     ):
         self.port = port
         self.artifacts = Path(artifacts).resolve()
@@ -126,6 +129,7 @@ class HardwareSoak:
         self.input = input_fn
         self.command_runner = command_runner
         self.serial_cls = serial_cls
+        self.url_opener = url_opener or build_opener(ProxyHandler({}))
         self.restored = False
         self.artifacts_created = False
         self.ota_attempted = False
@@ -241,10 +245,11 @@ class HardwareSoak:
         self._tinker("device", "rm", "--port", self.port, "device_config.json")
         self._tinker("device", "reset", "--port", self.port)
         print(
-            "Join Microweaver-Setup, open http://192.168.4.1, submit real WiFi "
-            "credentials, and wait for 'Credentials saved. Connected!'."
+            "Join Microweaver-Setup. The runner will fetch the real form and "
+            "submit the privately backed-up WiFi credentials."
         )
-        self.input("Press Enter after that message appears: ")
+        self.input("Press Enter after this computer has joined the setup AP: ")
+        self._submit_provisioning_form()
 
         with raw_repl_session(self.port) as transport:
             output = transport.exec(
@@ -266,8 +271,60 @@ class HardwareSoak:
             raise SoakFailure("provisioning config verification failed: " + detail)
         if "SOAK_WIFI_SET True" not in output:
             raise SoakFailure("provisioning saved an empty WiFi SSID")
-        self._record("provisioning", "passed", wifi_credentials_persisted=True)
+        self._record(
+            "provisioning",
+            "passed",
+            portal_form_loaded=True,
+            portal_reported_connected=True,
+            wifi_credentials_persisted=True,
+        )
         self.restore()
+
+    def _submit_provisioning_form(self):
+        config_path = self.backup / "device_config.json"
+        try:
+            config = json.loads(config_path.read_text())
+        except Exception as exc:
+            raise SoakFailure(
+                "private backup config could not be read: " + type(exc).__name__
+            ) from exc
+
+        ssid = config.get("wifi_ssid", "")
+        if not ssid:
+            raise SoakFailure("private backup config has no WiFi SSID")
+        fields = urlencode(
+            {
+                "ssid": ssid,
+                "password": config.get("wifi_password", ""),
+                "claim_code": "",
+            }
+        ).encode()
+
+        try:
+            form_request = Request("http://192.168.4.1/")
+            with self.url_opener.open(form_request, timeout=10) as response:
+                form = response.read().decode("utf-8", errors="replace")
+            if "Microweaver WiFi Setup" not in form or 'action="/save"' not in form:
+                raise SoakFailure("SoftAP did not return the provisioning form")
+
+            save_request = Request(
+                "http://192.168.4.1/save",
+                data=fields,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                method="POST",
+            )
+            with self.url_opener.open(save_request, timeout=35) as response:
+                result = response.read().decode("utf-8", errors="replace")
+            if "Credentials saved. Connected!" not in result:
+                raise SoakFailure(
+                    "SoftAP rejected or could not connect with the backup"
+                )
+        except SoakFailure:
+            raise
+        except Exception as exc:
+            raise SoakFailure(
+                "SoftAP HTTP request failed: " + type(exc).__name__
+            ) from exc
 
     def ota(self):
         if not self.manifest_url or not self.ota_target:

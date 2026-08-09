@@ -73,6 +73,33 @@ class FakeSerialStream:
         return data
 
 
+class FakeHttpResponse:
+    def __init__(self, body):
+        self.body = body.encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return None
+
+    def read(self):
+        return self.body
+
+
+class FakeUrlOpener:
+    def __init__(self, responses=None, error=None):
+        self.responses = list(responses or [])
+        self.error = error
+        self.calls = []
+
+    def open(self, request, timeout):
+        self.calls.append((request, timeout))
+        if self.error:
+            raise self.error
+        return FakeHttpResponse(self.responses.pop(0))
+
+
 def make_soak(tmp_path, **kwargs):
     stages = kwargs.pop("stages", set())
     return hardware_soak.HardwareSoak(
@@ -238,6 +265,7 @@ def test_provisioning_verifies_persisted_wifi_and_restores(tmp_path, mocker):
     answers = iter(["PROVISION", ""])
     soak = make_soak(tmp_path, input_fn=lambda _prompt: next(answers))
     mocker.patch.object(soak, "_tinker")
+    submit = mocker.patch.object(soak, "_submit_provisioning_form")
     restore = mocker.patch.object(soak, "restore")
     transport = FakeTransport(outputs=["SOAK_CONFIG_FILE True\nSOAK_WIFI_SET True\n"])
     mocker.patch.object(
@@ -248,6 +276,7 @@ def test_provisioning_verifies_persisted_wifi_and_restores(tmp_path, mocker):
     soak.provisioning()
 
     assert soak.report["stages"]["provisioning"]["result"] == "passed"
+    submit.assert_called_once_with()
     restore.assert_called_once_with()
 
 
@@ -255,6 +284,7 @@ def test_provisioning_rejects_empty_wifi(tmp_path, mocker):
     answers = iter(["PROVISION", "anything is accepted here"])
     soak = make_soak(tmp_path, input_fn=lambda _prompt: next(answers))
     mocker.patch.object(soak, "_tinker")
+    mocker.patch.object(soak, "_submit_provisioning_form")
     context = mocker.MagicMock()
     context.__enter__.return_value = FakeTransport(
         outputs=["SOAK_CONFIG_FILE True\nSOAK_WIFI_SET False\n"]
@@ -268,6 +298,7 @@ def test_provisioning_reports_config_file_verification_error(tmp_path, mocker):
     answers = iter(["PROVISION", ""])
     soak = make_soak(tmp_path, input_fn=lambda _prompt: next(answers))
     mocker.patch.object(soak, "_tinker")
+    mocker.patch.object(soak, "_submit_provisioning_form")
     context = mocker.MagicMock()
     context.__enter__.return_value = FakeTransport(
         outputs=["SOAK_CONFIG_FILE False\nSOAK_CONFIG_ERROR OSError\n"]
@@ -282,12 +313,103 @@ def test_provisioning_reports_empty_verification_output(tmp_path, mocker):
     answers = iter(["PROVISION", ""])
     soak = make_soak(tmp_path, input_fn=lambda _prompt: next(answers))
     mocker.patch.object(soak, "_tinker")
+    mocker.patch.object(soak, "_submit_provisioning_form")
     context = mocker.MagicMock()
     context.__enter__.return_value = FakeTransport(outputs=[""])
     mocker.patch.object(hardware_soak, "raw_repl_session", return_value=context)
 
     with pytest.raises(hardware_soak.SoakFailure, match="no output"):
         soak.provisioning()
+
+
+def test_submit_provisioning_form_uses_private_backup_without_logging_secrets(
+    tmp_path,
+):
+    opener = FakeUrlOpener(
+        responses=[
+            '<h1>Microweaver WiFi Setup</h1><form action="/save">',
+            "Credentials saved. Connected!",
+        ]
+    )
+    soak = make_soak(tmp_path, url_opener=opener)
+    soak.backup.mkdir(parents=True)
+    (soak.backup / "device_config.json").write_text(
+        '{"wifi_ssid": "TestWifi", "wifi_password": "super-secret"}'
+    )
+
+    soak._submit_provisioning_form()
+
+    form_request, form_timeout = opener.calls[0]
+    save_request, save_timeout = opener.calls[1]
+    assert form_request.full_url == "http://192.168.4.1/"
+    assert form_timeout == 10
+    assert save_request.full_url == "http://192.168.4.1/save"
+    assert save_request.get_method() == "POST"
+    assert save_timeout == 35
+    assert b"ssid=TestWifi" in save_request.data
+    assert b"password=super-secret" in save_request.data
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (None, "FileNotFoundError"),
+        ("not-json", "JSONDecodeError"),
+        ('{"wifi_ssid": ""}', "has no WiFi SSID"),
+    ],
+)
+def test_submit_provisioning_form_rejects_unusable_private_backup(
+    tmp_path, config, message
+):
+    soak = make_soak(tmp_path, url_opener=FakeUrlOpener())
+    soak.backup.mkdir(parents=True)
+    if config is not None:
+        (soak.backup / "device_config.json").write_text(config)
+
+    with pytest.raises(hardware_soak.SoakFailure, match=message):
+        soak._submit_provisioning_form()
+
+
+def test_submit_provisioning_form_rejects_wrong_page(tmp_path):
+    opener = FakeUrlOpener(responses=["not the setup form"])
+    soak = make_soak(tmp_path, url_opener=opener)
+    soak.backup.mkdir(parents=True)
+    (soak.backup / "device_config.json").write_text(
+        '{"wifi_ssid": "TestWifi", "wifi_password": "changeme"}'
+    )
+
+    with pytest.raises(hardware_soak.SoakFailure, match="did not return"):
+        soak._submit_provisioning_form()
+
+
+def test_submit_provisioning_form_rejects_failed_wifi_test(tmp_path):
+    opener = FakeUrlOpener(
+        responses=[
+            '<h1>Microweaver WiFi Setup</h1><form action="/save">',
+            "Credentials saved, but could not connect.",
+        ]
+    )
+    soak = make_soak(tmp_path, url_opener=opener)
+    soak.backup.mkdir(parents=True)
+    (soak.backup / "device_config.json").write_text(
+        '{"wifi_ssid": "TestWifi", "wifi_password": "changeme"}'
+    )
+
+    with pytest.raises(hardware_soak.SoakFailure, match="could not connect"):
+        soak._submit_provisioning_form()
+
+
+def test_submit_provisioning_form_sanitizes_http_exception(tmp_path):
+    opener = FakeUrlOpener(error=OSError("sensitive detail"))
+    soak = make_soak(tmp_path, url_opener=opener)
+    soak.backup.mkdir(parents=True)
+    (soak.backup / "device_config.json").write_text(
+        '{"wifi_ssid": "TestWifi", "wifi_password": "changeme"}'
+    )
+
+    with pytest.raises(hardware_soak.SoakFailure, match="OSError") as failure:
+        soak._submit_provisioning_form()
+    assert "sensitive detail" not in str(failure.value)
 
 
 def test_ota_requires_manifest_and_existing_target(tmp_path):
