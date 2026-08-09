@@ -35,7 +35,10 @@ The runtime supports username/password authentication and optional TLS, with
 optional client certificate/key parameters. TLS defaults to disabled, and the
 framework does not currently expose a CA trust anchor, server hostname, or a
 "verification required" policy. Host unit tests confirm argument wiring only;
-they do not prove certificate or hostname validation on MicroPython.
+they do not prove certificate or hostname validation on MicroPython. The
+boot-loop safe-mode connection also omits the configured TLS and client
+certificate/key settings, so its recovery OTA channel can fall back to
+plaintext even when the normal runtime is configured for TLS.
 
 Risk: without an authenticated TLS session, credentials, telemetry, commands,
 and OTA triggers can be observed or altered. A shared or broad broker ACL also
@@ -45,6 +48,8 @@ Required mitigation for a production deployment:
 
 - Use TLS, per-device credentials, and least-privilege publish/subscribe ACLs.
 - Reject plaintext credential use in the deployment profile.
+- Preserve the deployment's TLS policy and credentials in safe mode; do not
+  weaken transport security during recovery.
 - Verify the broker certificate and hostname on the exact MicroPython firmware
   and baseline board; client certificates alone do not authenticate the server.
 - Give each device a unique command and OTA trigger topic.
@@ -81,7 +86,10 @@ Provisioning starts an open AP by default and accepts WiFi credentials and an
 optional claim code over plaintext HTTP. A configured AP password enables WPA/
 WPA2, but the server remains unauthenticated HTTP. The AP stays active after a
 successful submission until provisioning is interrupted or the device reboots.
-Scanned SSIDs are inserted into the HTML form without escaping.
+Scanned SSIDs are inserted into the HTML form without escaping. When device
+claiming is enabled, the registration service also submits the claim code to an
+arbitrary configured URL and stores the returned device certificate and private
+key without enforcing authenticated HTTPS.
 
 Risk: a nearby party can observe or replace submitted credentials on the
 default open AP, resubmit configuration while the portal remains available, or
@@ -95,6 +103,8 @@ Required mitigation for a production deployment:
 - Escape scanned SSIDs before rendering them and add request/body size limits.
 - Treat claim codes as short-lived, one-time secrets and invalidate them after
   use.
+- Require authenticated HTTPS for claim registration and verify rejection of
+  invalid certificates and hostnames on the baseline firmware.
 - Verify the complete flow against a real phone/laptop and board, including
   unauthorized-client and resubmission attempts.
 
@@ -110,6 +120,9 @@ Required mitigation for a production deployment:
 - Use unique, revocable device credentials with minimal permissions.
 - Protect `device_config.json`, build output, backups, serial access, and CI
   artifacts; never commit or attach them to issues or pull requests.
+- Avoid passing credentials as command-line flags where shell history or process
+  listings can expose them; prefer the hidden interactive prompts or another
+  protected input channel.
 - Rotate credentials after suspected physical, serial, build-host, or backup
   exposure.
 - Prefer hardware-backed or encrypted secret storage when the target platform
@@ -130,11 +143,14 @@ Production gates still required before tagging v1.0:
 - [ ] Decide and implement the MQTT server-authentication policy, then record a
   successful broker handshake and rejected invalid-certificate/hostname tests
   on the baseline board and firmware.
+- [ ] Ensure safe mode preserves the configured MQTT TLS policy and credentials.
 - [ ] Add OTA manifest authenticity and replay/downgrade protection.
 - [ ] Complete a real CDN-to-board OTA apply, confirmation, failed-update, and
   rollback cycle.
 - [ ] Harden SoftAP defaults/lifetime and HTML rendering, then complete an
   interception/resubmission-oriented provisioning test on a real board.
+- [ ] Require authenticated HTTPS for device claim registration and verify it on
+  the baseline board and firmware.
 - [ ] Confirm per-device broker ACLs, OTA publishing permissions, credential
   rotation, and artifact/backup handling for the deployment environment.
 - [ ] Re-run `tox -e lint`, the full pytest suite, and a secret scan on the exact
