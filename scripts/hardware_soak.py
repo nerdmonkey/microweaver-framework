@@ -251,11 +251,24 @@ class HardwareSoak:
 
         with raw_repl_session(self.port) as transport:
             output = transport.exec(
-                "from config.app import Setting\n"
-                "print('SOAK_WIFI_SET', bool(Setting().get_settings().WIFI_SSID))\n"
+                "try:\n"
+                "    try:\n"
+                "        import ujson as json\n"
+                "    except ImportError:\n"
+                "        import json\n"
+                "    with open('device_config.json', 'r') as config_file:\n"
+                "        config = json.load(config_file)\n"
+                "    print('SOAK_CONFIG_FILE', True)\n"
+                "    print('SOAK_WIFI_SET', bool(config.get('wifi_ssid')))\n"
+                "except Exception as error:\n"
+                "    print('SOAK_CONFIG_FILE', False)\n"
+                "    print('SOAK_CONFIG_ERROR', type(error).__name__)\n"
             )
+        if "SOAK_CONFIG_FILE True" not in output:
+            detail = output.strip().splitlines()[-1] if output.strip() else "no output"
+            raise SoakFailure("provisioning config verification failed: " + detail)
         if "SOAK_WIFI_SET True" not in output:
-            raise SoakFailure("provisioning did not persist a WiFi SSID")
+            raise SoakFailure("provisioning saved an empty WiFi SSID")
         self._record("provisioning", "passed", wifi_credentials_persisted=True)
         self.restore()
 

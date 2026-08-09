@@ -239,7 +239,7 @@ def test_provisioning_verifies_persisted_wifi_and_restores(tmp_path, mocker):
     soak = make_soak(tmp_path, input_fn=lambda _prompt: next(answers))
     mocker.patch.object(soak, "_tinker")
     restore = mocker.patch.object(soak, "restore")
-    transport = FakeTransport(outputs=["SOAK_WIFI_SET True\n"])
+    transport = FakeTransport(outputs=["SOAK_CONFIG_FILE True\nSOAK_WIFI_SET True\n"])
     mocker.patch.object(
         hardware_soak, "raw_repl_session", return_value=mocker.MagicMock()
     )
@@ -260,9 +260,37 @@ def test_provisioning_rejects_missing_pass_or_wifi(tmp_path, mocker):
     answers = iter(["PROVISION", "PASS"])
     soak.input = lambda _prompt: next(answers)
     context = mocker.MagicMock()
-    context.__enter__.return_value = FakeTransport(outputs=["SOAK_WIFI_SET False\n"])
+    context.__enter__.return_value = FakeTransport(
+        outputs=["SOAK_CONFIG_FILE True\nSOAK_WIFI_SET False\n"]
+    )
     mocker.patch.object(hardware_soak, "raw_repl_session", return_value=context)
-    with pytest.raises(hardware_soak.SoakFailure, match="did not persist"):
+    with pytest.raises(hardware_soak.SoakFailure, match="empty WiFi SSID"):
+        soak.provisioning()
+
+
+def test_provisioning_reports_config_file_verification_error(tmp_path, mocker):
+    answers = iter(["PROVISION", "PASS"])
+    soak = make_soak(tmp_path, input_fn=lambda _prompt: next(answers))
+    mocker.patch.object(soak, "_tinker")
+    context = mocker.MagicMock()
+    context.__enter__.return_value = FakeTransport(
+        outputs=["SOAK_CONFIG_FILE False\nSOAK_CONFIG_ERROR OSError\n"]
+    )
+    mocker.patch.object(hardware_soak, "raw_repl_session", return_value=context)
+
+    with pytest.raises(hardware_soak.SoakFailure, match="OSError"):
+        soak.provisioning()
+
+
+def test_provisioning_reports_empty_verification_output(tmp_path, mocker):
+    answers = iter(["PROVISION", "PASS"])
+    soak = make_soak(tmp_path, input_fn=lambda _prompt: next(answers))
+    mocker.patch.object(soak, "_tinker")
+    context = mocker.MagicMock()
+    context.__enter__.return_value = FakeTransport(outputs=[""])
+    mocker.patch.object(hardware_soak, "raw_repl_session", return_value=context)
+
+    with pytest.raises(hardware_soak.SoakFailure, match="no output"):
         soak.provisioning()
 
 
