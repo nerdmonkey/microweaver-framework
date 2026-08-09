@@ -660,6 +660,165 @@ def test_ota_validate_multiple_issues_all_reported(tmp_path):
     assert "a.py" in result.stderr
 
 
+def test_ota_diff_identical_manifests(tmp_path):
+    manifest = {
+        "version": "1.0.0",
+        "files": {
+            "app/mod.py": {
+                "url": "https://cdn.example.com/1.0.0/app/mod.py",
+                "sha256": "a" * 64,
+            }
+        },
+    }
+    old_path = tmp_path / "old.json"
+    new_path = tmp_path / "new.json"
+    _write_manifest(old_path, manifest)
+    _write_manifest(new_path, manifest)
+
+    result = runner.invoke(tinker.app, ["ota", "diff", str(old_path), str(new_path)])
+
+    assert result.exit_code == 0
+    assert "Version: 1.0.0 (unchanged)" in result.stdout
+    assert "No differences." in result.stdout
+
+
+def test_ota_diff_version_only_change(tmp_path):
+    files = {
+        "app/mod.py": {
+            "url": "https://cdn.example.com/app/mod.py",
+            "sha256": "a" * 64,
+        }
+    }
+    old_path = tmp_path / "old.json"
+    new_path = tmp_path / "new.json"
+    _write_manifest(old_path, {"version": "1.0.0", "files": files})
+    _write_manifest(new_path, {"version": "1.0.1", "files": files})
+
+    result = runner.invoke(tinker.app, ["ota", "diff", str(old_path), str(new_path)])
+
+    assert result.exit_code == 1
+    assert "Version: 1.0.0 -> 1.0.1" in result.stdout
+    assert "No differences." not in result.stdout
+    assert "Change" not in result.stdout
+
+
+def test_ota_diff_classifies_changes(tmp_path):
+    old_path = tmp_path / "old.json"
+    new_path = tmp_path / "new.json"
+    _write_manifest(
+        old_path,
+        {
+            "version": "1.0.0",
+            "files": {
+                "removed.py": {
+                    "url": "https://cdn.example.com/1.0.0/removed.py",
+                    "sha256": "a" * 64,
+                },
+                "content.py": {
+                    "url": "https://cdn.example.com/1.0.0/content.py",
+                    "sha256": "b" * 64,
+                },
+                "url.py": {
+                    "url": "https://old.example.com/url.py",
+                    "sha256": "c" * 64,
+                },
+            },
+        },
+    )
+    _write_manifest(
+        new_path,
+        {
+            "version": "2.0.0",
+            "files": {
+                "added.py": {
+                    "url": "https://cdn.example.com/2.0.0/added.py",
+                    "sha256": "d" * 64,
+                },
+                "content.py": {
+                    "url": "https://cdn.example.com/2.0.0/content.py",
+                    "sha256": "e" * 64,
+                },
+                "url.py": {
+                    "url": "https://new.example.com/url.py",
+                    "sha256": "C" * 64,
+                },
+            },
+        },
+    )
+
+    result = runner.invoke(tinker.app, ["ota", "diff", str(old_path), str(new_path)])
+
+    assert result.exit_code == 1
+    assert "Version: 1.0.0 -> 2.0.0" in result.stdout
+    for status, path in (
+        ("ADDED", "added.py"),
+        ("REMOVED", "removed.py"),
+        ("CONTENT", "content.py"),
+        ("URL", "url.py"),
+    ):
+        assert status in result.stdout
+        assert path in result.stdout
+
+
+def test_ota_diff_json_output_contains_full_metadata(tmp_path):
+    old_path = tmp_path / "old.json"
+    new_path = tmp_path / "new.json"
+    old_entry = {"url": "https://old.example.com/a.py", "sha256": "a" * 64}
+    new_entry = {"url": "https://new.example.com/a.py", "sha256": "b" * 64}
+    _write_manifest(old_path, {"version": "1", "files": {"a.py": old_entry}})
+    _write_manifest(new_path, {"version": "2", "files": {"a.py": new_entry}})
+
+    result = runner.invoke(
+        tinker.app,
+        ["ota", "diff", str(old_path), str(new_path), "--json"],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "old_version": "1",
+        "new_version": "2",
+        "version_changed": True,
+        "added": [],
+        "removed": [],
+        "content_changed": [{"path": "a.py", "old": old_entry, "new": new_entry}],
+        "url_changed": [],
+        "different": True,
+    }
+
+
+def test_ota_diff_invalid_manifests_exit_two_and_report_both(tmp_path):
+    old_path = tmp_path / "old.json"
+    new_path = tmp_path / "new.json"
+    old_path.write_text("{not json")
+    _write_manifest(new_path, {"version": "2.0.0", "files": {}})
+
+    result = runner.invoke(tinker.app, ["ota", "diff", str(old_path), str(new_path)])
+
+    assert result.exit_code == 2
+    assert "ERROR: OLD: invalid JSON" in result.stderr
+    assert "ERROR: NEW: 'files'" in result.stderr
+
+
+def test_ota_diff_missing_manifest_exits_two(tmp_path):
+    missing_path = tmp_path / "missing.json"
+    valid_path = tmp_path / "valid.json"
+    _write_manifest(
+        valid_path,
+        {
+            "version": "1.0.0",
+            "files": {"a.py": {"url": "https://example.com/a.py", "sha256": "a" * 64}},
+        },
+    )
+
+    result = runner.invoke(
+        tinker.app, ["ota", "diff", str(missing_path), str(valid_path)]
+    )
+
+    assert result.exit_code == 2
+    assert "ERROR: OLD: could not read" in result.stderr
+
+
 def test_ota_build_help():
     result = runner.invoke(tinker.app, ["ota", "build", "--help"])
     assert result.exit_code == 0
@@ -672,6 +831,15 @@ def test_ota_validate_help():
     result = runner.invoke(tinker.app, ["ota", "validate", "--help"])
     assert result.exit_code == 0
     assert "--files-root" in _strip_ansi(result.stdout)
+
+
+def test_ota_diff_help():
+    result = runner.invoke(tinker.app, ["ota", "diff", "--help"])
+    assert result.exit_code == 0
+    stdout = _strip_ansi(result.stdout)
+    assert "OLD_MANIFEST" in stdout
+    assert "NEW_MANIFEST" in stdout
+    assert "--json" in stdout
 
 
 # --------------------------------------------------------------------------

@@ -12,7 +12,7 @@ import time
 import tomllib
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 
 import typer
 from esptool.cmds import _get_flash_info as get_flash_info
@@ -67,7 +67,7 @@ app.add_typer(device_app, name="device")
 fleet_app = typer.Typer(no_args_is_help=True, help="Push a build to multiple devices.")
 app.add_typer(fleet_app, name="fleet")
 ota_app = typer.Typer(
-    no_args_is_help=True, help="Build and validate OTA update manifests."
+    no_args_is_help=True, help="Build, validate, and compare OTA update manifests."
 )
 app.add_typer(ota_app, name="ota")
 
@@ -557,6 +557,116 @@ def ota_validate(
         raise typer.Exit(code=1)
 
     print(f"manifest OK: version {version}, {len(files_field)} file(s).")
+
+
+def _load_manifest_for_diff(path: Path) -> tuple[Optional[dict], list[str]]:
+    """Read and structurally validate a manifest used by ``ota diff``."""
+    try:
+        raw = path.read_text()
+    except OSError as exc:
+        return None, [f"could not read {path}: {exc}"]
+
+    try:
+        manifest = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return None, [f"invalid JSON in {path}: {exc}"]
+
+    issues, _, files_field = _validate_manifest_structure(manifest)
+    for key, entry in files_field.items():
+        issues.extend(_validate_manifest_file_entry(key, entry, None))
+    return manifest, issues
+
+
+def _diff_manifests(old_manifest: dict, new_manifest: dict) -> dict:
+    """Return a stable, JSON-serializable semantic diff of two manifests."""
+    old_files = old_manifest["files"]
+    new_files = new_manifest["files"]
+    old_paths = set(old_files)
+    new_paths = set(new_files)
+
+    added = [
+        {"path": path, "new": new_files[path]} for path in sorted(new_paths - old_paths)
+    ]
+    removed = [
+        {"path": path, "old": old_files[path]} for path in sorted(old_paths - new_paths)
+    ]
+    content_changed = []
+    url_changed = []
+
+    for path in sorted(old_paths & new_paths):
+        old_entry = old_files[path]
+        new_entry = new_files[path]
+        if old_entry["sha256"].lower() != new_entry["sha256"].lower():
+            content_changed.append({"path": path, "old": old_entry, "new": new_entry})
+        elif old_entry["url"] != new_entry["url"]:
+            url_changed.append({"path": path, "old": old_entry, "new": new_entry})
+
+    old_version = old_manifest["version"]
+    new_version = new_manifest["version"]
+    version_changed = old_version != new_version
+    different = bool(
+        version_changed or added or removed or content_changed or url_changed
+    )
+    return {
+        "old_version": old_version,
+        "new_version": new_version,
+        "version_changed": version_changed,
+        "added": added,
+        "removed": removed,
+        "content_changed": content_changed,
+        "url_changed": url_changed,
+        "different": different,
+    }
+
+
+@ota_app.command("diff")
+def ota_diff(
+    old_manifest_path: Path = typer.Argument(
+        ..., metavar="OLD_MANIFEST", help="Manifest to use as the comparison base."
+    ),
+    new_manifest_path: Path = typer.Argument(
+        ..., metavar="NEW_MANIFEST", help="Manifest containing the proposed update."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print the machine-readable diff as JSON."
+    ),
+) -> None:
+    """Compare two OTA manifests by version, file checksum, and URL."""
+    old_manifest, old_issues = _load_manifest_for_diff(old_manifest_path)
+    new_manifest, new_issues = _load_manifest_for_diff(new_manifest_path)
+
+    for label, issues in (("OLD", old_issues), ("NEW", new_issues)):
+        for issue in issues:
+            print(f"ERROR: {label}: {issue}", file=sys.stderr)
+    if old_issues or new_issues:
+        raise typer.Exit(code=2)
+
+    diff = _diff_manifests(cast(dict, old_manifest), cast(dict, new_manifest))
+    if json_output:
+        print(json.dumps(diff, indent=2))
+    else:
+        print(f"OTA manifest diff: {old_manifest_path} -> {new_manifest_path}")
+        if diff["version_changed"]:
+            print(f"Version: {diff['old_version']} -> {diff['new_version']}")
+        else:
+            print(f"Version: {diff['old_version']} (unchanged)")
+
+        rows = []
+        for status, key in (
+            ("ADDED", "added"),
+            ("REMOVED", "removed"),
+            ("CONTENT", "content_changed"),
+            ("URL", "url_changed"),
+        ):
+            rows.extend((status, item["path"]) for item in diff[key])
+        if rows:
+            print()
+            print_table(["Change", "File"], rows)
+        elif not diff["version_changed"]:
+            print("No differences.")
+
+    if diff["different"]:
+        raise typer.Exit(code=1)
 
 
 def _run_upload_cmd(

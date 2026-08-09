@@ -65,6 +65,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manifest's structure (rejecting the checksum-less short form) and optionally
   recomputes checksums against a local `--files-root` to catch drift before shipping an
   OTA release.
+- `tinker.py ota diff OLD_MANIFEST NEW_MANIFEST` compares OTA release versions and
+  classifies added, removed, content-changed, and URL-only-changed files, with optional
+  machine-readable `--json` output for CI and release automation.
 
 ### Changed
 - `tinker.py upload` renamed to `deploy`; `download` renamed to `backup`, to pair with
