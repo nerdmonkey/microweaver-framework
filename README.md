@@ -11,7 +11,7 @@ Microweaver is a lightweight MicroPython framework designed to simplify the deve
 
 Microweaver is currently in the `0.x` release series and under active development. Until v1.0, documented APIs, command-line options, and configuration keys may change between minor releases; review the [changelog](CHANGELOG.md) before upgrading.
 
-Starting with v1.0, the documented public APIs (including the `BaseAdapter` contract) and the configuration keys in [`device_config.json.example`](device_config.json.example) are covered by the stability guarantee. Within a `1.x` release, these surfaces will not be removed, renamed, or changed incompatibly without a deprecation path. Undocumented internals, private names, implementation details, examples, and experimental features remain free to evolve; breaking changes to the stable surfaces are reserved for a new major version.
+Starting with v1.0, the documented public APIs (including the `BaseAdapter` contract) and the configuration keys in [`device_config.json.example`](device_config.json.example) are covered by the stability guarantee. Within a `1.x` release, these surfaces will not be removed, renamed, or changed incompatibly without a deprecation path. Undocumented internals, private names, implementation details, examples, and experimental features remain free to evolve; breaking changes to the stable surfaces are reserved for a new major version. See the [versioning and stability policy](docs/versioning.md) for the exact compatibility guarantees for config, Python APIs, the CLI, and MQTT messages.
 
 ## Features
 
