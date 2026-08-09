@@ -2,12 +2,14 @@
 
 ## Supported Versions
 
-Microweaver does not yet publish tagged releases. Security fixes are applied
-to the `main` branch only.
+Microweaver's pre-1.0 tags are development snapshots and do not receive
+security backports. Security fixes are applied to the `main` branch only until
+the project publishes its support policy for stable releases.
 
-| Version | Supported          |
-| ------- | ------------------- |
-| main    | :white_check_mark:  |
+| Version          | Supported          |
+| ---------------- | ------------------ |
+| main             | :white_check_mark: |
+| pre-1.0 snapshots | :x:               |
 
 ## Reporting a Vulnerability
 
@@ -25,7 +27,14 @@ reporter credited in the release notes.
 
 ## Scope
 
-Microweaver runs on-device (ESP32/MicroPython) and talks to WiFi and MQTT
-infrastructure. Reports involving credential handling in
-`device_config.json`, MQTT/WiFi reconnect logic, or the watchdog/boot-loop
-protection services are especially relevant.
+Microweaver runs on-device (ESP32/MicroPython) and talks to WiFi, MQTT, and OTA
+infrastructure. Reports involving these areas are especially relevant:
+
+- Credential and device-key handling in `device_config.json`
+- MQTT authentication, authorization, and TLS
+- OTA manifest or payload authenticity, integrity, replay, and rollback
+- SoftAP provisioning and claim-code handling
+- Serial/physical access assumptions and recovery services
+
+The tracked security review and release gates for v1.0 are documented in
+[`docs/security-review-v1.md`](docs/security-review-v1.md).
