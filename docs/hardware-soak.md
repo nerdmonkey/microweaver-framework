@@ -117,8 +117,11 @@ python scripts/hardware_soak.py \
   --stages recovery
 ```
 
-The default watchdog capture is 20 seconds. Increase `--watch-seconds` on a
-board with a longer boot delay.
+The recovery stage is one automated physical sequence. It requires an observed
+watchdog reset reason, the boot-loop detector's safe-mode transition, and the
+temporary safe-mode probe becoming alive, in that order. The JSON report records
+all three signals independently. The default capture is 20 seconds; increase
+`--watch-seconds` on a board with a longer boot delay.
 
 After the point checks pass, run the 24-hour capture against the restored
 release candidate. During the capture, perform several planned WiFi outages,
@@ -135,7 +138,9 @@ python scripts/hardware_soak.py \
 ## Pass criteria and burn-in
 
 The automated reports must show `passed` for provisioning, OTA, recovery, and
-burnin, and `restored: true`. OTA evidence must show different before/applied
+burnin, and `restored: true`. Recovery evidence must show
+`watchdog_reset_observed`, `boot_loop_detected`, `safe_mode_observed`, and
+`evidence_ordered` as true. OTA evidence must show different before/applied
 hashes, matching expected/applied hashes for a local fixture, matching
 before/restored hashes, and no remaining `.ota_new`, `.ota_bak`, or state file.
 Keep the reports and logs as release evidence. Correlate the burn-in serial
