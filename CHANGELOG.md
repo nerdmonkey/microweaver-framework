@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Reset-reason logging now uses MicroPython's supported `machine.reset_cause()`
+  API, allowing real ESP32 watchdog resets to be recorded as `watchdog` instead
+  of `unknown`.
+
 ### Added
+- A backup-protected `scripts/hardware_soak.py` release-gate runner records
+  real-ESP32 evidence for SoftAP provisioning, HTTP OTA apply/rollback, and
+  watchdog-driven boot-loop recovery before v1.0.
 - Configurable `publish_interval_seconds` (default 1, matching prior fixed-1s
   behavior) gates how often `PublishService` publishes each tick, so sensor
   readings (e.g. DHT temperature/humidity) can be sent every N seconds instead

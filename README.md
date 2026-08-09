@@ -70,6 +70,9 @@ Before you can start using Microweaver, ensure you have the following prerequisi
 - `app/services/` — `WiFiService`, `MqttConnection` (shared reconnect/backoff logic), `RuntimeService` (combined publish+subscribe run loop, also composes OTA/health/metrics/logging), plus the lower-level `PublishService`/`SubscribeService` it's built from.
 - `app/adapters/{sensors,actuators,indicators}/` — extension points for hardware drivers; each should subclass `BaseAdapter` (`app/adapters/base.py`), which defines the frozen adapter contract: an `available` property, and `setup()`/`deinit()` lifecycle hooks.
 - `examples/` — reference device apps you can copy as a starting point; see [`examples/full-device`](examples/full-device/README.md).
+- `scripts/hardware_soak.py` — destructive, backup-protected ESP32 release-gate
+  runner for provisioning, OTA rollback, and watchdog/boot-loop recovery; see
+  the [hardware-soak guide](docs/hardware-soak.md).
 
 ### Running tests
 
