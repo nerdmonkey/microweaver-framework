@@ -35,4 +35,5 @@ device_config.json
 
 .microweaver
 backup/
+hardware-soak-results/
 .ipynb_checkpoints/
