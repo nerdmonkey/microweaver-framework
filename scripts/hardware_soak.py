@@ -31,7 +31,6 @@ from device_transport import (  # noqa: E402
 )
 
 PROVISION_CONFIRMATION = "PROVISION"
-PROVISION_RESULT = "PASS"
 WATCHDOG_MAIN = """import time
 import machine
 
@@ -245,9 +244,7 @@ class HardwareSoak:
             "Join Microweaver-Setup, open http://192.168.4.1, submit real WiFi "
             "credentials, and wait for 'Credentials saved. Connected!'."
         )
-        answer = self.input(f"Type {PROVISION_RESULT} after that message appears: ")
-        if answer.strip() != PROVISION_RESULT:
-            raise SoakFailure("SoftAP provisioning was not marked as passed")
+        self.input("Press Enter after that message appears: ")
 
         with raw_repl_session(self.port) as transport:
             output = transport.exec(

@@ -235,7 +235,7 @@ def test_provisioning_requires_explicit_destructive_confirmation(tmp_path):
 
 
 def test_provisioning_verifies_persisted_wifi_and_restores(tmp_path, mocker):
-    answers = iter(["PROVISION", "PASS"])
+    answers = iter(["PROVISION", ""])
     soak = make_soak(tmp_path, input_fn=lambda _prompt: next(answers))
     mocker.patch.object(soak, "_tinker")
     restore = mocker.patch.object(soak, "restore")
@@ -251,14 +251,10 @@ def test_provisioning_verifies_persisted_wifi_and_restores(tmp_path, mocker):
     restore.assert_called_once_with()
 
 
-def test_provisioning_rejects_missing_pass_or_wifi(tmp_path, mocker):
-    soak = make_soak(tmp_path, input_fn=lambda _prompt: "PROVISION")
+def test_provisioning_rejects_empty_wifi(tmp_path, mocker):
+    answers = iter(["PROVISION", "anything is accepted here"])
+    soak = make_soak(tmp_path, input_fn=lambda _prompt: next(answers))
     mocker.patch.object(soak, "_tinker")
-    with pytest.raises(hardware_soak.SoakFailure, match="not marked"):
-        soak.provisioning()
-
-    answers = iter(["PROVISION", "PASS"])
-    soak.input = lambda _prompt: next(answers)
     context = mocker.MagicMock()
     context.__enter__.return_value = FakeTransport(
         outputs=["SOAK_CONFIG_FILE True\nSOAK_WIFI_SET False\n"]
@@ -269,7 +265,7 @@ def test_provisioning_rejects_missing_pass_or_wifi(tmp_path, mocker):
 
 
 def test_provisioning_reports_config_file_verification_error(tmp_path, mocker):
-    answers = iter(["PROVISION", "PASS"])
+    answers = iter(["PROVISION", ""])
     soak = make_soak(tmp_path, input_fn=lambda _prompt: next(answers))
     mocker.patch.object(soak, "_tinker")
     context = mocker.MagicMock()
@@ -283,7 +279,7 @@ def test_provisioning_reports_config_file_verification_error(tmp_path, mocker):
 
 
 def test_provisioning_reports_empty_verification_output(tmp_path, mocker):
-    answers = iter(["PROVISION", "PASS"])
+    answers = iter(["PROVISION", ""])
     soak = make_soak(tmp_path, input_fn=lambda _prompt: next(answers))
     mocker.patch.object(soak, "_tinker")
     context = mocker.MagicMock()

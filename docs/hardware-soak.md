@@ -57,10 +57,12 @@ python scripts/hardware_soak.py \
   --ota-target main.mpy
 ```
 
-The provisioning phase asks for two explicit confirmations. Join
-`Microweaver-Setup`, open `http://192.168.4.1`, submit the form, and type `PASS`
-only after the page says `Credentials saved. Connected!`. Credentials remain on
-the board and in the private backup; they are never copied into the report.
+The provisioning phase requires an explicit `PROVISION` confirmation before it
+removes the backed-up config. Join `Microweaver-Setup`, open
+`http://192.168.4.1`, submit the form, and press Enter in the runner only after
+the page says `Credentials saved. Connected!`. The runner then verifies the
+saved file itself. Credentials remain on the board and in the private backup;
+they are never copied into the report.
 
 To rerun only one phase:
 
