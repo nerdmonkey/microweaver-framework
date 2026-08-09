@@ -12,7 +12,7 @@ import hashlib
 import json
 import os
 import shutil
-import subprocess
+import subprocess  # fixed argument lists only; shell is never enabled  # nosec B404
 import sys
 import time
 from contextlib import contextmanager
@@ -98,7 +98,7 @@ def raw_repl_session(port, attempts=4):
     finally:
         try:
             transport.exit_raw_repl()
-        except Exception:
+        except Exception:  # best-effort exit; close must still run  # nosec B110
             pass
         transport.close()
 
@@ -144,8 +144,11 @@ class HardwareSoak:
         }
 
     def _git_commit(self):
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+        git = shutil.which("git")
+        if git is None:
+            return "unknown"
+        result = subprocess.run(  # trusted executable, fixed arguments  # nosec B603
+            [git, "rev-parse", "HEAD"],
             cwd=REPO_ROOT,
             text=True,
             capture_output=True,

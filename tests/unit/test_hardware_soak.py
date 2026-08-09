@@ -114,6 +114,14 @@ def completed(stdout="", returncode=0):
     return subprocess.CompletedProcess([], returncode, stdout=stdout)
 
 
+def test_git_commit_is_unknown_when_git_is_unavailable(mocker, tmp_path):
+    mocker.patch.object(hardware_soak.shutil, "which", return_value=None)
+
+    soak = make_soak(tmp_path)
+
+    assert soak.report["commit"] == "unknown"
+
+
 def test_raw_repl_session_uses_non_resetting_entry_and_closes(mocker):
     transport = FakeTransport()
     mocker.patch.object(hardware_soak, "DeviceTransport", return_value=transport)
