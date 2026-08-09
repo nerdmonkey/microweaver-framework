@@ -134,7 +134,7 @@ If the serialized entry would exceed `crash_log_max_bytes`, `_shrink()` truncate
 
 Two paths, depending on whether the device has already rebooted since the crash:
 
-**Automatic — already rebooted.** `ResetService.read()` (`app/services/reset.py:29-52`) calls `_recover_crash_log()` on every boot, *before* the boot-loop check: if `crash.json` exists, its contents are logged as a single `crash_log_recovered` event at `error` level (with the original `event` field renamed to `original_event`) and the file is then cleared. This means a persisted crash log only survives from the moment of the crash until the *next* boot — check the serial console (`python tinker.py device logs`) or your MQTT log sink for a `crash_log_recovered` entry rather than expecting `crash.json` to still be on disk after a successful reboot.
+**Automatic — already rebooted.** `ResetService.read()` calls `_recover_crash_log()` on every boot, *before* the boot-loop check: if `crash.json` exists, its contents are logged as a single `crash_log_recovered` event at `error` level (with the original `event` field renamed to `original_event`) and the file is then cleared. This means a persisted crash log only survives from the moment of the crash until the *next* boot — check the serial console (`python tinker.py device logs`) or your MQTT log sink for a `crash_log_recovered` entry rather than expecting `crash.json` to still be on disk after a successful reboot.
 
 **Manual — device hasn't rebooted, or you want the raw file.** Read it directly off the device filesystem before it gets recovered/cleared:
 

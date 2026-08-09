@@ -76,21 +76,26 @@ It does not retry the normal application, does not touch WiFi/MQTT, and does not
 
 ## Reset reason logging
 
-`ResetService` (`app/services/reset.py`) reads `esp32.reset_reason()` once per boot (`_boot.py:13`, before the boot-loop check) and logs it via `LogService`. Reset causes map to short labels:
+`ResetService` (`app/services/reset.py`) reads the portable MicroPython
+`machine.reset_cause()` API once per boot (`_boot.py:13`, before the boot-loop
+check) and logs it via `LogService`. Reset causes map to short labels:
 
 | Label | Meaning |
 |---|---|
 | `power_on` | Power applied / power-on reset |
-| `software` | `machine.reset()` or `machine.soft_reset()` called |
-| `watchdog` | Hardware or RTC watchdog fired (`OWDT_RESET`, `TG0WDT_SYS_RESET`, `TG1WDT_SYS_RESET`, `RTCWDT_SYS_RESET`, `TGWDT_CPU_RESET`, `RTCWDT_CPU_RESET`, `RTCWDT_RTC_RESET`) |
+| `software` | MicroPython soft reset (`SOFT_RESET`) |
+| `watchdog` | Hardware watchdog fired (`WDT_RESET`) |
 | `deep_sleep` | Woke from deep sleep |
-| `sdio` | SDIO reset |
-| `intrusion` | Intrusion detection reset |
-| `external` | External reset pin |
-| `brownout` | Brown-out (power supply dip) |
+| `hard_reset` | Hard reset (`HARD_RESET`), which can represent a software hard reset, panic, or external reset |
 | `unknown` | Cause not in the known set |
 
-A `watchdog` reason is logged at `warning` level; everything else at `info`. This is the first thing to check when diagnosing *why* a device is boot-looping — repeated `watchdog` entries point at a hang, repeated `brownout` points at a power supply problem, not firmware.
+The ESP32 port folds brownouts into `PWRON_RESET`, so they appear as
+`power_on`; it also folds software hard resets, panics, and external resets into
+`HARD_RESET`. The portable API cannot distinguish those lower-level causes.
+
+A `watchdog` reason is logged at `warning` level; everything else at `info`.
+This is the first thing to check when diagnosing *why* a device is boot-looping
+-- repeated `watchdog` entries point at a hang rather than an ordinary reboot.
 
 ## Recovery procedures
 

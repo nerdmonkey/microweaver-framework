@@ -4,8 +4,8 @@ from app.services.reset import ResetService
 
 
 def test_read_logs_watchdog_trip(mocker):
-    mock_esp32 = mocker.patch("app.services.reset.esp32")
-    mock_esp32.reset_reason.return_value = mock_esp32.TG0WDT_SYS_RESET
+    mock_machine = mocker.patch("app.services.reset.machine")
+    mock_machine.reset_cause.return_value = mock_machine.WDT_RESET
     logger = MagicMock()
 
     service = ResetService(logger=logger)
@@ -17,8 +17,8 @@ def test_read_logs_watchdog_trip(mocker):
 
 
 def test_read_logs_non_watchdog_reset(mocker):
-    mock_esp32 = mocker.patch("app.services.reset.esp32")
-    mock_esp32.reset_reason.return_value = mock_esp32.POWERON_RESET
+    mock_machine = mocker.patch("app.services.reset.machine")
+    mock_machine.reset_cause.return_value = mock_machine.PWRON_RESET
     logger = MagicMock()
 
     service = ResetService(logger=logger)
@@ -28,8 +28,8 @@ def test_read_logs_non_watchdog_reset(mocker):
 
 
 def test_read_labels_power_on_reset(mocker):
-    mock_esp32 = mocker.patch("app.services.reset.esp32")
-    mock_esp32.reset_reason.return_value = mock_esp32.POWERON_RESET
+    mock_machine = mocker.patch("app.services.reset.machine")
+    mock_machine.reset_cause.return_value = mock_machine.PWRON_RESET
 
     service = ResetService()
     result = service.read()
@@ -38,19 +38,19 @@ def test_read_labels_power_on_reset(mocker):
     assert service.reason == "power_on"
 
 
-def test_read_labels_brownout_reset(mocker):
-    mock_esp32 = mocker.patch("app.services.reset.esp32")
-    mock_esp32.reset_reason.return_value = mock_esp32.RTCWDT_BROWN_OUT_RESET
+def test_read_labels_hard_reset(mocker):
+    mock_machine = mocker.patch("app.services.reset.machine")
+    mock_machine.reset_cause.return_value = mock_machine.HARD_RESET
 
     service = ResetService()
     result = service.read()
 
-    assert result == "brownout"
+    assert result == "hard_reset"
 
 
 def test_read_labels_deepsleep_reset(mocker):
-    mock_esp32 = mocker.patch("app.services.reset.esp32")
-    mock_esp32.reset_reason.return_value = mock_esp32.DEEPSLEEP_RESET
+    mock_machine = mocker.patch("app.services.reset.machine")
+    mock_machine.reset_cause.return_value = mock_machine.DEEPSLEEP_RESET
 
     service = ResetService()
     result = service.read()
@@ -58,69 +58,19 @@ def test_read_labels_deepsleep_reset(mocker):
     assert result == "deep_sleep"
 
 
-def test_read_labels_watchdog_variants(mocker):
-    mock_esp32 = mocker.patch("app.services.reset.esp32")
-    for constant_name in (
-        "OWDT_RESET",
-        "TG0WDT_SYS_RESET",
-        "TG1WDT_SYS_RESET",
-        "RTCWDT_SYS_RESET",
-        "TGWDT_CPU_RESET",
-        "RTCWDT_CPU_RESET",
-        "RTCWDT_RTC_RESET",
-    ):
-        mock_esp32.reset_reason.return_value = getattr(mock_esp32, constant_name)
-
-        service = ResetService()
-        result = service.read()
-
-        assert result == "watchdog"
-
-
-def test_read_labels_software_reset_variants(mocker):
-    mock_esp32 = mocker.patch("app.services.reset.esp32")
-    for constant_name in ("SW_RESET", "SW_CPU_RESET"):
-        mock_esp32.reset_reason.return_value = getattr(mock_esp32, constant_name)
-
-        service = ResetService()
-        result = service.read()
-
-        assert result == "software"
-
-
-def test_read_labels_sdio_reset(mocker):
-    mock_esp32 = mocker.patch("app.services.reset.esp32")
-    mock_esp32.reset_reason.return_value = mock_esp32.SDIO_RESET
+def test_read_labels_software_reset(mocker):
+    mock_machine = mocker.patch("app.services.reset.machine")
+    mock_machine.reset_cause.return_value = mock_machine.SOFT_RESET
 
     service = ResetService()
     result = service.read()
 
-    assert result == "sdio"
-
-
-def test_read_labels_intrusion_reset(mocker):
-    mock_esp32 = mocker.patch("app.services.reset.esp32")
-    mock_esp32.reset_reason.return_value = mock_esp32.INTRUSION_RESET
-
-    service = ResetService()
-    result = service.read()
-
-    assert result == "intrusion"
-
-
-def test_read_labels_external_reset(mocker):
-    mock_esp32 = mocker.patch("app.services.reset.esp32")
-    mock_esp32.reset_reason.return_value = mock_esp32.EXT_CPU_RESET
-
-    service = ResetService()
-    result = service.read()
-
-    assert result == "external"
+    assert result == "software"
 
 
 def test_read_labels_unknown_reset_cause(mocker):
-    mock_esp32 = mocker.patch("app.services.reset.esp32")
-    mock_esp32.reset_reason.return_value = "some_unmapped_value"
+    mock_machine = mocker.patch("app.services.reset.machine")
+    mock_machine.reset_cause.return_value = "some_unmapped_value"
 
     service = ResetService()
     result = service.read()
@@ -128,9 +78,9 @@ def test_read_labels_unknown_reset_cause(mocker):
     assert result == "unknown"
 
 
-def test_read_falls_back_when_reset_reason_unavailable(mocker):
-    mock_esp32 = mocker.patch("app.services.reset.esp32")
-    del mock_esp32.reset_reason
+def test_read_falls_back_when_reset_cause_unavailable(mocker):
+    mock_machine = mocker.patch("app.services.reset.machine")
+    del mock_machine.reset_cause
     logger = MagicMock()
 
     service = ResetService(logger=logger)
@@ -147,8 +97,8 @@ def test_reason_is_none_before_read():
 
 
 def test_read_recovers_and_clears_crash_log_when_present(mocker):
-    mock_esp32 = mocker.patch("app.services.reset.esp32")
-    mock_esp32.reset_reason.return_value = mock_esp32.POWERON_RESET
+    mock_machine = mocker.patch("app.services.reset.machine")
+    mock_machine.reset_cause.return_value = mock_machine.PWRON_RESET
     logger = MagicMock()
     crash_log = MagicMock()
     crash_log.read.return_value = {
@@ -175,8 +125,8 @@ def test_read_recovers_and_clears_crash_log_when_present(mocker):
 
 
 def test_read_skips_recovery_when_crash_log_empty(mocker):
-    mock_esp32 = mocker.patch("app.services.reset.esp32")
-    mock_esp32.reset_reason.return_value = mock_esp32.POWERON_RESET
+    mock_machine = mocker.patch("app.services.reset.machine")
+    mock_machine.reset_cause.return_value = mock_machine.PWRON_RESET
     logger = MagicMock()
     crash_log = MagicMock()
     crash_log.read.return_value = None
@@ -189,8 +139,8 @@ def test_read_skips_recovery_when_crash_log_empty(mocker):
 
 
 def test_read_skips_recovery_when_no_crash_log_given(mocker):
-    mock_esp32 = mocker.patch("app.services.reset.esp32")
-    mock_esp32.reset_reason.return_value = mock_esp32.POWERON_RESET
+    mock_machine = mocker.patch("app.services.reset.machine")
+    mock_machine.reset_cause.return_value = mock_machine.PWRON_RESET
     logger = MagicMock()
 
     service = ResetService(logger=logger)
