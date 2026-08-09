@@ -276,8 +276,26 @@ def test_provisioning_verifies_persisted_wifi_and_restores(tmp_path, mocker):
     soak.provisioning()
 
     assert soak.report["stages"]["provisioning"]["result"] == "passed"
+    assert soak.report["stages"]["provisioning"]["submission_mode"] == "automatic"
     submit.assert_called_once_with()
     restore.assert_called_once_with()
+
+
+def test_provisioning_accepts_browser_completed_submission(tmp_path, mocker):
+    answers = iter(["PROVISION", "done"])
+    soak = make_soak(tmp_path, input_fn=lambda _prompt: next(answers))
+    mocker.patch.object(soak, "_tinker")
+    submit = mocker.patch.object(soak, "_submit_provisioning_form")
+    mocker.patch.object(soak, "restore")
+    transport = FakeTransport(outputs=["SOAK_CONFIG_FILE True\nSOAK_WIFI_SET True\n"])
+    context = mocker.MagicMock()
+    context.__enter__.return_value = transport
+    mocker.patch.object(hardware_soak, "raw_repl_session", return_value=context)
+
+    soak.provisioning()
+
+    submit.assert_not_called()
+    assert soak.report["stages"]["provisioning"]["submission_mode"] == "manual"
 
 
 def test_provisioning_rejects_empty_wifi(tmp_path, mocker):

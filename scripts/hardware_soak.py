@@ -245,11 +245,14 @@ class HardwareSoak:
         self._tinker("device", "rm", "--port", self.port, "device_config.json")
         self._tinker("device", "reset", "--port", self.port)
         print(
-            "Join Microweaver-Setup. The runner will fetch the real form and "
-            "submit the privately backed-up WiFi credentials."
+            "Join the open Microweaver-Setup network. Press Enter to let the "
+            "runner submit the form, or type DONE if the browser already showed "
+            "'Credentials saved. Connected!'."
         )
-        self.input("Press Enter after this computer has joined the setup AP: ")
-        self._submit_provisioning_form()
+        answer = self.input("Enter for automatic submission, or DONE: ").strip()
+        submission_mode = "manual" if answer.upper() == "DONE" else "automatic"
+        if submission_mode == "automatic":
+            self._submit_provisioning_form()
 
         with raw_repl_session(self.port) as transport:
             output = transport.exec(
@@ -274,8 +277,7 @@ class HardwareSoak:
         self._record(
             "provisioning",
             "passed",
-            portal_form_loaded=True,
-            portal_reported_connected=True,
+            submission_mode=submission_mode,
             wifi_credentials_persisted=True,
         )
         self.restore()

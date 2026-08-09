@@ -59,11 +59,13 @@ python scripts/hardware_soak.py \
 ```
 
 The provisioning phase requires an explicit `PROVISION` confirmation before it
-removes the backed-up config. Join `Microweaver-Setup` and press Enter. The
-runner fetches the real form, submits the WiFi values held in its mode-0700
-backup, requires the `Credentials saved. Connected!` response, and then verifies
-the saved file over serial. Credentials are never printed, passed on the command
-line, or copied into the evidence report.
+removes the backed-up config. Join the open `Microweaver-Setup` network. Press
+Enter to let the runner fetch and submit the form using the WiFi values held in
+its mode-0700 backup. If you submitted the browser form yourself and already see
+`Credentials saved. Connected!`, type `DONE` instead so the runner skips a
+duplicate HTTP request. Both paths verify the saved file over serial. Credentials
+are never printed, passed on the command line, or copied into the evidence
+report.
 
 To rerun only one phase:
 
