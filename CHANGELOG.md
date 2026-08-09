@@ -8,11 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Hardware-soak backups are now staged atomically and retried after a hard
+  reset/readiness probe, so an interrupted raw-REPL download cannot be restored
+  or reported as a complete device backup.
 - Reset-reason logging now uses MicroPython's supported `machine.reset_cause()`
   API, allowing real ESP32 watchdog resets to be recorded as `watchdog` instead
   of `unknown`.
 
 ### Added
+- `scripts/hardware_soak.py --ota-local-fixture` now generates and temporarily
+  hosts a harmless `boot.py` OTA payload, then verifies real ESP32 download,
+  checksum, flash swap, rollback, exact-byte restoration, and transient cleanup
+  without requiring a separately published fixture.
 - A backup-protected `scripts/hardware_soak.py` release-gate runner records
   real-ESP32 evidence for SoftAP provisioning, HTTP OTA apply/rollback, and
   watchdog-driven boot-loop recovery before v1.0.
