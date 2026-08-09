@@ -1,6 +1,17 @@
 # Microweaver - MicroPython Framework for ESP32 and Supported Microcontrollers
 
+[![Tests](https://github.com/nerdmonkey/microweaver-framework/actions/workflows/tests.yml/badge.svg)](https://github.com/nerdmonkey/microweaver-framework/actions/workflows/tests.yml)
+[![Lint](https://github.com/nerdmonkey/microweaver-framework/actions/workflows/lint.yml/badge.svg)](https://github.com/nerdmonkey/microweaver-framework/actions/workflows/lint.yml)
+[![Coverage: 80% minimum](https://img.shields.io/badge/coverage-80%25%20minimum-brightgreen)](https://github.com/nerdmonkey/microweaver-framework/actions/workflows/tests.yml)
+[![Latest release](https://img.shields.io/github/v/release/nerdmonkey/microweaver-framework?sort=semver)](https://github.com/nerdmonkey/microweaver-framework/releases/latest)
+
 Microweaver is a lightweight MicroPython framework designed to simplify the development of applications for ESP32 and other supported microcontrollers. It serves as a scaffold or boilerplate to help embedded programmers get started with their projects quickly and efficiently. With Microweaver, you can focus on your application's logic instead of dealing with low-level hardware initialization and management.
+
+## Project status
+
+Microweaver is currently in the `0.x` release series and under active development. Until v1.0, documented APIs, command-line options, and configuration keys may change between minor releases; review the [changelog](CHANGELOG.md) before upgrading.
+
+Starting with v1.0, the documented public APIs (including the `BaseAdapter` contract) and the configuration keys in [`device_config.json.example`](device_config.json.example) are covered by the stability guarantee. Within a `1.x` release, these surfaces will not be removed, renamed, or changed incompatibly without a deprecation path. Undocumented internals, private names, implementation details, examples, and experimental features remain free to evolve; breaking changes to the stable surfaces are reserved for a new major version.
 
 ## Features
 
