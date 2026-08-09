@@ -9,14 +9,19 @@ everything that can be verified over serial is checked automatically.
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import shutil
+import socket
 import subprocess  # fixed argument lists only; shell is never enabled  # nosec B404
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from functools import partial
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import ProxyHandler, Request, build_opener
@@ -33,6 +38,8 @@ from device_transport import (  # noqa: E402
 )
 
 PROVISION_CONFIRMATION = "PROVISION"
+LOCAL_OTA_TARGET = "boot.py"
+LOCAL_OTA_ROUTE = ("192.0.2.1", 9)
 WATCHDOG_MAIN = """import time
 import machine
 
@@ -57,6 +64,71 @@ def start_safe_mode():
 
 class SoakFailure(RuntimeError):
     """A release-gate phase failed its hardware assertion."""
+
+
+class FixtureHttpHandler(BaseHTTPRequestHandler):
+    def __init__(self, *args, routes, **kwargs):
+        self.routes = routes
+        super().__init__(*args, **kwargs)
+
+    def do_GET(self):
+        response = self.routes.get(self.path)
+        if response is None:
+            self.send_error(404)
+            return
+        content_type, body = response
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        """Keep temporary fixture requests out of secret-free evidence."""
+
+
+def validate_host_ip(host):
+    try:
+        address = ipaddress.IPv4Address(host)
+    except ipaddress.AddressValueError as exc:
+        raise SoakFailure("--ota-host-ip must be a numeric IPv4 address") from exc
+    if address.is_loopback or address.is_unspecified or address.is_multicast:
+        raise SoakFailure("OTA fixture requires a device-reachable --ota-host-ip")
+    return str(address)
+
+
+def discover_host_ip():
+    """Return the host IPv4 address selected for the default network route."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(LOCAL_OTA_ROUTE)
+            host = probe.getsockname()[0]
+    except OSError as exc:
+        raise SoakFailure(
+            "could not discover a LAN address; pass --ota-host-ip"
+        ) from exc
+    return validate_host_ip(host)
+
+
+@contextmanager
+def local_http_server(host, port):
+    """Serve two in-memory OTA fixture routes on a reachable address."""
+    routes = {}
+    handler = partial(FixtureHttpHandler, routes=routes)
+    try:
+        server = ThreadingHTTPServer((host, port), handler)
+    except OSError as exc:
+        raise SoakFailure(
+            f"could not start OTA fixture server on {host}:{port}"
+        ) from exc
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server.server_address[1], routes
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def utc_now():
@@ -111,6 +183,9 @@ class HardwareSoak:
         stages,
         manifest_url=None,
         ota_target=None,
+        local_ota_fixture=False,
+        ota_host_ip=None,
+        ota_port=0,
         watch_seconds=20,
         burn_in_hours=24,
         input_fn=input,
@@ -121,9 +196,13 @@ class HardwareSoak:
         self.port = port
         self.artifacts = Path(artifacts).resolve()
         self.backup = self.artifacts / ".device-backup"
+        self.backup_staging = self.artifacts / ".device-backup.partial"
         self.stages = stages
         self.manifest_url = manifest_url
         self.ota_target = ota_target
+        self.local_ota_fixture = local_ota_fixture
+        self.ota_host_ip = ota_host_ip
+        self.ota_port = ota_port
         self.watch_seconds = watch_seconds
         self.burn_in_hours = burn_in_hours
         self.input = input_fn
@@ -199,10 +278,39 @@ class HardwareSoak:
         self.artifacts_created = True
         os.chmod(self.artifacts, 0o700)
         self._write_report()
-        self._tinker("backup", "--port", self.port, self.backup, log_name="backup.log")
-        os.chmod(self.backup, 0o700)
         self._tinker("device", "info", "--port", self.port, log_name="device-info.log")
+        self._backup_device()
         self._record("prepare", "passed")
+
+    def _backup_device(self):
+        for attempt in (1, 2):
+            if self.backup_staging.exists():
+                shutil.rmtree(self.backup_staging)
+            try:
+                self._tinker(
+                    "backup",
+                    "--port",
+                    self.port,
+                    self.backup_staging,
+                    log_name=f"backup-attempt-{attempt}.log",
+                )
+            except SoakFailure:
+                if self.backup_staging.exists():
+                    shutil.rmtree(self.backup_staging)
+                if attempt == 2:
+                    raise
+                self._tinker("device", "reset", "--port", self.port)
+                self._tinker(
+                    "device",
+                    "info",
+                    "--port",
+                    self.port,
+                    log_name="device-info-after-reset.log",
+                )
+                continue
+            self.backup_staging.rename(self.backup)
+            os.chmod(self.backup, 0o700)
+            return
 
     def restore(self):
         self._tinker("device", "reset", "--port", self.port)
@@ -332,71 +440,184 @@ class HardwareSoak:
             ) from exc
 
     def ota(self):
-        if not self.manifest_url or not self.ota_target:
-            raise SoakFailure("OTA requires --ota-manifest-url and --ota-target")
-        if self.ota_target.lstrip("/") == "device_config.json":
-            raise SoakFailure("device_config.json cannot be used as the OTA target")
+        self._validate_ota_options()
         self.ota_attempted = True
 
         before_path = self.artifacts / "ota-target-before.bin"
         after_path = self.artifacts / "ota-target-after.bin"
         restored_path = self.artifacts / "ota-target-restored.bin"
-        state_path = "soak_ota_state.json"
 
         with raw_repl_session(self.port) as transport:
             transport.get_file(self.ota_target, before_path)
-            output = transport.exec(
-                "from app.services.ota import OtaService\n"
-                "from config.app import Setting\n"
-                "s = Setting().get_settings()\n"
-                f"o = OtaService({self.manifest_url!r}, setting=s, "
-                f"state_path={state_path!r})\n"
-                "print('SOAK_OTA_APPLIED', o.apply_update())\n",
-                timeout=120,
-            )
-            if "SOAK_OTA_APPLIED True" not in output:
-                raise SoakFailure("the real HTTP OTA did not apply")
-            exists = transport.exec(
-                "import os\n"
-                "def _e(p):\n"
-                "    try:\n"
-                "        os.stat(p); return True\n"
-                "    except OSError:\n"
-                "        return False\n"
-                f"print('SOAK_OTA_STATE', _e({state_path!r}))\n"
-                f"print('SOAK_OTA_BACKUP', _e({(self.ota_target + '.ota_bak')!r}))\n"
-            )
-            if "SOAK_OTA_STATE True" not in exists:
-                raise SoakFailure("OTA state was not persisted")
-            if "SOAK_OTA_BACKUP True" not in exists:
-                raise SoakFailure("OTA target was not backed up before the swap")
-            transport.get_file(self.ota_target, after_path)
-            rollback = transport.exec(
-                "from app.services.ota import OtaService\n"
-                "from config.app import Setting\n"
-                "s = Setting().get_settings()\n"
-                f"o = OtaService(setting=s, state_path={state_path!r})\n"
-                "print('SOAK_OTA_ROLLED_BACK', o.rollback())\n"
-            )
-            if "SOAK_OTA_ROLLED_BACK True" not in rollback:
-                raise SoakFailure("OTA rollback did not run")
-            transport.get_file(self.ota_target, restored_path)
+            with self._ota_manifest(before_path) as (
+                manifest_url,
+                expected_sha256,
+            ):
+                self._apply_and_rollback_ota(
+                    transport, manifest_url, after_path, restored_path
+                )
 
-        before_hash = sha256(before_path)
-        after_hash = sha256(after_path)
-        restored_hash = sha256(restored_path)
-        if before_hash == after_hash:
-            raise SoakFailure("OTA target did not change after apply")
-        if before_hash != restored_hash:
-            raise SoakFailure("OTA rollback did not restore the original bytes")
+        before_hash, after_hash, restored_hash = self._verify_ota_hashes(
+            before_path, after_path, restored_path, expected_sha256
+        )
         self._record(
             "ota",
             "passed",
             target=self.ota_target,
             before_sha256=before_hash,
+            expected_sha256=expected_sha256,
             applied_sha256=after_hash,
             restored_sha256=restored_hash,
+            local_fixture=self.local_ota_fixture,
         )
+
+    def _validate_ota_options(self):
+        if self.local_ota_fixture and self.manifest_url:
+            raise SoakFailure(
+                "--ota-local-fixture cannot be combined with --ota-manifest-url"
+            )
+        if not self.local_ota_fixture and (self.ota_host_ip or self.ota_port):
+            raise SoakFailure("--ota-host-ip/--ota-port require --ota-local-fixture")
+        if self.local_ota_fixture and not self.ota_target:
+            self.ota_target = LOCAL_OTA_TARGET
+        if not self.local_ota_fixture and (
+            not self.manifest_url or not self.ota_target
+        ):
+            raise SoakFailure("OTA requires --ota-manifest-url and --ota-target")
+        if self.local_ota_fixture and self.ota_target.lstrip("/") != LOCAL_OTA_TARGET:
+            raise SoakFailure("the local OTA fixture only supports boot.py")
+        if self.ota_target.lstrip("/") == "device_config.json":
+            raise SoakFailure("device_config.json cannot be used as the OTA target")
+
+    def _apply_and_rollback_ota(
+        self, transport, manifest_url, after_path, restored_path
+    ):
+        state_path = "soak_ota_state.json"
+        output = transport.exec(
+            "from app.services.ota import OtaService\n"
+            "from app.services.wifi import WiFiService\n"
+            "from config.app import Setting\n"
+            "s = Setting().get_settings()\n"
+            "static = None\n"
+            "if s.WIFI_IP and s.WIFI_SUBNET and s.WIFI_GATEWAY and s.WIFI_DNS:\n"
+            "    static = (s.WIFI_IP, s.WIFI_SUBNET, s.WIFI_GATEWAY, s.WIFI_DNS)\n"
+            "w = WiFiService(s.WIFI_SSID, s.WIFI_PASSWORD, "
+            "s.WIFI_CONNECT_TIMEOUT_SECONDS, s.WIFI_RECONNECT_DELAY_SECONDS, "
+            "s.WIFI_MAX_RECONNECT_DELAY_SECONDS, None, static, "
+            "s.WIFI_DISABLE_POWER_SAVE)\n"
+            "print('SOAK_WIFI_CONNECTED', w.connect())\n"
+            f"o = OtaService({manifest_url!r}, setting=s, "
+            f"state_path={state_path!r})\n"
+            "print('SOAK_OTA_APPLIED', o.apply_update())\n",
+            timeout=120,
+        )
+        apply_log = self.artifacts / "ota-apply.log"
+        apply_log.write_text(output)
+        os.chmod(apply_log, 0o600)
+        if "SOAK_OTA_APPLIED True" not in output:
+            raise SoakFailure("the real HTTP OTA did not apply")
+        exists = transport.exec(
+            "import os\n"
+            "def _e(p):\n"
+            "    try:\n"
+            "        os.stat(p); return True\n"
+            "    except OSError:\n"
+            "        return False\n"
+            f"print('SOAK_OTA_STATE', _e({state_path!r}))\n"
+            f"print('SOAK_OTA_BACKUP', "
+            f"_e({(self.ota_target + '.ota_bak')!r}))\n"
+        )
+        if "SOAK_OTA_STATE True" not in exists:
+            raise SoakFailure("OTA state was not persisted")
+        if "SOAK_OTA_BACKUP True" not in exists:
+            raise SoakFailure("OTA target was not backed up before the swap")
+        transport.get_file(self.ota_target, after_path)
+        rollback = transport.exec(
+            "from app.services.ota import OtaService\n"
+            "from config.app import Setting\n"
+            "s = Setting().get_settings()\n"
+            f"o = OtaService(setting=s, state_path={state_path!r})\n"
+            "print('SOAK_OTA_ROLLED_BACK', o.rollback())\n"
+        )
+        if "SOAK_OTA_ROLLED_BACK True" not in rollback:
+            raise SoakFailure("OTA rollback did not run")
+        cleanup = transport.exec(
+            "import os\n"
+            "def _e(p):\n"
+            "    try:\n"
+            "        os.stat(p); return True\n"
+            "    except OSError:\n"
+            "        return False\n"
+            f"print('SOAK_OTA_STATE_LEFT', _e({state_path!r}))\n"
+            f"print('SOAK_OTA_BACKUP_LEFT', "
+            f"_e({(self.ota_target + '.ota_bak')!r}))\n"
+            f"print('SOAK_OTA_STAGED_LEFT', "
+            f"_e({(self.ota_target + '.ota_new')!r}))\n"
+        )
+        self._verify_ota_cleanup(cleanup)
+        transport.get_file(self.ota_target, restored_path)
+
+    def _verify_ota_cleanup(self, output):
+        cleanup_checks = (
+            ("SOAK_OTA_STATE_LEFT False", "OTA state"),
+            ("SOAK_OTA_BACKUP_LEFT False", "OTA backup"),
+            ("SOAK_OTA_STAGED_LEFT False", "OTA staged file"),
+        )
+        for marker, label in cleanup_checks:
+            if marker not in output:
+                raise SoakFailure(f"rollback did not clean {label}")
+
+    def _verify_ota_hashes(
+        self, before_path, after_path, restored_path, expected_sha256
+    ):
+        before_hash = sha256(before_path)
+        after_hash = sha256(after_path)
+        restored_hash = sha256(restored_path)
+        if before_hash == after_hash:
+            raise SoakFailure("OTA target did not change after apply")
+        if expected_sha256 and after_hash != expected_sha256:
+            raise SoakFailure("applied OTA target did not match the fixture checksum")
+        if before_hash != restored_hash:
+            raise SoakFailure("OTA rollback did not restore the original bytes")
+        return before_hash, after_hash, restored_hash
+
+    @contextmanager
+    def _ota_manifest(self, before_path):
+        if not self.local_ota_fixture:
+            yield self.manifest_url, None
+            return
+
+        original = before_path.read_bytes()
+        try:
+            original.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise SoakFailure("local OTA fixture target must be UTF-8 text") from exc
+
+        version = "soak-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+        payload = original + f"\n# Microweaver OTA fixture {version}\n".encode()
+        host = (
+            validate_host_ip(self.ota_host_ip)
+            if self.ota_host_ip
+            else discover_host_ip()
+        )
+        expected_sha256 = hashlib.sha256(payload).hexdigest()
+        with local_http_server(host, self.ota_port) as (port, routes):
+            base_url = f"http://{host}:{port}"
+            manifest = {
+                "version": version,
+                "files": {
+                    LOCAL_OTA_TARGET: {
+                        "url": f"{base_url}/{LOCAL_OTA_TARGET}",
+                        "sha256": expected_sha256,
+                    }
+                },
+            }
+            routes["/manifest.json"] = (
+                "application/json",
+                (json.dumps(manifest, indent=2) + "\n").encode(),
+            )
+            routes[f"/{LOCAL_OTA_TARGET}"] = ("text/x-python", payload)
+            yield f"{base_url}/manifest.json", expected_sha256
 
     def recovery(self):
         probe = self.artifacts / "watchdog_main.py"
@@ -504,6 +725,8 @@ class HardwareSoak:
                     self.report["restored"] = False
                     self.report["restore_failure"] = str(restore_error)
                     failure = failure or restore_error
+            if self.backup_staging.exists():
+                shutil.rmtree(self.backup_staging)
             self.report["finished_at"] = utc_now()
             if self.artifacts_created:
                 self._write_report()
@@ -539,6 +762,21 @@ def parse_args(argv=None):
         help="Existing device file updated by the manifest and verified on rollback",
     )
     parser.add_argument(
+        "--ota-local-fixture",
+        action="store_true",
+        help="Generate and temporarily host a harmless boot.py OTA fixture",
+    )
+    parser.add_argument(
+        "--ota-host-ip",
+        help="LAN IPv4 address the ESP32 uses to reach the local OTA fixture",
+    )
+    parser.add_argument(
+        "--ota-port",
+        type=int,
+        default=0,
+        help="Local fixture TCP port (default: choose an available port)",
+    )
+    parser.add_argument(
         "--watch-seconds",
         type=int,
         default=20,
@@ -555,6 +793,16 @@ def parse_args(argv=None):
     unknown = args.stages - {"provisioning", "ota", "recovery", "burnin"}
     if unknown:
         parser.error("unknown stages: " + ", ".join(sorted(unknown)))
+    if args.ota_local_fixture and args.ota_manifest_url:
+        parser.error("--ota-local-fixture cannot be combined with --ota-manifest-url")
+    if args.ota_local_fixture and args.ota_target not in (None, LOCAL_OTA_TARGET):
+        parser.error("--ota-local-fixture only supports --ota-target boot.py")
+    if args.ota_host_ip and not args.ota_local_fixture:
+        parser.error("--ota-host-ip requires --ota-local-fixture")
+    if args.ota_port and not args.ota_local_fixture:
+        parser.error("--ota-port requires --ota-local-fixture")
+    if not 0 <= args.ota_port <= 65535:
+        parser.error("--ota-port must be between 0 and 65535")
     return args
 
 
@@ -566,6 +814,9 @@ def main(argv=None):
         stages=args.stages,
         manifest_url=args.ota_manifest_url,
         ota_target=args.ota_target,
+        local_ota_fixture=args.ota_local_fixture,
+        ota_host_ip=args.ota_host_ip,
+        ota_port=args.ota_port,
         watch_seconds=args.watch_seconds,
         burn_in_hours=args.burn_in_hours,
     )

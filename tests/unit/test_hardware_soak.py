@@ -1,3 +1,5 @@
+import hashlib
+import json
 import subprocess
 from pathlib import Path
 
@@ -6,6 +8,12 @@ import serial
 
 from device_transport import RawReplEntryError
 from scripts import hardware_soak
+
+OTA_CLEAN = (
+    "SOAK_OTA_STATE_LEFT False\n"
+    "SOAK_OTA_BACKUP_LEFT False\n"
+    "SOAK_OTA_STAGED_LEFT False\n"
+)
 
 
 class FakeTransport:
@@ -114,6 +122,98 @@ def completed(stdout="", returncode=0):
     return subprocess.CompletedProcess([], returncode, stdout=stdout)
 
 
+def test_fixture_http_handler_serves_only_registered_routes(mocker):
+    mocker.patch.object(
+        hardware_soak.BaseHTTPRequestHandler, "__init__", return_value=None
+    )
+    handler = hardware_soak.FixtureHttpHandler(
+        routes={"/manifest.json": ("application/json", b"{}")}
+    )
+    handler.send_response = mocker.Mock()
+    handler.send_header = mocker.Mock()
+    handler.end_headers = mocker.Mock()
+    handler.send_error = mocker.Mock()
+    handler.wfile = mocker.Mock()
+
+    handler.path = "/manifest.json"
+    handler.do_GET()
+
+    handler.send_response.assert_called_once_with(200)
+    handler.wfile.write.assert_called_once_with(b"{}")
+
+    handler.path = "/missing"
+    handler.do_GET()
+
+    handler.send_error.assert_called_once_with(404)
+    handler.log_message("ignored")
+
+
+@pytest.mark.parametrize("host", ["not-an-ip", "127.0.0.1", "0.0.0.0", "224.0.0.1"])
+def test_validate_host_ip_rejects_unreachable_addresses(host):
+    with pytest.raises(hardware_soak.SoakFailure, match="IPv4|device-reachable"):
+        hardware_soak.validate_host_ip(host)
+
+
+def test_validate_host_ip_accepts_lan_address():
+    assert hardware_soak.validate_host_ip("192.168.1.50") == "192.168.1.50"
+
+
+def test_discover_host_ip_uses_default_route(mocker):
+    probe = mocker.MagicMock()
+    probe.__enter__.return_value = probe
+    probe.getsockname.return_value = ("192.168.1.50", 12345)
+    socket_factory = mocker.patch.object(
+        hardware_soak.socket, "socket", return_value=probe
+    )
+
+    assert hardware_soak.discover_host_ip() == "192.168.1.50"
+    socket_factory.assert_called_once_with(
+        hardware_soak.socket.AF_INET, hardware_soak.socket.SOCK_DGRAM
+    )
+    probe.connect.assert_called_once_with(hardware_soak.LOCAL_OTA_ROUTE)
+
+
+def test_discover_host_ip_reports_missing_route(mocker):
+    probe = mocker.MagicMock()
+    probe.__enter__.return_value = probe
+    probe.connect.side_effect = OSError("offline")
+    mocker.patch.object(hardware_soak.socket, "socket", return_value=probe)
+
+    with pytest.raises(hardware_soak.SoakFailure, match="--ota-host-ip"):
+        hardware_soak.discover_host_ip()
+
+
+def test_local_http_server_stops_after_failure(mocker):
+    server = mocker.MagicMock()
+    server.server_address = ("192.168.1.50", 4321)
+    server_cls = mocker.patch.object(
+        hardware_soak, "ThreadingHTTPServer", return_value=server
+    )
+    thread = mocker.MagicMock()
+    mocker.patch.object(hardware_soak.threading, "Thread", return_value=thread)
+
+    with pytest.raises(RuntimeError, match="stop"):
+        with hardware_soak.local_http_server("192.168.1.50", 0) as result:
+            assert result == (4321, {})
+            raise RuntimeError("stop")
+
+    server_cls.assert_called_once()
+    thread.start.assert_called_once_with()
+    server.shutdown.assert_called_once_with()
+    server.server_close.assert_called_once_with()
+    thread.join.assert_called_once_with(timeout=5)
+
+
+def test_local_http_server_reports_bind_failure(mocker):
+    mocker.patch.object(
+        hardware_soak, "ThreadingHTTPServer", side_effect=OSError("in use")
+    )
+
+    with pytest.raises(hardware_soak.SoakFailure, match="could not start"):
+        with hardware_soak.local_http_server("192.168.1.50", 8000):
+            pass
+
+
 def test_git_commit_is_unknown_when_git_is_unavailable(mocker, tmp_path):
     mocker.patch.object(hardware_soak.shutil, "which", return_value=None)
 
@@ -205,7 +305,7 @@ def test_prepare_backs_up_device_and_records_baseline(tmp_path, mocker):
 
     def runner(command, **_kwargs):
         if "backup" in command:
-            soak.backup.mkdir()
+            soak.backup_staging.mkdir()
         return completed("ok\n")
 
     soak = make_soak(tmp_path, command_runner=runner)
@@ -216,6 +316,50 @@ def test_prepare_backs_up_device_and_records_baseline(tmp_path, mocker):
     assert soak.backup.parent == soak.artifacts
     assert soak.report["stages"]["prepare"]["result"] == "passed"
     assert (soak.artifacts / "device-info.log").exists()
+
+
+def test_backup_device_hard_resets_and_retries_atomically(tmp_path):
+    commands = []
+    backup_attempts = 0
+
+    def runner(command, **_kwargs):
+        nonlocal backup_attempts
+        commands.append(command)
+        if "backup" in command:
+            backup_attempts += 1
+            soak.backup_staging.mkdir()
+            if backup_attempts == 1:
+                return completed("race\n", returncode=1)
+        return completed("ok\n")
+
+    soak = make_soak(tmp_path, command_runner=runner)
+    soak.artifacts.mkdir()
+    soak.backup_staging.mkdir()
+
+    soak._backup_device()
+
+    assert backup_attempts == 2
+    assert soak.backup.is_dir()
+    assert not soak.backup_staging.exists()
+    assert any(command[2:4] == ["device", "reset"] for command in commands)
+    assert any(command[2:4] == ["device", "info"] for command in commands)
+
+
+def test_backup_device_removes_partial_backup_after_second_failure(tmp_path):
+    def runner(command, **_kwargs):
+        if "backup" in command:
+            soak.backup_staging.mkdir()
+            return completed("race\n", returncode=1)
+        return completed("ok\n")
+
+    soak = make_soak(tmp_path, command_runner=runner)
+    soak.artifacts.mkdir()
+
+    with pytest.raises(hardware_soak.SoakFailure, match="backup"):
+        soak._backup_device()
+
+    assert not soak.backup.exists()
+    assert not soak.backup_staging.exists()
 
 
 def test_prepare_rejects_missing_port(tmp_path):
@@ -450,6 +594,187 @@ def test_ota_requires_manifest_and_existing_target(tmp_path):
         soak.ota()
 
 
+def test_ota_local_fixture_rejects_conflicting_or_unsafe_target(tmp_path):
+    soak = make_soak(
+        tmp_path,
+        local_ota_fixture=True,
+        manifest_url="https://firmware.example.test/manifest.json",
+    )
+    with pytest.raises(hardware_soak.SoakFailure, match="cannot be combined"):
+        soak.ota()
+
+    soak.manifest_url = None
+    soak.ota_target = "main.py"
+    with pytest.raises(hardware_soak.SoakFailure, match="only supports boot.py"):
+        soak.ota()
+
+    soak.local_ota_fixture = False
+    soak.ota_target = "boot.py"
+    soak.manifest_url = "https://firmware.example.test/manifest.json"
+    soak.ota_port = 8000
+    with pytest.raises(hardware_soak.SoakFailure, match="require"):
+        soak.ota()
+
+
+def test_local_ota_manifest_serves_changed_boot_fixture(tmp_path, mocker):
+    before = tmp_path / "boot-before.py"
+    before.write_bytes(b"print('boot')\n")
+    soak = make_soak(
+        tmp_path,
+        local_ota_fixture=True,
+        ota_target="boot.py",
+        ota_host_ip="192.168.1.50",
+    )
+    routes = {}
+    server = mocker.MagicMock()
+    server.__enter__.return_value = (8765, routes)
+    mocker.patch.object(hardware_soak, "local_http_server", return_value=server)
+
+    with soak._ota_manifest(before) as (manifest_url, expected_sha256):
+        manifest = json.loads(routes["/manifest.json"][1])
+        payload = routes["/boot.py"][1]
+
+        assert manifest_url == "http://192.168.1.50:8765/manifest.json"
+        assert payload.startswith(before.read_bytes())
+        assert b"Microweaver OTA fixture" in payload
+        assert expected_sha256 == hashlib.sha256(payload).hexdigest()
+        assert manifest["files"]["boot.py"]["sha256"] == expected_sha256
+        assert manifest["files"]["boot.py"]["url"].endswith("/boot.py")
+        assert manifest["version"].startswith("soak-")
+
+
+def test_local_ota_manifest_auto_discovers_host(tmp_path, mocker):
+    before = tmp_path / "boot-before.py"
+    before.write_text("print('boot')\n")
+    soak = make_soak(tmp_path, local_ota_fixture=True, ota_target="boot.py")
+    discover = mocker.patch.object(
+        hardware_soak, "discover_host_ip", return_value="192.168.1.51"
+    )
+    server = mocker.MagicMock()
+    server.__enter__.return_value = (8765, {})
+    mocker.patch.object(hardware_soak, "local_http_server", return_value=server)
+
+    with soak._ota_manifest(before) as (manifest_url, _):
+        assert manifest_url.startswith("http://192.168.1.51:8765/")
+
+    discover.assert_called_once_with()
+
+
+def test_local_ota_manifest_rejects_non_utf8_target(tmp_path):
+    before = tmp_path / "boot-before.py"
+    before.write_bytes(b"\xff")
+    soak = make_soak(
+        tmp_path,
+        local_ota_fixture=True,
+        ota_target="boot.py",
+        ota_host_ip="192.168.1.50",
+    )
+
+    with pytest.raises(hardware_soak.SoakFailure, match="UTF-8"):
+        with soak._ota_manifest(before):
+            pass
+
+
+def test_ota_local_fixture_applies_expected_bytes_and_rolls_back(tmp_path, mocker):
+    expected_sha256 = hashlib.sha256(b"after").hexdigest()
+    soak = make_soak(
+        tmp_path,
+        local_ota_fixture=True,
+        ota_host_ip="192.168.1.50",
+    )
+    soak.artifacts.mkdir()
+    transport = FakeTransport(
+        outputs=[
+            "SOAK_OTA_APPLIED True\n",
+            "SOAK_OTA_STATE True\nSOAK_OTA_BACKUP True\n",
+            "SOAK_OTA_ROLLED_BACK True\n",
+            OTA_CLEAN,
+        ]
+    )
+    context = mocker.MagicMock()
+    context.__enter__.return_value = transport
+    mocker.patch.object(hardware_soak, "raw_repl_session", return_value=context)
+    fixture = mocker.patch.object(soak, "_ota_manifest")
+    fixture.return_value.__enter__.return_value = (
+        "http://192.168.1.50:8765/manifest.json",
+        expected_sha256,
+    )
+
+    soak.ota()
+
+    evidence = soak.report["stages"]["ota"]
+    assert soak.ota_target == "boot.py"
+    assert evidence["local_fixture"] is True
+    assert evidence["expected_sha256"] == evidence["applied_sha256"]
+    apply_code = next(
+        call[1]
+        for call in transport.calls
+        if call[0] == "exec" and "SOAK_OTA_APPLIED" in call[1]
+    )
+    assert "WiFiService" in apply_code
+    assert (soak.artifacts / "ota-apply.log").read_text() == "SOAK_OTA_APPLIED True\n"
+
+
+@pytest.mark.parametrize(
+    ("cleanup", "message"),
+    [
+        (OTA_CLEAN.replace("STATE_LEFT False", "STATE_LEFT True"), "OTA state"),
+        (OTA_CLEAN.replace("BACKUP_LEFT False", "BACKUP_LEFT True"), "OTA backup"),
+        (OTA_CLEAN.replace("STAGED_LEFT False", "STAGED_LEFT True"), "OTA staged file"),
+    ],
+)
+def test_ota_rejects_rollback_residue(tmp_path, mocker, cleanup, message):
+    soak = make_soak(
+        tmp_path,
+        manifest_url="https://firmware.example.test/manifest.json",
+        ota_target="boot.py",
+    )
+    soak.artifacts.mkdir()
+    transport = FakeTransport(
+        outputs=[
+            "SOAK_OTA_APPLIED True\n",
+            "SOAK_OTA_STATE True\nSOAK_OTA_BACKUP True\n",
+            "SOAK_OTA_ROLLED_BACK True\n",
+            cleanup,
+        ]
+    )
+    context = mocker.MagicMock()
+    context.__enter__.return_value = transport
+    mocker.patch.object(hardware_soak, "raw_repl_session", return_value=context)
+
+    with pytest.raises(hardware_soak.SoakFailure, match=message):
+        soak.ota()
+
+
+def test_ota_local_fixture_rejects_applied_checksum_mismatch(tmp_path, mocker):
+    soak = make_soak(
+        tmp_path,
+        local_ota_fixture=True,
+        ota_target="boot.py",
+        ota_host_ip="192.168.1.50",
+    )
+    soak.artifacts.mkdir()
+    transport = FakeTransport(
+        outputs=[
+            "SOAK_OTA_APPLIED True\n",
+            "SOAK_OTA_STATE True\nSOAK_OTA_BACKUP True\n",
+            "SOAK_OTA_ROLLED_BACK True\n",
+            OTA_CLEAN,
+        ]
+    )
+    context = mocker.MagicMock()
+    context.__enter__.return_value = transport
+    mocker.patch.object(hardware_soak, "raw_repl_session", return_value=context)
+    fixture = mocker.patch.object(soak, "_ota_manifest")
+    fixture.return_value.__enter__.return_value = (
+        "http://fixture/manifest.json",
+        "bad",
+    )
+
+    with pytest.raises(hardware_soak.SoakFailure, match="fixture checksum"):
+        soak.ota()
+
+
 def test_ota_applies_real_download_and_byte_verifies_rollback(tmp_path, mocker):
     soak = make_soak(
         tmp_path,
@@ -462,6 +787,7 @@ def test_ota_applies_real_download_and_byte_verifies_rollback(tmp_path, mocker):
             "SOAK_OTA_APPLIED True\n",
             "SOAK_OTA_STATE True\nSOAK_OTA_BACKUP True\n",
             "SOAK_OTA_ROLLED_BACK True\n",
+            OTA_CLEAN,
         ]
     )
     context = mocker.MagicMock()
@@ -549,6 +875,7 @@ def test_ota_rejects_byte_comparison_failure(tmp_path, mocker, file_contents, me
             "SOAK_OTA_APPLIED True\n",
             "SOAK_OTA_STATE True\nSOAK_OTA_BACKUP True\n",
             "SOAK_OTA_ROLLED_BACK True\n",
+            OTA_CLEAN,
         ],
         file_contents=file_contents,
     )
@@ -749,6 +1076,24 @@ def test_run_keeps_backup_when_restore_fails(tmp_path, mocker):
     assert soak.report["restored"] is False
 
 
+def test_run_removes_incomplete_staged_backup(tmp_path, mocker):
+    soak = make_soak(tmp_path)
+
+    def prepare():
+        soak.artifacts.mkdir()
+        soak.artifacts_created = True
+        soak.backup_staging.mkdir()
+        raise hardware_soak.SoakFailure("backup failed")
+
+    mocker.patch.object(soak, "prepare", side_effect=prepare)
+
+    with pytest.raises(hardware_soak.SoakFailure, match="backup failed"):
+        soak.run()
+
+    assert not soak.backup_staging.exists()
+    assert "restored" not in soak.report
+
+
 def test_parse_args_validates_stages(tmp_path):
     args = hardware_soak.parse_args(
         ["--port", str(tmp_path / "tty"), "--stages", "ota,recovery"]
@@ -758,6 +1103,47 @@ def test_parse_args_validates_stages(tmp_path):
     with pytest.raises(SystemExit):
         hardware_soak.parse_args(
             ["--port", str(tmp_path / "tty"), "--stages", "unknown"]
+        )
+
+
+def test_parse_args_accepts_local_ota_fixture(tmp_path):
+    args = hardware_soak.parse_args(
+        [
+            "--port",
+            str(tmp_path / "tty"),
+            "--stages",
+            "ota",
+            "--ota-local-fixture",
+            "--ota-host-ip",
+            "192.168.1.50",
+            "--ota-port",
+            "8000",
+        ]
+    )
+
+    assert args.ota_local_fixture is True
+    assert args.ota_host_ip == "192.168.1.50"
+    assert args.ota_port == 8000
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        [
+            "--ota-local-fixture",
+            "--ota-manifest-url",
+            "https://firmware.example.test/manifest.json",
+        ],
+        ["--ota-local-fixture", "--ota-target", "main.py"],
+        ["--ota-host-ip", "192.168.1.50"],
+        ["--ota-port", "8000"],
+        ["--ota-local-fixture", "--ota-port", "65536"],
+    ],
+)
+def test_parse_args_rejects_invalid_local_ota_options(tmp_path, extra):
+    with pytest.raises(SystemExit):
+        hardware_soak.parse_args(
+            ["--port", str(tmp_path / "tty"), "--stages", "ota", *extra]
         )
 
 
