@@ -107,6 +107,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silently instead of erroring.
 
 ### Fixed
+- Raw-REPL commands such as `tinker.py deploy` now report a concise, actionable
+  error when the configured serial port cannot be opened instead of displaying a
+  pyserial traceback when the device is disconnected or its port has changed.
 - `tinker.py watch` no longer errors with `'mpremote' not found on PATH` on a machine
   without `mpremote` installed. It only ever calls `build()` and `deploy()` internally,
   and `deploy` stopped needing `mpremote` earlier in this changeset - the check was

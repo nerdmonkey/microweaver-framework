@@ -19,6 +19,7 @@ from esptool.cmds import _get_flash_info as get_flash_info
 from esptool.cmds import attach_flash, detect_chip, reset_chip
 from esptool.logger import log as esptool_log
 from esptool.util import FatalError
+from serial import SerialException
 from serial.tools import list_ports
 
 from config.app import ConfigError, Setting
@@ -1454,7 +1455,28 @@ def _enter_raw_repl_with_retries(
 @contextmanager
 def _raw_repl_session(resolved_port: str, command_label: str):
     """Yield a DeviceTransport already in raw REPL; always exits+closes after."""
-    transport = _enter_raw_repl_with_retries(resolved_port, command_label)
+    try:
+        transport = _enter_raw_repl_with_retries(resolved_port, command_label)
+    except SerialException as exc:
+        typer.secho(
+            f"ERROR: Serial port '{resolved_port}' could not be opened.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        typer.echo(
+            "The device may be disconnected, its port may have changed, or another "
+            "process may be using it.",
+            err=True,
+        )
+        typer.echo(err=True)
+        typer.echo("Try this:", err=True)
+        typer.secho(
+            "  python tinker.py port",
+            fg=typer.colors.CYAN,
+            err=True,
+        )
+        typer.echo("Then retry with '--port <port>'.", err=True)
+        raise typer.Exit(code=1) from exc
     try:
         yield transport
     finally:
