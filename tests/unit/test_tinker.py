@@ -999,6 +999,34 @@ def test_deploy_exhausts_retries(tmp_path, mocker):
     assert "could not enter raw REPL on /dev/ttyUSB0" in result.stderr
 
 
+def test_deploy_disconnected_device_has_friendly_error(tmp_path, mocker):
+    fake_transport = FakeDeviceTransport(
+        raise_on="connect",
+        error=tinker.SerialException(
+            2,
+            "could not open port /dev/ttyUSB0: No such file or directory",
+        ),
+    )
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    src = tmp_path / "dist"
+    src.mkdir()
+
+    result = runner.invoke(
+        tinker.app,
+        ["deploy", "--port", "/dev/ttyUSB0", str(src)],
+        color=True,
+    )
+
+    assert result.exit_code == 1
+    assert "\x1b[31m" in result.stderr
+    plain_stderr = _strip_ansi(result.stderr)
+    assert "ERROR: Serial port '/dev/ttyUSB0' could not be opened." in plain_stderr
+    assert "device may be disconnected" in plain_stderr
+    assert "Try this:\n  python tinker.py port" in plain_stderr
+    assert "Then retry with '--port <port>'." in plain_stderr
+    assert "Traceback" not in plain_stderr
+
+
 def test_deploy_prompts_for_port_when_missing(tmp_path, mocker):
     fake_transport = FakeDeviceTransport()
     mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
@@ -2134,6 +2162,8 @@ class FakeDeviceTransport:
     def connect(self):
         self.attempt += 1
         self.calls.append("connect")
+        if self.raise_on == "connect":
+            raise self.error
 
     def close(self):
         self.calls.append("close")
