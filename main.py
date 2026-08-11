@@ -22,10 +22,15 @@ def _make_temperature_adapter():
 
 
 def start():
-    sensor_name, sensor_adapter = _make_temperature_adapter()
+    publish_adapters = []
+    if setting.DHT_ENABLED:
+        publish_adapters.append(_make_temperature_adapter())
+    subscribe_adapters = []
+    if setting.RELAY_ENABLED:
+        subscribe_adapters.append(("relay", RelayAdapter(pin=setting.RELAY_PIN)))
     runtime = RuntimeService(
-        publish_adapters=[(sensor_name, sensor_adapter)],
-        subscribe_adapters=[("relay", RelayAdapter(pin=setting.RELAY_PIN))],
+        publish_adapters=publish_adapters,
+        subscribe_adapters=subscribe_adapters,
     )
     runtime.run()
 

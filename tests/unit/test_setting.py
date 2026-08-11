@@ -64,8 +64,10 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "service_restart_max_attempts": 7,
                 "log_format": "kv",
                 "log_level": "debug",
+                "dht_enabled": False,
                 "dht_sensor_type": "dht11",
                 "dht_pin": 21,
+                "relay_enabled": False,
                 "relay_pin": 22,
                 "ota_enabled": True,
                 "ota_manifest_url": "https://api.example.com/manifest.json",
@@ -131,8 +133,10 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.SERVICE_RESTART_MAX_ATTEMPTS == 7
     assert setting.LOG_FORMAT == "kv"
     assert setting.LOG_LEVEL == "debug"
+    assert setting.DHT_ENABLED is False
     assert setting.DHT_SENSOR_TYPE == "dht11"
     assert setting.DHT_PIN == 21
+    assert setting.RELAY_ENABLED is False
     assert setting.RELAY_PIN == 22
     assert setting.OTA_ENABLED is True
     assert setting.OTA_MANIFEST_URL == "https://api.example.com/manifest.json"
@@ -197,8 +201,10 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.SERVICE_RESTART_MAX_ATTEMPTS == 3
     assert setting.LOG_FORMAT == "json"
     assert setting.LOG_LEVEL == "info"
+    assert setting.DHT_ENABLED is True
     assert setting.DHT_SENSOR_TYPE == "dht22"
     assert setting.DHT_PIN == 4
+    assert setting.RELAY_ENABLED is True
 
 
 def test_setting_falls_back_to_legacy_dht22_pin_key(tmp_path):

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `dht_enabled` and `relay_enabled` config keys (default `true`, matching
+  prior always-on behavior) let a device be provisioned without a DHT sensor
+  or relay wired up, instead of `main.py` unconditionally constructing both
+  adapters on every boot.
+
 ### Fixed
 - `RuntimeService.run()` now backs off with exponential delay (reset on
   successful reconnect) before retrying after any post-connect failure,

@@ -64,8 +64,10 @@ _SCHEMA = {
     "crash_log_enabled": {"type": bool},
     "crash_log_path": {"type": str},
     "crash_log_max_bytes": {"type": "int", "min": 0},
+    "dht_enabled": {"type": bool},
     "dht_sensor_type": {"type": str, "choices": ("dht11", "dht22")},
     "dht_pin": {"type": "int", "min": 0, "max": 39},
+    "relay_enabled": {"type": bool},
     "relay_pin": {"type": "int", "min": 0, "max": 39},
     "provisioning_ap_ssid": {"type": str},
     "provisioning_ap_password": {"type": str},
@@ -206,8 +208,10 @@ class Setting:
         self.CRASH_LOG_PATH = self._value("crash_log_path", "crash.json")
         self.CRASH_LOG_MAX_BYTES = self._int("crash_log_max_bytes", 4096)
 
+        self.DHT_ENABLED = self._bool("dht_enabled", True)
         self.DHT_SENSOR_TYPE = self._value("dht_sensor_type", "dht22")
         self.DHT_PIN = self._int_alias(("dht_pin", "dht22_pin"), 4)
+        self.RELAY_ENABLED = self._bool("relay_enabled", True)
         self.RELAY_PIN = self._int("relay_pin", 5)
 
         self.PROVISIONING_AP_SSID = self._value(

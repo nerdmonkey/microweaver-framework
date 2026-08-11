@@ -43,6 +43,56 @@ def test_start_wires_and_runs_runtime_service_with_dht11(mocker):
     mock_runtime_cls.return_value.run.assert_called_once_with()
 
 
+def test_start_skips_dht_adapter_when_disabled(mocker):
+    mocker.patch("main.setting.DHT_ENABLED", False)
+    mocker.patch("main.setting.RELAY_PIN", 16)
+    mock_dht22_cls = mocker.patch("main.DHT22Adapter")
+    mock_relay_cls = mocker.patch("main.RelayAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_dht22_cls.assert_not_called()
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[],
+        subscribe_adapters=[("relay", mock_relay_cls.return_value)],
+    )
+
+
+def test_start_skips_relay_adapter_when_disabled(mocker):
+    mocker.patch("main.setting.DHT_PIN", 15)
+    mocker.patch("main.setting.DHT_SENSOR_TYPE", "dht22")
+    mocker.patch("main.setting.RELAY_ENABLED", False)
+    mock_dht22_cls = mocker.patch("main.DHT22Adapter")
+    mock_relay_cls = mocker.patch("main.RelayAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_relay_cls.assert_not_called()
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[("dht22", mock_dht22_cls.return_value)],
+        subscribe_adapters=[],
+    )
+
+
+def test_start_wires_no_adapters_when_both_disabled(mocker):
+    mocker.patch("main.setting.DHT_ENABLED", False)
+    mocker.patch("main.setting.RELAY_ENABLED", False)
+    mock_dht22_cls = mocker.patch("main.DHT22Adapter")
+    mock_relay_cls = mocker.patch("main.RelayAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_dht22_cls.assert_not_called()
+    mock_relay_cls.assert_not_called()
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[],
+        subscribe_adapters=[],
+    )
+
+
 def test_start_safe_mode_wires_and_runs_safe_mode_service(mocker):
     mocker.patch("main.setting.SAFE_MODE_SLEEP_SECONDS", 7)
     mock_safe_mode_cls = mocker.patch("main.SafeModeService")
