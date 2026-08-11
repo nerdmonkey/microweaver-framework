@@ -5,6 +5,8 @@ try:
 except ImportError:
     import json
 
+from umqtt.simple import MQTTException
+
 from app.adapters.payload import to_payload
 from app.services.bootloop import BootLoopGuard
 from app.services.crash_log import CrashLogService
@@ -23,6 +25,12 @@ from app.services.wifi import WiFiService
 from config.app import Setting
 
 setting = (Setting()).get_settings()
+
+# SUBACK return code for "Failure" (MQTT v3.1.1 section 3.9.3). The broker
+# has explicitly refused the subscription (ACL/permissions), not a transient
+# network blip - retrying the identical subscribe will keep failing, so this
+# only gets a clearer log message, not special-cased retry logic.
+SUBACK_FAILURE_RC = 128
 
 
 class RuntimeService:
@@ -134,6 +142,8 @@ class RuntimeService:
             setting.MQTT_LWT_QOS,
         )
         self.client = None
+        self._reconnect_delay_seconds = setting.MQTT_RECONNECT_DELAY_SECONDS
+        self._max_reconnect_delay_seconds = setting.MQTT_MAX_RECONNECT_DELAY_SECONDS
         self.registry.start_all()
 
     def _register_adapters(self):
@@ -228,8 +238,20 @@ class RuntimeService:
         self.client.set_callback(self.on_message)
         for topic in self.topics:
             print("Subscribing to topic:", topic)
-            self.client.subscribe(topic)
+            self._subscribe(topic)
             print("Subscribed to topic:", topic)
+
+    def _subscribe(self, topic):
+        try:
+            self.client.subscribe(topic)
+        except MQTTException as e:
+            rc = e.args[0] if e.args else None
+            if rc == SUBACK_FAILURE_RC:
+                raise MQTTException(
+                    "subscribe_refused: broker denied topic '{}' (rc={}) "
+                    "- check ACL/permissions".format(topic, rc)
+                )
+            raise
 
     def disconnect(self):
         self.connection.disconnect()
@@ -353,10 +375,12 @@ class RuntimeService:
             self.client.check_msg()
 
     def run(self):
+        delay = self._reconnect_delay_seconds
         while True:
             try:
                 if setting.MQTT_ENABLED:
                     self.connect_to_mqtt()
+                delay = self._reconnect_delay_seconds
                 if self.bootloop_guard:
                     self.bootloop_guard.confirm()
                 if self.ota_service:
@@ -372,5 +396,8 @@ class RuntimeService:
                     trace=format_exception(e),
                 )
                 self.metrics_service.record_error()
+                if setting.MQTT_ENABLED:
+                    time.sleep(delay)
+                    delay = min(delay * 2, self._max_reconnect_delay_seconds)
             finally:
                 self.disconnect()

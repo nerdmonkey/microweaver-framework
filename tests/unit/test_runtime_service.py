@@ -110,12 +110,13 @@ def test_run_retries_when_subscribe_fails_during_connect(mocker):
     first_client = MagicMock()
     second_client = MagicMock()
     first_client.subscribe.side_effect = RuntimeError("subscribe failed")
+    second_client.check_msg.side_effect = OSError("dropped")
     mock_connection.connect.side_effect = [
         first_client,
         second_client,
         SystemExit("stop test"),
     ]
-    mocker.patch("time.sleep", side_effect=ConnectionResetError("dropped"))
+    mock_sleep = mocker.patch("time.sleep")
 
     service = RuntimeService(subscribe_adapters=[("relay", MagicMock())])
     mocker.patch.object(service.log_service, "log")
@@ -131,6 +132,88 @@ def test_run_retries_when_subscribe_fails_during_connect(mocker):
         error="subscribe failed",
         trace="RuntimeError: subscribe failed",
     )
+    mock_sleep.assert_any_call(setting.MQTT_RECONNECT_DELAY_SECONDS)
+
+
+def test_run_backs_off_with_growing_delay_across_repeated_failures(mocker):
+    mocker.patch("app.services.runtime.setting.MQTT_ENABLED", True)
+    mocker.patch("app.services.runtime.setting.MQTT_RECONNECT_DELAY_SECONDS", 2)
+    mocker.patch("app.services.runtime.setting.MQTT_MAX_RECONNECT_DELAY_SECONDS", 10)
+    mock_connection_cls = mocker.patch("app.services.runtime.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    mock_connection.connect.side_effect = [
+        RuntimeError("boom 1"),
+        RuntimeError("boom 2"),
+        RuntimeError("boom 3"),
+        SystemExit("stop test"),
+    ]
+    mock_sleep = mocker.patch("time.sleep")
+
+    service = RuntimeService()
+
+    with pytest.raises(SystemExit, match="stop test"):
+        service.run()
+
+    assert mock_sleep.call_args_list == [
+        mocker.call(2),
+        mocker.call(4),
+        mocker.call(8),
+    ]
+
+
+def test_run_resets_backoff_delay_after_successful_reconnect(mocker):
+    mocker.patch("app.services.runtime.setting.MQTT_ENABLED", True)
+    mocker.patch("app.services.runtime.setting.MQTT_RECONNECT_DELAY_SECONDS", 2)
+    mocker.patch("app.services.runtime.setting.MQTT_MAX_RECONNECT_DELAY_SECONDS", 30)
+    mock_connection_cls = mocker.patch("app.services.runtime.MqttConnection")
+    mock_connection = mock_connection_cls.return_value
+    failing_client = MagicMock()
+    failing_client.check_msg.side_effect = OSError("dropped")
+    mock_connection.connect.side_effect = [
+        RuntimeError("boom"),
+        failing_client,
+        RuntimeError("boom again"),
+        SystemExit("stop test"),
+    ]
+    mock_sleep = mocker.patch("time.sleep")
+
+    service = RuntimeService()
+
+    with pytest.raises(SystemExit, match="stop test"):
+        service.run()
+
+    assert mock_sleep.call_args_list == [
+        mocker.call(2),
+        mocker.call(2),
+        mocker.call(4),
+    ]
+
+
+def test_subscribe_reports_friendly_reason_for_suback_failure(mocker):
+    from umqtt.simple import MQTTException
+
+    service = RuntimeService(subscribe_adapters=[("relay", MagicMock())])
+    service.client = MagicMock()
+    service.client.subscribe.side_effect = MQTTException(128)
+
+    with pytest.raises(MQTTException) as excinfo:
+        service._subscribe(service.topics[0])
+
+    assert "subscribe_refused" in str(excinfo.value)
+    assert "ACL" in str(excinfo.value)
+
+
+def test_subscribe_reraises_non_suback_failure_unchanged(mocker):
+    from umqtt.simple import MQTTException
+
+    service = RuntimeService(subscribe_adapters=[("relay", MagicMock())])
+    service.client = MagicMock()
+    service.client.subscribe.side_effect = MQTTException(3)
+
+    with pytest.raises(MQTTException) as excinfo:
+        service._subscribe(service.topics[0])
+
+    assert excinfo.value.args[0] == 3
 
 
 # --------------------------------------------------------------------------
