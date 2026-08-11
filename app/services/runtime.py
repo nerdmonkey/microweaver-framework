@@ -34,9 +34,11 @@ SUBACK_FAILURE_RC = 128
 
 
 class RuntimeService:
-    def __init__(self, publish_adapters=None, subscribe_adapters=None):
+    def __init__(self, publish_adapters=None, subscribe_adapters=None, topics=None):
         self.topic = setting.MQTT_TOPIC_PUB
-        self.topics = list(setting.MQTT_TOPIC_SUB)
+        self.topics = (
+            list(topics) if topics is not None else list(setting.MQTT_TOPIC_SUB)
+        )
         self.publish_qos = setting.MQTT_PUBLISH_QOS
         self.publish_retain = setting.MQTT_PUBLISH_RETAIN
         self.ota_status_topic = setting.OTA_STATUS_TOPIC

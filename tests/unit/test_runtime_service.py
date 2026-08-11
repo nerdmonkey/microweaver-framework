@@ -24,6 +24,23 @@ def test_connect_subscribes_to_each_configured_topic(mocker):
     ]
 
 
+def test_topics_override_replaces_configured_mqtt_topic_sub(mocker):
+    mocker.patch("app.services.runtime.setting.MQTT_TOPIC_SUB", ["topic/a"])
+
+    service = RuntimeService(topics=[])
+
+    assert service.topics == []
+
+
+def test_topics_override_is_independent_list_from_input(mocker):
+    given_topics = ["custom/topic"]
+
+    service = RuntimeService(topics=given_topics)
+    service.topics.append("mutated")
+
+    assert given_topics == ["custom/topic"]
+
+
 def test_on_message_routes_raw_command_to_single_command_adapter():
     relay = MagicMock()
     service = RuntimeService(subscribe_adapters=[("relay", relay)])

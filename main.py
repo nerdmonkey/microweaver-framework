@@ -26,11 +26,15 @@ def start():
     if setting.DHT_ENABLED:
         publish_adapters.append(_make_temperature_adapter())
     subscribe_adapters = []
+    topics = None
     if setting.RELAY_ENABLED:
         subscribe_adapters.append(("relay", RelayAdapter(pin=setting.RELAY_PIN)))
+    else:
+        topics = []
     runtime = RuntimeService(
         publish_adapters=publish_adapters,
         subscribe_adapters=subscribe_adapters,
+        topics=topics,
     )
     runtime.run()
 

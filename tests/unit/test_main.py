@@ -2,7 +2,9 @@ import main
 
 
 def test_start_wires_and_runs_runtime_service_with_dht22_default(mocker):
+    mocker.patch("main.setting.DHT_ENABLED", True)
     mocker.patch("main.setting.DHT_PIN", 15)
+    mocker.patch("main.setting.RELAY_ENABLED", True)
     mocker.patch("main.setting.RELAY_PIN", 16)
     mocker.patch("main.setting.DHT_SENSOR_TYPE", "dht22")
     mock_dht22_cls = mocker.patch("main.DHT22Adapter")
@@ -18,12 +20,15 @@ def test_start_wires_and_runs_runtime_service_with_dht22_default(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[("dht22", mock_dht22_cls.return_value)],
         subscribe_adapters=[("relay", mock_relay_cls.return_value)],
+        topics=None,
     )
     mock_runtime_cls.return_value.run.assert_called_once_with()
 
 
 def test_start_wires_and_runs_runtime_service_with_dht11(mocker):
+    mocker.patch("main.setting.DHT_ENABLED", True)
     mocker.patch("main.setting.DHT_PIN", 15)
+    mocker.patch("main.setting.RELAY_ENABLED", True)
     mocker.patch("main.setting.RELAY_PIN", 16)
     mocker.patch("main.setting.DHT_SENSOR_TYPE", "dht11")
     mock_dht11_cls = mocker.patch("main.DHT11Adapter")
@@ -39,12 +44,14 @@ def test_start_wires_and_runs_runtime_service_with_dht11(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[("dht11", mock_dht11_cls.return_value)],
         subscribe_adapters=[("relay", mock_relay_cls.return_value)],
+        topics=None,
     )
     mock_runtime_cls.return_value.run.assert_called_once_with()
 
 
 def test_start_skips_dht_adapter_when_disabled(mocker):
     mocker.patch("main.setting.DHT_ENABLED", False)
+    mocker.patch("main.setting.RELAY_ENABLED", True)
     mocker.patch("main.setting.RELAY_PIN", 16)
     mock_dht22_cls = mocker.patch("main.DHT22Adapter")
     mock_relay_cls = mocker.patch("main.RelayAdapter")
@@ -56,10 +63,12 @@ def test_start_skips_dht_adapter_when_disabled(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[],
         subscribe_adapters=[("relay", mock_relay_cls.return_value)],
+        topics=None,
     )
 
 
 def test_start_skips_relay_adapter_when_disabled(mocker):
+    mocker.patch("main.setting.DHT_ENABLED", True)
     mocker.patch("main.setting.DHT_PIN", 15)
     mocker.patch("main.setting.DHT_SENSOR_TYPE", "dht22")
     mocker.patch("main.setting.RELAY_ENABLED", False)
@@ -73,6 +82,7 @@ def test_start_skips_relay_adapter_when_disabled(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[("dht22", mock_dht22_cls.return_value)],
         subscribe_adapters=[],
+        topics=[],
     )
 
 
@@ -90,6 +100,7 @@ def test_start_wires_no_adapters_when_both_disabled(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[],
         subscribe_adapters=[],
+        topics=[],
     )
 
 
