@@ -250,7 +250,7 @@ class RuntimeService:
                 raise MQTTException(
                     "subscribe_refused: broker denied topic '{}' (rc={}) "
                     "- check ACL/permissions".format(topic, rc)
-                ) from e
+                )
             raise
 
     def disconnect(self):
