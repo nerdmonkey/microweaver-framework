@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `RuntimeService.run()` now backs off with exponential delay (reset on
+  successful reconnect) before retrying after any post-connect failure,
+  including a broker-refused subscribe (SUBACK failure), instead of hammering
+  the broker in a tight zero-delay reconnect loop. Broker-refused
+  subscriptions are also logged with a clearer `subscribe_refused` reason
+  (check ACL/permissions) instead of a bare `MQTTException: 128`.
 - Hardware-soak backups are now staged atomically and retried after a hard
   reset/readiness probe, so an interrupted raw-REPL download cannot be restored
   or reported as a complete device backup.
