@@ -1,10 +1,7 @@
 from app.adapters.actuators.relay import RelayAdapter
 from app.adapters.indicators.led import StatusLEDAdapter
-from app.adapters.indicators.oled import OLEDAdapter
 from app.adapters.sensors.dht11 import DHT11Adapter
 from app.adapters.sensors.dht22 import DHT22Adapter
-from app.adapters.sensors.potentiometer import PotentiometerAdapter
-from app.adapters.sensors.rotary_angle import RotaryAngleAdapter
 from app.services.provisioning import ProvisioningService
 from app.services.registration import RegistrationService
 from app.services.runtime import RuntimeService
@@ -29,10 +26,14 @@ def start():
     if setting.DHT_ENABLED:
         publish_adapters.append(_make_temperature_adapter())
     if setting.POTENTIOMETER_ENABLED:
+        from app.adapters.sensors.potentiometer import PotentiometerAdapter
+
         publish_adapters.append(
             ("potentiometer", PotentiometerAdapter(pin=setting.POTENTIOMETER_PIN))
         )
     if setting.ROTARY_ANGLE_ENABLED:
+        from app.adapters.sensors.rotary_angle import RotaryAngleAdapter
+
         publish_adapters.append(
             ("rotary_angle", RotaryAngleAdapter(pin=setting.ROTARY_ANGLE_PIN))
         )
@@ -40,6 +41,14 @@ def start():
     if setting.RELAY_ENABLED:
         subscribe_adapters.append(("relay", RelayAdapter(pin=setting.RELAY_PIN)))
     if setting.OLED_ENABLED:
+        # Deferred import: app.libs.ssd1306 is a sizeable framebuf-based
+        # driver, and loading it adds heap pressure that can starve the
+        # ESP32 WiFi driver's rx-buffer allocation on boot (see the
+        # "WiFi Out of Memory" crash in RuntimeService's WiFiService
+        # construction, only reproducible on-device). Import it only when
+        # the display is actually wired up.
+        from app.adapters.indicators.oled import OLEDAdapter
+
         subscribe_adapters.append(
             (
                 "oled",

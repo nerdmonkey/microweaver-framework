@@ -106,7 +106,7 @@ def test_start_wires_no_adapters_when_both_disabled(mocker):
     mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", False)
     mock_dht22_cls = mocker.patch("main.DHT22Adapter")
     mock_relay_cls = mocker.patch("main.RelayAdapter")
-    mock_oled_cls = mocker.patch("main.OLEDAdapter")
+    mock_oled_cls = mocker.patch("app.adapters.indicators.oled.OLEDAdapter")
     mock_runtime_cls = mocker.patch("main.RuntimeService")
 
     main.start()
@@ -132,7 +132,7 @@ def test_start_wires_oled_adapter_when_enabled(mocker):
     mocker.patch("main.setting.OLED_I2C_ADDR", 0x3C)
     mocker.patch("main.setting.OLED_WIDTH", 128)
     mocker.patch("main.setting.OLED_HEIGHT", 64)
-    mock_oled_cls = mocker.patch("main.OLEDAdapter")
+    mock_oled_cls = mocker.patch("app.adapters.indicators.oled.OLEDAdapter")
     mock_runtime_cls = mocker.patch("main.RuntimeService")
 
     main.start()
@@ -155,7 +155,7 @@ def test_start_skips_oled_adapter_when_disabled(mocker):
     mocker.patch("main.setting.POTENTIOMETER_ENABLED", False)
     mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", False)
     mock_relay_cls = mocker.patch("main.RelayAdapter")
-    mock_oled_cls = mocker.patch("main.OLEDAdapter")
+    mock_oled_cls = mocker.patch("app.adapters.indicators.oled.OLEDAdapter")
     mock_runtime_cls = mocker.patch("main.RuntimeService")
 
     main.start()
@@ -181,7 +181,7 @@ def test_start_wires_relay_and_oled_together(mocker):
     mocker.patch("main.setting.OLED_WIDTH", 128)
     mocker.patch("main.setting.OLED_HEIGHT", 64)
     mock_relay_cls = mocker.patch("main.RelayAdapter")
-    mock_oled_cls = mocker.patch("main.OLEDAdapter")
+    mock_oled_cls = mocker.patch("app.adapters.indicators.oled.OLEDAdapter")
     mock_runtime_cls = mocker.patch("main.RuntimeService")
 
     main.start()
@@ -203,7 +203,9 @@ def test_start_wires_potentiometer_adapter_when_enabled(mocker):
     mocker.patch("main.setting.POTENTIOMETER_ENABLED", True)
     mocker.patch("main.setting.POTENTIOMETER_PIN", 34)
     mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", False)
-    mock_pot_cls = mocker.patch("main.PotentiometerAdapter")
+    mock_pot_cls = mocker.patch(
+        "app.adapters.sensors.potentiometer.PotentiometerAdapter"
+    )
     mock_runtime_cls = mocker.patch("main.RuntimeService")
 
     main.start()
@@ -223,7 +225,9 @@ def test_start_wires_rotary_angle_adapter_when_enabled(mocker):
     mocker.patch("main.setting.POTENTIOMETER_ENABLED", False)
     mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", True)
     mocker.patch("main.setting.ROTARY_ANGLE_PIN", 35)
-    mock_rotary_cls = mocker.patch("main.RotaryAngleAdapter")
+    mock_rotary_cls = mocker.patch(
+        "app.adapters.sensors.rotary_angle.RotaryAngleAdapter"
+    )
     mock_runtime_cls = mocker.patch("main.RuntimeService")
 
     main.start()
@@ -245,8 +249,12 @@ def test_start_skips_potentiometer_and_rotary_angle_when_disabled(mocker):
     mocker.patch("main.setting.POTENTIOMETER_ENABLED", False)
     mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", False)
     mock_dht22_cls = mocker.patch("main.DHT22Adapter")
-    mock_pot_cls = mocker.patch("main.PotentiometerAdapter")
-    mock_rotary_cls = mocker.patch("main.RotaryAngleAdapter")
+    mock_pot_cls = mocker.patch(
+        "app.adapters.sensors.potentiometer.PotentiometerAdapter"
+    )
+    mock_rotary_cls = mocker.patch(
+        "app.adapters.sensors.rotary_angle.RotaryAngleAdapter"
+    )
     mock_runtime_cls = mocker.patch("main.RuntimeService")
 
     main.start()
@@ -271,8 +279,12 @@ def test_start_wires_potentiometer_and_rotary_angle_together_with_dht(mocker):
     mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", True)
     mocker.patch("main.setting.ROTARY_ANGLE_PIN", 35)
     mock_dht22_cls = mocker.patch("main.DHT22Adapter")
-    mock_pot_cls = mocker.patch("main.PotentiometerAdapter")
-    mock_rotary_cls = mocker.patch("main.RotaryAngleAdapter")
+    mock_pot_cls = mocker.patch(
+        "app.adapters.sensors.potentiometer.PotentiometerAdapter"
+    )
+    mock_rotary_cls = mocker.patch(
+        "app.adapters.sensors.rotary_angle.RotaryAngleAdapter"
+    )
     mock_runtime_cls = mocker.patch("main.RuntimeService")
 
     main.start()

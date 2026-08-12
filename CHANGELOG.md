@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `main.py` no longer unconditionally imports `OLEDAdapter`/
+  `PotentiometerAdapter`/`RotaryAngleAdapter` (and the framebuf-heavy
+  `app/libs/ssd1306.py` driver they pull in) on every boot regardless of
+  whether `oled_enabled`/`potentiometer_enabled`/`rotary_angle_enabled` is
+  set — the extra heap load from those imports could starve the ESP32 WiFi
+  driver's rx-buffer allocation, surfacing as `OSError: WiFi Out of Memory`
+  out of `WiFiService.__init__` on boot. Imports are now deferred until
+  each adapter's `_enabled` flag confirms it's actually wired up.
+
 ### Added
 - `device_name`/`timezone`/`timezone_offset_minutes` config keys, plus an
   envelope wrapping every adapter publish payload with `action`, `client_id`,
