@@ -83,6 +83,9 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "ota_manifest_url": "https://api.example.com/manifest.json",
                 "ota_state_path": "test_ota_state.json",
                 "ota_topic": "test/ota/update",
+                "device_name": "Test Device",
+                "timezone": "Asia/Manila",
+                "timezone_offset_minutes": 480,
             }
         )
     )
@@ -162,6 +165,9 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.OTA_MANIFEST_URL == "https://api.example.com/manifest.json"
     assert setting.OTA_STATE_PATH == "test_ota_state.json"
     assert setting.OTA_TOPIC == "test/ota/update"
+    assert setting.DEVICE_NAME == "Test Device"
+    assert setting.TIMEZONE == "Asia/Manila"
+    assert setting.TIMEZONE_OFFSET_MINUTES == 480
 
 
 def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
@@ -235,6 +241,9 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.POTENTIOMETER_PIN == 34
     assert setting.ROTARY_ANGLE_ENABLED is False
     assert setting.ROTARY_ANGLE_PIN == 34
+    assert setting.DEVICE_NAME == ""
+    assert setting.TIMEZONE == "UTC"
+    assert setting.TIMEZONE_OFFSET_MINUTES == 0
 
 
 def test_setting_falls_back_to_legacy_dht22_pin_key(tmp_path):

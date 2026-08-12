@@ -1,9 +1,32 @@
+import json
 from unittest.mock import MagicMock
 
 import pytest
 
 from app.services.error_handler import ErrorHandlerService
 from app.services.runtime import RuntimeService, setting
+
+ENVELOPE_EPOCH = 1786529613  # 2026-08-12T10:13:33Z
+
+
+def _patch_envelope_settings(mocker, epoch=ENVELOPE_EPOCH):
+    mocker.patch("app.services.runtime.time.time", return_value=epoch)
+    mocker.patch("app.services.runtime.setting.MQTT_CLIENT_ID", "test-client")
+    mocker.patch("app.services.runtime.setting.DEVICE_NAME", "Test Device")
+    mocker.patch("app.services.runtime.setting.TIMEZONE", "Asia/Manila")
+    mocker.patch("app.services.runtime.setting.TIMEZONE_OFFSET_MINUTES", 480)
+    return epoch
+
+
+def _envelope(action, epoch=ENVELOPE_EPOCH, **fields):
+    envelope = {"action": action, "client_id": "test-client"}
+    envelope.update(fields)
+    envelope["ok"] = True
+    envelope["timestamp"] = epoch
+    envelope["timestamp_local"] = "2026-08-12T18:13:33+08:00"
+    envelope["device"] = "Test Device"
+    envelope["timezone"] = "Asia/Manila"
+    return envelope
 
 
 def test_connect_subscribes_to_each_configured_topic(mocker):
@@ -75,6 +98,7 @@ def test_on_message_falls_back_to_default_when_topic_does_not_match_multiple_ada
 
 
 def test_poll_publish_adapters_publishes_dht22_payload(mocker):
+    _patch_envelope_settings(mocker)
     sensor = MagicMock()
     sensor.read.return_value = (21.5, 55.0)
     service = RuntimeService(publish_adapters=[("dht22", sensor)])
@@ -82,12 +106,15 @@ def test_poll_publish_adapters_publishes_dht22_payload(mocker):
 
     service._poll_publish_adapters()
 
-    publish_message.assert_called_once_with(
-        service.topics_pub[0], '{"temperature": 21.5, "humidity": 55.0}'
+    publish_message.assert_called_once_with(service.topics_pub[0], mocker.ANY)
+    topic, payload = publish_message.call_args[0]
+    assert json.loads(payload) == _envelope(
+        "sensor_reading", temperature=21.5, humidity=55.0
     )
 
 
 def test_run_publishes_and_receives_with_one_connection(mocker):
+    _patch_envelope_settings(mocker)
     mocker.patch("app.services.runtime.setting.MQTT_ENABLED", True)
     mock_wifi_cls = mocker.patch("app.services.runtime.WiFiService")
     mock_wifi = mock_wifi_cls.return_value
@@ -115,10 +142,10 @@ def test_run_publishes_and_receives_with_one_connection(mocker):
     mock_client.set_callback.assert_called_once_with(service.on_message)
     mock_client.subscribe.assert_called_once_with(service.topics[0])
     mock_client.publish.assert_called_once_with(
-        service.topics_pub[0],
-        b'{"temperature": 21.5, "humidity": 55.0}',
-        qos=0,
-        retain=False,
+        service.topics_pub[0], mocker.ANY, qos=0, retain=False
+    )
+    assert json.loads(mock_client.publish.call_args[0][1]) == _envelope(
+        "sensor_reading", temperature=21.5, humidity=55.0
     )
 
 
@@ -890,7 +917,8 @@ def test_decode_command_bool_json_state():
 # --------------------------------------------------------------------------
 
 
-def test_to_publish_payload_dict_reading():
+def test_to_publish_payload_dict_reading(mocker):
+    _patch_envelope_settings(mocker)
     service = RuntimeService()
     sensor = MagicMock()
 
@@ -898,22 +926,32 @@ def test_to_publish_payload_dict_reading():
         "multi", sensor, {"temperature": 20, "humidity": 40}
     )
 
-    assert payload == '{"temperature": 20, "humidity": 40}'
+    assert json.loads(payload) == _envelope(
+        "sensor_reading", temperature=20, humidity=40
+    )
 
 
-def test_to_publish_payload_bool_reading():
+def test_to_publish_payload_bool_reading(mocker):
+    _patch_envelope_settings(mocker)
     service = RuntimeService()
     relay = MagicMock(spec=["read"])
 
-    assert service._to_publish_payload("relay", relay, True) == '{"state": "on"}'
-    assert service._to_publish_payload("relay", relay, False) == '{"state": "off"}'
+    assert json.loads(service._to_publish_payload("relay", relay, True)) == _envelope(
+        "state_report", state="on"
+    )
+    assert json.loads(service._to_publish_payload("relay", relay, False)) == _envelope(
+        "state_report", state="off"
+    )
 
 
-def test_to_publish_payload_numeric_reading():
+def test_to_publish_payload_numeric_reading(mocker):
+    _patch_envelope_settings(mocker)
     service = RuntimeService()
     counter = MagicMock(spec=["read"])
 
-    assert service._to_publish_payload("counter", counter, 42) == '{"value": 42}'
+    assert json.loads(service._to_publish_payload("counter", counter, 42)) == _envelope(
+        "sensor_reading", value=42
+    )
 
 
 def test_to_publish_payload_unsupported_reading_prints_and_returns_none(capsys):
@@ -983,6 +1021,7 @@ def test_resolve_publish_topic_returns_none_when_unmatched(mocker):
 
 
 def test_poll_publish_adapters_routes_multiple_adapters_to_matching_topics(mocker):
+    _patch_envelope_settings(mocker)
     mocker.patch(
         "app.services.runtime.setting.MQTT_TOPIC_PUB",
         ["data/sensor/room/dht22", "data/sensor/room/potentiometer"],
@@ -996,11 +1035,13 @@ def test_poll_publish_adapters_routes_multiple_adapters_to_matching_topics(mocke
 
     service._poll_publish_adapters()
 
-    assert publish_message.call_args_list == [
-        mocker.call(
-            "data/sensor/room/dht22", '{"temperature": 21.5, "humidity": 55.0}'
-        ),
-        mocker.call("data/sensor/room/potentiometer", '{"value": 42}'),
+    assert [call.args[0] for call in publish_message.call_args_list] == [
+        "data/sensor/room/dht22",
+        "data/sensor/room/potentiometer",
+    ]
+    assert [json.loads(call.args[1]) for call in publish_message.call_args_list] == [
+        _envelope("sensor_reading", temperature=21.5, humidity=55.0),
+        _envelope("sensor_reading", value=42),
     ]
 
 

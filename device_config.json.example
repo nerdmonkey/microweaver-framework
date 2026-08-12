@@ -93,5 +93,8 @@
     "ota_manifest_url": "",
     "ota_state_path": "ota_state.json",
     "ota_topic": "ota/update",
-    "ota_status_topic": "ota/status"
+    "ota_status_topic": "ota/status",
+    "device_name": "",
+    "timezone": "UTC",
+    "timezone_offset_minutes": 0
 }

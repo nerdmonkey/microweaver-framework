@@ -100,6 +100,9 @@ _SCHEMA = {
     "ota_state_path": {"type": str},
     "ota_topic": {"type": str},
     "ota_status_topic": {"type": str},
+    "device_name": {"type": str},
+    "timezone": {"type": str},
+    "timezone_offset_minutes": {"type": "int", "min": -720, "max": 840},
 }
 
 
@@ -262,6 +265,10 @@ class Setting:
         self.OTA_STATE_PATH = self._value("ota_state_path", "ota_state.json")
         self.OTA_TOPIC = self._value("ota_topic", "ota/update")
         self.OTA_STATUS_TOPIC = self._value("ota_status_topic", "ota/status")
+
+        self.DEVICE_NAME = self._value("device_name", "")
+        self.TIMEZONE = self._value("timezone", "UTC")
+        self.TIMEZONE_OFFSET_MINUTES = self._int("timezone_offset_minutes", 0)
 
     def _load(self, path):
         try:

@@ -1,6 +1,6 @@
 import json
 
-from app.adapters.payload import to_payload
+from app.adapters.payload import format_local_timestamp, to_payload
 
 
 def test_to_payload_returns_json_string_of_named_fields():
@@ -33,3 +33,21 @@ def test_to_payload_output_is_ready_for_publish_message(mocker):
     service.client.publish.assert_called_once_with(
         service.topics_pub[0], b'{"state": "on"}', qos=0, retain=False
     )
+
+
+def test_format_local_timestamp_applies_positive_offset():
+    epoch_seconds = 1786529613  # 2026-08-12T10:13:33Z
+
+    assert format_local_timestamp(epoch_seconds, 480) == "2026-08-12T18:13:33+08:00"
+
+
+def test_format_local_timestamp_applies_negative_offset():
+    epoch_seconds = 1786529613  # 2026-08-12T10:13:33Z
+
+    assert format_local_timestamp(epoch_seconds, -300) == "2026-08-12T05:13:33-05:00"
+
+
+def test_format_local_timestamp_zero_offset_is_utc():
+    epoch_seconds = 1786529613  # 2026-08-12T10:13:33Z
+
+    assert format_local_timestamp(epoch_seconds, 0) == "2026-08-12T10:13:33+00:00"

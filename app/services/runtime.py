@@ -7,7 +7,7 @@ except ImportError:
 
 from umqtt.simple import MQTTException
 
-from app.adapters.payload import to_payload
+from app.adapters.payload import format_local_timestamp, to_payload
 from app.services.bootloop import BootLoopGuard
 from app.services.crash_log import CrashLogService
 from app.services.error_handler import ErrorHandlerService, format_exception
@@ -356,20 +356,35 @@ class RuntimeService:
 
     def _to_publish_payload(self, name, adapter, reading):
         if isinstance(reading, dict):
-            return to_payload(**reading)
+            return self._envelope("sensor_reading", reading)
         if (
             isinstance(reading, (list, tuple))
             and len(reading) == 2
             and hasattr(adapter, "temperature")
             and hasattr(adapter, "humidity")
         ):
-            return to_payload(temperature=reading[0], humidity=reading[1])
+            return self._envelope(
+                "sensor_reading", {"temperature": reading[0], "humidity": reading[1]}
+            )
         if isinstance(reading, bool):
-            return to_payload(state="on" if reading else "off")
+            return self._envelope("state_report", {"state": "on" if reading else "off"})
         if isinstance(reading, (int, float, str)):
-            return to_payload(value=reading)
+            return self._envelope("sensor_reading", {"value": reading})
         print("Unsupported publish payload from adapter:", name)
         return None
+
+    def _envelope(self, action, fields):
+        now = time.time()
+        envelope = {"action": action, "client_id": setting.MQTT_CLIENT_ID}
+        envelope.update(fields)
+        envelope["ok"] = True
+        envelope["timestamp"] = now
+        envelope["timestamp_local"] = format_local_timestamp(
+            now, setting.TIMEZONE_OFFSET_MINUTES
+        )
+        envelope["device"] = setting.DEVICE_NAME
+        envelope["timezone"] = setting.TIMEZONE
+        return to_payload(**envelope)
 
     def _run_tick(self):
         self.log_service.log(

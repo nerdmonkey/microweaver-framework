@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `device_name`/`timezone`/`timezone_offset_minutes` config keys, plus an
+  envelope wrapping every adapter publish payload with `action`, `client_id`,
+  `ok`, `timestamp`, `timestamp_local`, `device`, and `timezone` fields
+  around the existing reading fields (`RuntimeService._envelope`,
+  `app/services/runtime.py`) — matches the shape expected by downstream
+  consumers instead of publishing bare `{temperature, humidity}`-style
+  payloads.
 - `dht_enabled` and `relay_enabled` config keys (default `true`, matching
   prior always-on behavior) let a device be provisioned without a DHT sensor
   or relay wired up, instead of `main.py` unconditionally constructing both
