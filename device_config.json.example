@@ -96,5 +96,8 @@
     "ota_status_topic": "ota/status",
     "device_name": "",
     "timezone": "UTC",
-    "timezone_offset_minutes": 0
+    "timezone_offset_minutes": 0,
+    "ntp_enabled": true,
+    "ntp_server": "pool.ntp.org",
+    "ntp_sync_timeout_seconds": 5
 }

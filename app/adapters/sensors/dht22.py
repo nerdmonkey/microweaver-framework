@@ -5,6 +5,10 @@ from app.adapters.base import BaseAdapter
 
 
 class DHT22Adapter(BaseAdapter):
+    # AOSong DHT22 datasheet: collecting period must be >= 2s; polling
+    # faster than this returns stale/garbage readings instead of erroring.
+    read_interval_seconds = 2
+
     def __init__(self, pin=4):
         self.pin = pin
         self._sensor = None

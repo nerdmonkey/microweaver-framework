@@ -5,6 +5,10 @@ def make_adapter(pin=4):
     return DHT11Adapter(pin=pin)
 
 
+def test_read_interval_seconds_matches_datasheet_minimum():
+    assert DHT11Adapter.read_interval_seconds == 1
+
+
 def test_setup_marks_available_on_success(mocker):
     mock_pin_cls = mocker.patch("machine.Pin")
     mock_dht11_cls = mocker.patch("dht.DHT11")

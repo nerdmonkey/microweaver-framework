@@ -86,6 +86,9 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "device_name": "Test Device",
                 "timezone": "Asia/Manila",
                 "timezone_offset_minutes": 480,
+                "ntp_enabled": False,
+                "ntp_server": "time.test.com",
+                "ntp_sync_timeout_seconds": 10,
             }
         )
     )
@@ -168,6 +171,9 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.DEVICE_NAME == "Test Device"
     assert setting.TIMEZONE == "Asia/Manila"
     assert setting.TIMEZONE_OFFSET_MINUTES == 480
+    assert setting.NTP_ENABLED is False
+    assert setting.NTP_SERVER == "time.test.com"
+    assert setting.NTP_SYNC_TIMEOUT_SECONDS == 10
 
 
 def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
@@ -244,6 +250,9 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.DEVICE_NAME == ""
     assert setting.TIMEZONE == "UTC"
     assert setting.TIMEZONE_OFFSET_MINUTES == 0
+    assert setting.NTP_ENABLED is True
+    assert setting.NTP_SERVER == "pool.ntp.org"
+    assert setting.NTP_SYNC_TIMEOUT_SECONDS == 5
 
 
 def test_setting_falls_back_to_legacy_dht22_pin_key(tmp_path):

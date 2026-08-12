@@ -5,6 +5,9 @@ from app.adapters.base import BaseAdapter
 
 
 class DHT11Adapter(BaseAdapter):
+    # DHT11 datasheet: minimum 1s between reads.
+    read_interval_seconds = 1
+
     def __init__(self, pin=4):
         self.pin = pin
         self._sensor = None

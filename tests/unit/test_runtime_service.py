@@ -627,6 +627,68 @@ def test_run_checks_memory_each_tick(mocker):
 
 
 # --------------------------------------------------------------------------
+# ntp sync
+# --------------------------------------------------------------------------
+
+
+def test_ntp_service_created_by_default(mocker):
+    mock_ntp_cls = mocker.patch("app.services.runtime.NtpSyncService")
+    mock_ntp = mock_ntp_cls.return_value
+
+    service = RuntimeService()
+
+    mock_ntp_cls.assert_called_once_with(
+        setting.NTP_SERVER, setting.NTP_SYNC_TIMEOUT_SECONDS
+    )
+    assert service.ntp_service is mock_ntp
+
+
+def test_ntp_service_not_created_when_disabled(mocker):
+    mocker.patch("app.services.runtime.setting.NTP_ENABLED", False)
+    mock_ntp_cls = mocker.patch("app.services.runtime.NtpSyncService")
+
+    service = RuntimeService()
+
+    mock_ntp_cls.assert_not_called()
+    assert service.ntp_service is None
+
+
+def test_run_syncs_ntp_after_each_mqtt_connect(mocker):
+    mocker.patch("app.services.runtime.setting.MQTT_ENABLED", True)
+    mocker.patch("app.services.runtime.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.runtime.MqttConnection")
+    mock_client = MagicMock()
+    mock_client.check_msg.side_effect = [OSError("dropped"), SystemExit("stop test")]
+    mock_connection_cls.return_value.connect.return_value = mock_client
+    mocker.patch("time.sleep")
+
+    service = RuntimeService()
+    ntp_service = MagicMock()
+    service.ntp_service = ntp_service
+
+    with pytest.raises(SystemExit, match="stop test"):
+        service.run()
+
+    assert ntp_service.sync.call_count == 2
+
+
+def test_run_skips_ntp_sync_when_disabled(mocker):
+    mocker.patch("app.services.runtime.setting.MQTT_ENABLED", True)
+    mocker.patch("app.services.runtime.WiFiService")
+    mock_connection_cls = mocker.patch("app.services.runtime.MqttConnection")
+    mock_client = MagicMock()
+    mock_client.check_msg.side_effect = [SystemExit("stop test")]
+    mock_connection_cls.return_value.connect.return_value = mock_client
+    mocker.patch("time.sleep")
+
+    service = RuntimeService()
+    service.ntp_service = None
+
+    with pytest.raises(SystemExit, match="stop test"):
+        service.run()
+
+
+# --------------------------------------------------------------------------
 # health check / service restart / health report
 # --------------------------------------------------------------------------
 
@@ -972,6 +1034,23 @@ def test_poll_publish_adapters_skips_unsupported_payload(mocker):
 
     service._poll_publish_adapters()
 
+    publish_message.assert_not_called()
+
+
+def test_poll_publish_adapters_respects_adapter_read_interval(mocker):
+    _patch_envelope_settings(mocker)
+    mocker.patch("app.services.runtime.time.time", side_effect=[100, 100, 100.5])
+    sensor = MagicMock(spec=["read", "setup", "deinit", "read_interval_seconds"])
+    sensor.read_interval_seconds = 2
+    sensor.read.return_value = (21.5, 55.0)
+    service = RuntimeService(publish_adapters=[("dht22", sensor)])
+    publish_message = mocker.patch.object(service, "publish_message")
+
+    service._poll_publish_adapters()
+    publish_message.reset_mock()
+    service._poll_publish_adapters()
+
+    sensor.read.assert_called_once_with()
     publish_message.assert_not_called()
 
 

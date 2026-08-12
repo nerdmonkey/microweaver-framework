@@ -103,6 +103,9 @@ _SCHEMA = {
     "device_name": {"type": str},
     "timezone": {"type": str},
     "timezone_offset_minutes": {"type": "int", "min": -720, "max": 840},
+    "ntp_enabled": {"type": bool},
+    "ntp_server": {"type": str},
+    "ntp_sync_timeout_seconds": {"type": "int", "min": 1},
 }
 
 
@@ -269,6 +272,10 @@ class Setting:
         self.DEVICE_NAME = self._value("device_name", "")
         self.TIMEZONE = self._value("timezone", "UTC")
         self.TIMEZONE_OFFSET_MINUTES = self._int("timezone_offset_minutes", 0)
+
+        self.NTP_ENABLED = self._bool("ntp_enabled", True)
+        self.NTP_SERVER = self._value("ntp_server", "pool.ntp.org")
+        self.NTP_SYNC_TIMEOUT_SECONDS = self._int("ntp_sync_timeout_seconds", 5)
 
     def _load(self, path):
         try:

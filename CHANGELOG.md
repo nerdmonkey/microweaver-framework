@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `ntp_enabled`/`ntp_server`/`ntp_sync_timeout_seconds` config keys (default
+  `true`/`pool.ntp.org`/`5`) plus `NtpSyncService` (`app/services/ntp.py`),
+  synced once per successful MQTT connect in `RuntimeService.run()`. Without
+  this the ESP32's clock never leaves MicroPython's 2000-01-01 epoch, so
+  every publish payload's `timestamp`/`timestamp_local` were meaningless
+  (e.g. `2000-01-01T00:01:09+00:00`-style values instead of real time).
+
 ### Fixed
+- `DHT22Adapter`/`DHT11Adapter` now carry a `read_interval_seconds` class
+  attribute (`2`/`1`, per datasheet minimums) that `RuntimeService`'s
+  publish scheduler picks up instead of its 1-second default — polling a
+  DHT22 faster than its 2-second minimum sampling period returned garbage
+  readings (e.g. 870°C / 2432% humidity) instead of a fresh measurement.
 - `main.py` no longer unconditionally imports `OLEDAdapter`/
   `PotentiometerAdapter`/`RotaryAngleAdapter` (and the framebuf-heavy
   `app/libs/ssd1306.py` driver they pull in) on every boot regardless of

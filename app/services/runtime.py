@@ -16,6 +16,7 @@ from app.services.logger import LogService
 from app.services.memory_monitor import MemoryMonitorService
 from app.services.metrics import MetricsService
 from app.services.mqtt import MqttConnection
+from app.services.ntp import NtpSyncService
 from app.services.ota import OtaService
 from app.services.poll_scheduler import PollScheduler
 from app.services.registry import ServiceRegistry
@@ -117,6 +118,7 @@ class RuntimeService:
                 logger=self.log_service,
                 crash_log=self.crash_log,
             )
+        self._init_ntp_service()
         self._init_health_check()
         self._init_service_restart()
         self._init_health_report()
@@ -152,7 +154,8 @@ class RuntimeService:
         for name, adapter in self.publish_adapters + self.subscribe_adapters:
             self.registry.register_adapter(name, adapter)
             if (name, adapter) in self.publish_adapters:
-                self.publish_scheduler.register(name)
+                interval = getattr(adapter, "read_interval_seconds", None)
+                self.publish_scheduler.register(name, interval_seconds=interval)
 
     def _register_command_handlers(self):
         for topic in self.topics:
@@ -164,6 +167,13 @@ class RuntimeService:
             self.message_handlers[
                 setting.LOG_LEVEL_TOPIC
             ] = self._handle_log_level_message
+
+    def _init_ntp_service(self):
+        self.ntp_service = None
+        if setting.NTP_ENABLED:
+            self.ntp_service = NtpSyncService(
+                setting.NTP_SERVER, setting.NTP_SYNC_TIMEOUT_SECONDS
+            )
 
     def _init_health_check(self):
         self.health_check_service = None
@@ -415,6 +425,8 @@ class RuntimeService:
             try:
                 if setting.MQTT_ENABLED:
                     self.connect_to_mqtt()
+                    if self.ntp_service:
+                        self.error_handler.guard(self.ntp_service.sync, "ntp_sync")
                 delay = self._reconnect_delay_seconds
                 if self.bootloop_guard:
                     self.bootloop_guard.confirm()
