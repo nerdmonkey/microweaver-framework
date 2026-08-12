@@ -26,7 +26,7 @@ setting = (Setting()).get_settings()
 
 class PublishService:
     def __init__(self, adapters=None):
-        self.topic = setting.MQTT_TOPIC_PUB
+        self.topics_pub = list(setting.MQTT_TOPIC_PUB)
         self.publish_qos = setting.MQTT_PUBLISH_QOS
         self.publish_retain = setting.MQTT_PUBLISH_RETAIN
         self.log_service = LogService(
@@ -173,8 +173,8 @@ class PublishService:
     def connect_to_mqtt(self):
         self.client = self.connection.connect()
 
-    def publish_message(self, message):
-        self._publish(self.topic, message)
+    def publish_message(self, message, topic=None):
+        self._publish(topic if topic is not None else self.topics_pub[0], message)
 
     def _report_ota_status(self, payload):
         payload.setdefault("app_version", setting.APP_VERSION)

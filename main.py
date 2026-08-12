@@ -1,7 +1,10 @@
 from app.adapters.actuators.relay import RelayAdapter
 from app.adapters.indicators.led import StatusLEDAdapter
+from app.adapters.indicators.oled import OLEDAdapter
 from app.adapters.sensors.dht11 import DHT11Adapter
 from app.adapters.sensors.dht22 import DHT22Adapter
+from app.adapters.sensors.potentiometer import PotentiometerAdapter
+from app.adapters.sensors.rotary_angle import RotaryAngleAdapter
 from app.services.provisioning import ProvisioningService
 from app.services.registration import RegistrationService
 from app.services.runtime import RuntimeService
@@ -22,10 +25,38 @@ def _make_temperature_adapter():
 
 
 def start():
-    sensor_name, sensor_adapter = _make_temperature_adapter()
+    publish_adapters = []
+    if setting.DHT_ENABLED:
+        publish_adapters.append(_make_temperature_adapter())
+    if setting.POTENTIOMETER_ENABLED:
+        publish_adapters.append(
+            ("potentiometer", PotentiometerAdapter(pin=setting.POTENTIOMETER_PIN))
+        )
+    if setting.ROTARY_ANGLE_ENABLED:
+        publish_adapters.append(
+            ("rotary_angle", RotaryAngleAdapter(pin=setting.ROTARY_ANGLE_PIN))
+        )
+    subscribe_adapters = []
+    if setting.RELAY_ENABLED:
+        subscribe_adapters.append(("relay", RelayAdapter(pin=setting.RELAY_PIN)))
+    if setting.OLED_ENABLED:
+        subscribe_adapters.append(
+            (
+                "oled",
+                OLEDAdapter(
+                    sda_pin=setting.OLED_SDA_PIN,
+                    scl_pin=setting.OLED_SCL_PIN,
+                    i2c_addr=setting.OLED_I2C_ADDR,
+                    width=setting.OLED_WIDTH,
+                    height=setting.OLED_HEIGHT,
+                ),
+            )
+        )
+    topics = None if subscribe_adapters else []
     runtime = RuntimeService(
-        publish_adapters=[(sensor_name, sensor_adapter)],
-        subscribe_adapters=[("relay", RelayAdapter(pin=setting.RELAY_PIN))],
+        publish_adapters=publish_adapters,
+        subscribe_adapters=subscribe_adapters,
+        topics=topics,
     )
     runtime.run()
 

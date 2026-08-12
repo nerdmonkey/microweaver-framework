@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `device_name`/`timezone`/`timezone_offset_minutes` config keys, plus an
+  envelope wrapping every adapter publish payload with `action`, `client_id`,
+  `ok`, `timestamp`, `timestamp_local`, `device`, and `timezone` fields
+  around the existing reading fields (`RuntimeService._envelope`,
+  `app/services/runtime.py`) — matches the shape expected by downstream
+  consumers instead of publishing bare `{temperature, humidity}`-style
+  payloads.
+- `dht_enabled` and `relay_enabled` config keys (default `true`, matching
+  prior always-on behavior) let a device be provisioned without a DHT sensor
+  or relay wired up, instead of `main.py` unconditionally constructing both
+  adapters on every boot.
+- `oled_enabled` config key (default `false`) plus `oled_sda_pin`/
+  `oled_scl_pin`/`oled_i2c_addr`/`oled_width`/`oled_height` wire a new
+  `OLEDAdapter` (`app/adapters/indicators/oled.py`) — an SSD1306 128x64 I2C
+  display on ESP32's default SDA=21/SCL=22 pins — into `main.py` as an MQTT
+  subscribe adapter, with `on()`/`off()`/`toggle()` driven by
+  `RuntimeService`'s existing command dispatch and `show_text()`/`clear()`
+  for writing status lines to the panel. The SSD1306 driver is vendored
+  verbatim from micropython-lib at `app/libs/ssd1306.py`, imported as
+  `from app.libs import ssd1306` and deployed alongside the rest of `app/`.
+- `tinker.py topics` command lists the configured MQTT publish/subscribe
+  topics from `device_config.json` (falling back to `device_config.json.example`
+  if not yet provisioned) alongside which adapter(s) each one drives,
+  replicating `RuntimeService._resolve_command_adapter`'s exact routing rules
+  (exact match, topic-suffix match, single-adapter fallback) and flagging
+  unmatched subscribe topics or the case where no subscribe adapters are
+  enabled at all.
+- `potentiometer_enabled`/`potentiometer_pin` and `rotary_angle_enabled`/
+  `rotary_angle_pin` config keys (default `false`, pin `34`) wire two new
+  ADC-based publish adapters — `PotentiometerAdapter` and
+  `RotaryAngleAdapter` (`app/adapters/sensors/potentiometer.py`,
+  `app/adapters/sensors/rotary_angle.py`) — into `main.py`. Both read a
+  variable-resistor voltage divider via `machine.ADC` (`ATTN_11DB`,
+  `read_u16()`) and report position as a 0–100 percentage.
+
+### Changed
+- `mqtt_topic_pub` now accepts one or more topics (comma-separated string or
+  JSON array), matching `mqtt_topic_sub`'s existing list support, instead of
+  a single fixed publish topic shared unconditionally by every sensor.
+  `RuntimeService._resolve_publish_topic()` routes each publish adapter's
+  reading using the same rules `_resolve_command_adapter()` already uses for
+  subscribe topics (exact match, topic-suffix match, single-topic fallback
+  shared by all adapters), and skips + logs a warning for a reading whose
+  adapter name matches no configured topic instead of silently misdelivering
+  it. A single configured topic (the existing default) is still shared by
+  every publish adapter, so existing `device_config.json` files behave
+  identically. `RuntimeService.publish_message()` and
+  `PublishService.publish_message()` (`app/services/runtime.py`,
+  `app/services/publish.py`) now take the target topic explicitly rather
+  than reading a fixed `self.topic`; `tinker.py topics` reports the
+  resulting per-adapter pub routing the same way it already does for sub.
+
 ### Fixed
 - `RuntimeService.run()` now backs off with exponential delay (reset on
   successful reconnect) before retrying after any post-connect failure,

@@ -1127,6 +1127,147 @@ def provision(
     print(f"\nProvisioned {resolved_port} with {config_path.name}")
 
 
+# Mirrors main.py's subscribe-adapter wiring (name -> enabled-flag attribute).
+# Kept in sync by hand, same as PROVISION_FIELDS above -- update this list
+# whenever main.py gains/removes a subscribe adapter.
+SUBSCRIBE_ADAPTER_FLAGS = [
+    ("relay", "RELAY_ENABLED"),
+    ("oled", "OLED_ENABLED"),
+]
+
+
+# Mirrors main.py's publish-adapter wiring for the pub-side "driven by" column,
+# beyond the DHT special case handled separately below (name is
+# DHT_SENSOR_TYPE itself, not a fixed "dht" name).
+PUBLISH_ADAPTER_FLAGS = [
+    ("potentiometer", "POTENTIOMETER_ENABLED"),
+    ("rotary_angle", "ROTARY_ANGLE_ENABLED"),
+]
+
+
+def _enabled_publish_adapter_names(setting) -> list:
+    names = []
+    if setting.DHT_ENABLED:
+        names.append(setting.DHT_SENSOR_TYPE)
+    names.extend(name for name, flag in PUBLISH_ADAPTER_FLAGS if getattr(setting, flag))
+    return names
+
+
+def _resolve_sub_topic_route(topic: str, enabled_names: list) -> str:
+    """Replicate RuntimeService._resolve_command_adapter's routing rules
+    (app/services/runtime.py) against the statically-known enabled adapter
+    names, so this reports the same outcome the device would at runtime."""
+    if topic in enabled_names:
+        return topic
+    suffix = topic.rsplit("/", 1)[-1]
+    if suffix in enabled_names:
+        return suffix
+    if len(enabled_names) == 1:
+        return enabled_names[0]
+    return None
+
+
+def _resolve_pub_topic_route(name: str, pub_topics: list) -> Optional[str]:
+    """Replicate RuntimeService._resolve_publish_topic's routing rules,
+    inverted from _resolve_sub_topic_route: given an adapter name, pick
+    which configured mqtt_topic_pub entry it publishes to."""
+    if len(pub_topics) == 1:
+        return pub_topics[0]
+    for topic in pub_topics:
+        if topic == name or topic.rsplit("/", 1)[-1] == name:
+            return topic
+    return None
+
+
+def _build_pub_rows(setting) -> list:
+    publish_names = _enabled_publish_adapter_names(setting)
+    pub_topics = list(setting.MQTT_TOPIC_PUB)
+    if not publish_names:
+        return [("PUB", topic, "(no publish adapters enabled)") for topic in pub_topics]
+
+    topic_to_names = {topic: [] for topic in pub_topics}
+    unmatched_names = []
+    for name in publish_names:
+        topic = _resolve_pub_topic_route(name, pub_topics)
+        if topic is None:
+            unmatched_names.append(name)
+        else:
+            topic_to_names[topic].append(name)
+    rows = [
+        (
+            "PUB",
+            topic,
+            ", ".join(names) if names else "(no publish adapters route here)",
+        )
+        for topic, names in topic_to_names.items()
+    ]
+    rows.extend(
+        ("PUB", f"(unmatched: {name})", "reading dropped - no topic suffix match")
+        for name in unmatched_names
+    )
+    return rows
+
+
+def _build_sub_rows(setting) -> list:
+    enabled_sub_names = [
+        name for name, flag in SUBSCRIBE_ADAPTER_FLAGS if getattr(setting, flag)
+    ]
+    if not enabled_sub_names:
+        # Matches main.py: topics = None if subscribe_adapters else [] -- with
+        # zero subscribe adapters enabled, RuntimeService is handed topics=[]
+        # and never subscribes to anything, regardless of mqtt_topic_sub.
+        return [
+            (
+                "SUB",
+                "(none - no subscribe adapters enabled)",
+                "main.py overrides mqtt_topic_sub to [] when none enabled",
+            )
+        ]
+    return [
+        (
+            "SUB",
+            sub_topic,
+            _resolve_sub_topic_route(sub_topic, enabled_sub_names)
+            or "(unmatched - no adapter routed)",
+        )
+        for sub_topic in setting.MQTT_TOPIC_SUB
+    ] or [("SUB", "(none configured)", "-")]
+
+
+@app.command()
+def topics(
+    config_path: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        help="Path to device_config.json (default: repo's own, "
+        "falling back to device_config.json.example if not provisioned yet)",
+    ),
+) -> None:
+    """List configured MQTT pub/sub topics and which adapter(s) each drives."""
+    if config_path is None:
+        real = ROOT / "device_config.json"
+        config_path = real if real.exists() else ROOT / "device_config.json.example"
+    if not config_path.exists():
+        print(f"ERROR: config file not found: {config_path}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    try:
+        setting = Setting(config_path=str(config_path)).get_settings()
+    except ConfigError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    try:
+        source = config_path.relative_to(ROOT)
+    except ValueError:
+        source = config_path
+    print(f"Config source: {source}\n")
+
+    print_table(["Direction", "Topic", "Driven by"], _build_pub_rows(setting))
+    print()
+    print_table(["Direction", "Topic", "Routed to"], _build_sub_rows(setting))
+
+
 def _watched_files() -> list:
     """Collect the same source files build() compiles/copies, for change detection."""
     files = []

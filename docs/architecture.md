@@ -159,7 +159,7 @@ adapters = [
 publish = PublishService(adapters=adapters)
 ```
 
-Adding a new adapter-specific setting (a pin, an I2C address, …) follows the same three-place change as any other tunable: `device_config.json.example` + `_SCHEMA` entry, `Setting.__init__` attribute, then read it at the call site that constructs the adapter — never inside the adapter class itself.
+Adding a new adapter-specific setting (a pin, an I2C address, …) follows the same three-place change as any other tunable: `device_config.json.example` + `_SCHEMA` entry, `Setting.__init__` attribute, then read it at the call site that constructs the adapter — never inside the adapter class itself. `oled_i2c_addr` (`config/app.py`) is a concrete example.
 
 ## Reconnect behavior
 

@@ -31,7 +31,7 @@ def test_run_wires_real_wifi_and_mqtt_end_to_end(mocker):
     mock_client_cls.assert_any_call("client", "broker", 1883, keepalive=300)
     good_client.connect.assert_called_once_with()
     good_client.publish.assert_called_once_with(
-        service.topic, b"hi", qos=0, retain=False
+        service.topics_pub[0], b"hi", qos=0, retain=False
     )
 
 
@@ -54,7 +54,7 @@ def test_run_recovers_from_real_wifi_drop_mid_loop(mocker):
     mock_wlan.disconnect.assert_called_once_with()
     mock_wlan.connect.assert_called_once_with("ssid", "password")
     good_client.publish.assert_called_once_with(
-        service.topic, b"hi", qos=0, retain=False
+        service.topics_pub[0], b"hi", qos=0, retain=False
     )
 
 
@@ -81,7 +81,7 @@ def test_run_recovers_from_real_mqtt_broker_unreachable(mocker):
 
     assert mock_sleep.call_args_list[0] == mocker.call(2)
     succeeding_client.publish.assert_called_once_with(
-        service.topic, b"hi", qos=0, retain=False
+        service.topics_pub[0], b"hi", qos=0, retain=False
     )
 
 

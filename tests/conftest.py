@@ -11,6 +11,11 @@ for _name in (
 ):
     sys.modules.setdefault(_name, MagicMock())
 
+# app.libs.ssd1306 is a real, vendored on-device driver (imports MicroPython's
+# `framebuf` at module scope), so it's stubbed as a submodule rather than
+# added to the bare-name tuple above - app.libs itself stays a real package.
+sys.modules.setdefault("app.libs.ssd1306", MagicMock())
+
 # umqtt.simple gets a real (if minimal) module rather than a bare MagicMock so
 # `except MQTTException` in app.services.mqtt has an actual exception class to
 # catch - a Mock attribute isn't a valid except-clause target.
