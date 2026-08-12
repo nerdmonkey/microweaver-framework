@@ -69,6 +69,16 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "dht_pin": 21,
                 "relay_enabled": False,
                 "relay_pin": 22,
+                "oled_enabled": True,
+                "oled_sda_pin": 19,
+                "oled_scl_pin": 23,
+                "oled_i2c_addr": 61,
+                "oled_width": 128,
+                "oled_height": 32,
+                "potentiometer_enabled": True,
+                "potentiometer_pin": 32,
+                "rotary_angle_enabled": True,
+                "rotary_angle_pin": 33,
                 "ota_enabled": True,
                 "ota_manifest_url": "https://api.example.com/manifest.json",
                 "ota_state_path": "test_ota_state.json",
@@ -85,7 +95,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.MQTT_BROKER == "test_broker"
     assert setting.MQTT_CLIENT_ID == "test_id"
     assert setting.MQTT_PORT == 1884
-    assert setting.MQTT_TOPIC_PUB == "test/pub"
+    assert setting.MQTT_TOPIC_PUB == ["test/pub"]
     assert setting.MQTT_TOPIC_SUB == ["test/sub"]
     assert setting.MQTT_USERNAME == "test_user"
     assert setting.MQTT_PASSWORD == "test_pass"
@@ -138,6 +148,16 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.DHT_PIN == 21
     assert setting.RELAY_ENABLED is False
     assert setting.RELAY_PIN == 22
+    assert setting.OLED_ENABLED is True
+    assert setting.OLED_SDA_PIN == 19
+    assert setting.OLED_SCL_PIN == 23
+    assert setting.OLED_I2C_ADDR == 61
+    assert setting.OLED_WIDTH == 128
+    assert setting.OLED_HEIGHT == 32
+    assert setting.POTENTIOMETER_ENABLED is True
+    assert setting.POTENTIOMETER_PIN == 32
+    assert setting.ROTARY_ANGLE_ENABLED is True
+    assert setting.ROTARY_ANGLE_PIN == 33
     assert setting.OTA_ENABLED is True
     assert setting.OTA_MANIFEST_URL == "https://api.example.com/manifest.json"
     assert setting.OTA_STATE_PATH == "test_ota_state.json"
@@ -155,7 +175,7 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.MQTT_BROKER == "localhost"
     assert setting.MQTT_CLIENT_ID == "microweaver"
     assert setting.MQTT_PORT == 1883
-    assert setting.MQTT_TOPIC_PUB == "data/sensor/room/temperature"
+    assert setting.MQTT_TOPIC_PUB == ["data/sensor/room/temperature"]
     assert setting.MQTT_TOPIC_SUB == ["command/control/room/light"]
     assert setting.WIFI_SSID == ""
     assert setting.WIFI_PASSWORD == ""
@@ -205,6 +225,16 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.DHT_SENSOR_TYPE == "dht22"
     assert setting.DHT_PIN == 4
     assert setting.RELAY_ENABLED is True
+    assert setting.OLED_ENABLED is False
+    assert setting.OLED_SDA_PIN == 21
+    assert setting.OLED_SCL_PIN == 22
+    assert setting.OLED_I2C_ADDR == 0x3C
+    assert setting.OLED_WIDTH == 128
+    assert setting.OLED_HEIGHT == 64
+    assert setting.POTENTIOMETER_ENABLED is False
+    assert setting.POTENTIOMETER_PIN == 34
+    assert setting.ROTARY_ANGLE_ENABLED is False
+    assert setting.ROTARY_ANGLE_PIN == 34
 
 
 def test_setting_falls_back_to_legacy_dht22_pin_key(tmp_path):
@@ -368,6 +398,32 @@ def test_setting_raises_on_non_string_non_list_topics(tmp_path):
     with pytest.raises(
         ConfigError, match="mqtt_topic_sub must be a string or list of strings"
     ):
+        Setting(config_path=str(config_path))
+
+
+def test_setting_parses_comma_separated_pub_topics(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_topic_pub": "topic/a, topic/b ,topic/c"}))
+
+    setting = Setting(config_path=str(config_path))
+
+    assert setting.MQTT_TOPIC_PUB == ["topic/a", "topic/b", "topic/c"]
+
+
+def test_setting_parses_json_array_pub_topics(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_topic_pub": ["topic/a", "topic/b"]}))
+
+    setting = Setting(config_path=str(config_path))
+
+    assert setting.MQTT_TOPIC_PUB == ["topic/a", "topic/b"]
+
+
+def test_setting_raises_on_empty_pub_topics_list(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_topic_pub": []}))
+
+    with pytest.raises(ConfigError, match="mqtt_topic_pub"):
         Setting(config_path=str(config_path))
 
 

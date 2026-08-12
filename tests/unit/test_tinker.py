@@ -2684,3 +2684,172 @@ def test_list_serial_ports_found(mocker):
     assert result.exit_code == 0
     assert "/dev/ttyUSB0" in result.stdout
     assert "USB Serial" in result.stdout
+
+
+# --------------------------------------------------------------------------
+# topics command
+# --------------------------------------------------------------------------
+
+
+def test_topics_errors_when_no_config_found(tmp_path):
+    result = runner.invoke(tinker.app, ["topics"])
+    assert result.exit_code == 1
+    assert "config file not found" in result.stderr
+
+
+def test_topics_falls_back_to_example_when_device_config_missing(tmp_path):
+    (tmp_path / "device_config.json.example").write_text(
+        json.dumps(
+            {
+                "relay_enabled": True,
+                "oled_enabled": False,
+                "mqtt_topic_pub": "data/sensor/room/temperature",
+                "mqtt_topic_sub": ["command/control/room/light"],
+            }
+        )
+    )
+    result = runner.invoke(tinker.app, ["topics"])
+    assert result.exit_code == 0
+    assert "device_config.json.example" in result.stdout
+    assert "data/sensor/room/temperature" in result.stdout
+    # Single enabled subscribe adapter (relay) falls back for any topic,
+    # matching RuntimeService._resolve_command_adapter's single-adapter rule.
+    assert "command/control/room/light" in result.stdout
+    assert "relay" in result.stdout
+
+
+def test_topics_prefers_device_config_over_example(tmp_path):
+    (tmp_path / "device_config.json.example").write_text(
+        json.dumps({"mqtt_topic_pub": "example/pub"})
+    )
+    (tmp_path / "device_config.json").write_text(
+        json.dumps({"mqtt_topic_pub": "real/pub"})
+    )
+    result = runner.invoke(tinker.app, ["topics"])
+    assert result.exit_code == 0
+    assert "real/pub" in result.stdout
+    assert "example/pub" not in result.stdout
+    assert result.stdout.splitlines()[0] == "Config source: device_config.json"
+
+
+def test_topics_explicit_config_path_outside_root(tmp_path):
+    external = tmp_path.parent / "external_config.json"
+    external.write_text(json.dumps({"mqtt_topic_pub": "outside/pub"}))
+    result = runner.invoke(tinker.app, ["topics", "--config", str(external)])
+    assert result.exit_code == 0
+    assert f"Config source: {external}" in result.stdout
+    assert "outside/pub" in result.stdout
+    external.unlink()
+
+
+def test_topics_routes_multiple_adapters_and_flags_unmatched(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "relay_enabled": True,
+                "oled_enabled": True,
+                "dht_enabled": True,
+                "dht_sensor_type": "dht11",
+                "mqtt_topic_pub": "data/pub",
+                "mqtt_topic_sub": [
+                    "command/control/room/relay",
+                    "command/control/room/oled",
+                    "command/control/room/typo",
+                ],
+            }
+        )
+    )
+    result = runner.invoke(tinker.app, ["topics"])
+    assert result.exit_code == 0
+    assert "dht11" in result.stdout
+    lines = result.stdout.splitlines()
+    relay_line = next(line for line in lines if "command/control/room/relay" in line)
+    oled_line = next(line for line in lines if "command/control/room/oled" in line)
+    typo_line = next(line for line in lines if "command/control/room/typo" in line)
+    assert "relay" in relay_line
+    assert "oled" in oled_line
+    assert "unmatched" in typo_line
+
+
+def test_topics_routes_multiple_pub_adapters_and_flags_unmatched(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "relay_enabled": True,
+                "dht_enabled": True,
+                "dht_sensor_type": "dht22",
+                "potentiometer_enabled": True,
+                "rotary_angle_enabled": True,
+                "mqtt_topic_pub": [
+                    "data/sensor/room/dht22",
+                    "data/sensor/room/potentiometer",
+                ],
+                "mqtt_topic_sub": ["command/control/room/relay"],
+            }
+        )
+    )
+    result = runner.invoke(tinker.app, ["topics"])
+    assert result.exit_code == 0
+    lines = result.stdout.splitlines()
+    dht_line = next(line for line in lines if "data/sensor/room/dht22" in line)
+    pot_line = next(line for line in lines if "data/sensor/room/potentiometer" in line)
+    unmatched_line = next(line for line in lines if "unmatched" in line)
+    assert "dht22" in dht_line
+    assert "potentiometer" in pot_line
+    assert "rotary_angle" in unmatched_line
+
+
+def test_topics_single_pub_topic_shared_by_all_adapters(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "dht_enabled": True,
+                "dht_sensor_type": "dht11",
+                "potentiometer_enabled": True,
+                "mqtt_topic_pub": "shared/topic",
+            }
+        )
+    )
+    result = runner.invoke(tinker.app, ["topics"])
+    assert result.exit_code == 0
+    lines = result.stdout.splitlines()
+    shared_line = next(line for line in lines if "shared/topic" in line)
+    assert "dht11" in shared_line
+    assert "potentiometer" in shared_line
+
+
+def test_topics_notes_override_when_no_subscribe_adapters_enabled(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "relay_enabled": False,
+                "oled_enabled": False,
+                "mqtt_topic_sub": ["command/control/room/relay"],
+            }
+        )
+    )
+    result = runner.invoke(tinker.app, ["topics"])
+    assert result.exit_code == 0
+    assert "no subscribe adapters enabled" in result.stdout
+    assert "overrides mqtt_topic_sub to []" in result.stdout
+    assert "command/control/room/relay" not in result.stdout
+
+
+def test_topics_no_publish_adapters_enabled(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"dht_enabled": False, "relay_enabled": True}))
+    result = runner.invoke(tinker.app, ["topics"])
+    assert result.exit_code == 0
+    assert "no publish adapters enabled" in result.stdout
+
+
+def test_topics_rejects_invalid_config(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_port": "not-a-number"}))
+    result = runner.invoke(tinker.app, ["topics"])
+    assert result.exit_code == 1
+    assert "ERROR" in result.stderr

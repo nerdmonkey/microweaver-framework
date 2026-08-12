@@ -12,7 +12,7 @@ _SCHEMA = {
     "mqtt_broker": {"type": str},
     "mqtt_client_id": {"type": str},
     "mqtt_port": {"type": "int", "min": 1, "max": 65535},
-    "mqtt_topic_pub": {"type": str},
+    "mqtt_topic_pub": {"type": "topics"},
     "mqtt_topic_sub": {"type": "topics"},
     "mqtt_username": {"type": str},
     "mqtt_password": {"type": str},
@@ -69,6 +69,16 @@ _SCHEMA = {
     "dht_pin": {"type": "int", "min": 0, "max": 39},
     "relay_enabled": {"type": bool},
     "relay_pin": {"type": "int", "min": 0, "max": 39},
+    "oled_enabled": {"type": bool},
+    "oled_sda_pin": {"type": "int", "min": 0, "max": 39},
+    "oled_scl_pin": {"type": "int", "min": 0, "max": 39},
+    "oled_i2c_addr": {"type": "int", "min": 0, "max": 127},
+    "oled_width": {"type": "int", "min": 1},
+    "oled_height": {"type": "int", "min": 1},
+    "potentiometer_enabled": {"type": bool},
+    "potentiometer_pin": {"type": "int", "min": 0, "max": 39},
+    "rotary_angle_enabled": {"type": bool},
+    "rotary_angle_pin": {"type": "int", "min": 0, "max": 39},
     "provisioning_ap_ssid": {"type": str},
     "provisioning_ap_password": {"type": str},
     "provisioning_ap_ip": {"type": str},
@@ -114,7 +124,7 @@ class Setting:
         self.MQTT_BROKER = self._value("mqtt_broker", "localhost")
         self.MQTT_CLIENT_ID = self._value("mqtt_client_id", "microweaver")
         self.MQTT_PORT = self._int("mqtt_port", 1883)
-        self.MQTT_TOPIC_PUB = self._value(
+        self.MQTT_TOPIC_PUB = self._topics(
             "mqtt_topic_pub", "data/sensor/room/temperature"
         )
         self.MQTT_TOPIC_SUB = self._topics(
@@ -213,6 +223,16 @@ class Setting:
         self.DHT_PIN = self._int_alias(("dht_pin", "dht22_pin"), 4)
         self.RELAY_ENABLED = self._bool("relay_enabled", True)
         self.RELAY_PIN = self._int("relay_pin", 5)
+        self.OLED_ENABLED = self._bool("oled_enabled", False)
+        self.OLED_SDA_PIN = self._int("oled_sda_pin", 21)
+        self.OLED_SCL_PIN = self._int("oled_scl_pin", 22)
+        self.OLED_I2C_ADDR = self._int("oled_i2c_addr", 0x3C)
+        self.OLED_WIDTH = self._int("oled_width", 128)
+        self.OLED_HEIGHT = self._int("oled_height", 64)
+        self.POTENTIOMETER_ENABLED = self._bool("potentiometer_enabled", False)
+        self.POTENTIOMETER_PIN = self._int("potentiometer_pin", 34)
+        self.ROTARY_ANGLE_ENABLED = self._bool("rotary_angle_enabled", False)
+        self.ROTARY_ANGLE_PIN = self._int("rotary_angle_pin", 34)
 
         self.PROVISIONING_AP_SSID = self._value(
             "provisioning_ap_ssid", "Microweaver-Setup"

@@ -7,6 +7,9 @@ def test_start_wires_and_runs_runtime_service_with_dht22_default(mocker):
     mocker.patch("main.setting.RELAY_ENABLED", True)
     mocker.patch("main.setting.RELAY_PIN", 16)
     mocker.patch("main.setting.DHT_SENSOR_TYPE", "dht22")
+    mocker.patch("main.setting.OLED_ENABLED", False)
+    mocker.patch("main.setting.POTENTIOMETER_ENABLED", False)
+    mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", False)
     mock_dht22_cls = mocker.patch("main.DHT22Adapter")
     mock_dht11_cls = mocker.patch("main.DHT11Adapter")
     mock_relay_cls = mocker.patch("main.RelayAdapter")
@@ -31,6 +34,9 @@ def test_start_wires_and_runs_runtime_service_with_dht11(mocker):
     mocker.patch("main.setting.RELAY_ENABLED", True)
     mocker.patch("main.setting.RELAY_PIN", 16)
     mocker.patch("main.setting.DHT_SENSOR_TYPE", "dht11")
+    mocker.patch("main.setting.OLED_ENABLED", False)
+    mocker.patch("main.setting.POTENTIOMETER_ENABLED", False)
+    mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", False)
     mock_dht11_cls = mocker.patch("main.DHT11Adapter")
     mock_dht22_cls = mocker.patch("main.DHT22Adapter")
     mock_relay_cls = mocker.patch("main.RelayAdapter")
@@ -53,6 +59,9 @@ def test_start_skips_dht_adapter_when_disabled(mocker):
     mocker.patch("main.setting.DHT_ENABLED", False)
     mocker.patch("main.setting.RELAY_ENABLED", True)
     mocker.patch("main.setting.RELAY_PIN", 16)
+    mocker.patch("main.setting.OLED_ENABLED", False)
+    mocker.patch("main.setting.POTENTIOMETER_ENABLED", False)
+    mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", False)
     mock_dht22_cls = mocker.patch("main.DHT22Adapter")
     mock_relay_cls = mocker.patch("main.RelayAdapter")
     mock_runtime_cls = mocker.patch("main.RuntimeService")
@@ -72,6 +81,9 @@ def test_start_skips_relay_adapter_when_disabled(mocker):
     mocker.patch("main.setting.DHT_PIN", 15)
     mocker.patch("main.setting.DHT_SENSOR_TYPE", "dht22")
     mocker.patch("main.setting.RELAY_ENABLED", False)
+    mocker.patch("main.setting.OLED_ENABLED", False)
+    mocker.patch("main.setting.POTENTIOMETER_ENABLED", False)
+    mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", False)
     mock_dht22_cls = mocker.patch("main.DHT22Adapter")
     mock_relay_cls = mocker.patch("main.RelayAdapter")
     mock_runtime_cls = mocker.patch("main.RuntimeService")
@@ -89,16 +101,188 @@ def test_start_skips_relay_adapter_when_disabled(mocker):
 def test_start_wires_no_adapters_when_both_disabled(mocker):
     mocker.patch("main.setting.DHT_ENABLED", False)
     mocker.patch("main.setting.RELAY_ENABLED", False)
+    mocker.patch("main.setting.OLED_ENABLED", False)
+    mocker.patch("main.setting.POTENTIOMETER_ENABLED", False)
+    mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", False)
     mock_dht22_cls = mocker.patch("main.DHT22Adapter")
     mock_relay_cls = mocker.patch("main.RelayAdapter")
+    mock_oled_cls = mocker.patch("main.OLEDAdapter")
     mock_runtime_cls = mocker.patch("main.RuntimeService")
 
     main.start()
 
     mock_dht22_cls.assert_not_called()
     mock_relay_cls.assert_not_called()
+    mock_oled_cls.assert_not_called()
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[],
+        subscribe_adapters=[],
+        topics=[],
+    )
+
+
+def test_start_wires_oled_adapter_when_enabled(mocker):
+    mocker.patch("main.setting.DHT_ENABLED", False)
+    mocker.patch("main.setting.RELAY_ENABLED", False)
+    mocker.patch("main.setting.OLED_ENABLED", True)
+    mocker.patch("main.setting.POTENTIOMETER_ENABLED", False)
+    mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", False)
+    mocker.patch("main.setting.OLED_SDA_PIN", 21)
+    mocker.patch("main.setting.OLED_SCL_PIN", 22)
+    mocker.patch("main.setting.OLED_I2C_ADDR", 0x3C)
+    mocker.patch("main.setting.OLED_WIDTH", 128)
+    mocker.patch("main.setting.OLED_HEIGHT", 64)
+    mock_oled_cls = mocker.patch("main.OLEDAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_oled_cls.assert_called_once_with(
+        sda_pin=21, scl_pin=22, i2c_addr=0x3C, width=128, height=64
+    )
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[],
+        subscribe_adapters=[("oled", mock_oled_cls.return_value)],
+        topics=None,
+    )
+
+
+def test_start_skips_oled_adapter_when_disabled(mocker):
+    mocker.patch("main.setting.DHT_ENABLED", False)
+    mocker.patch("main.setting.RELAY_ENABLED", True)
+    mocker.patch("main.setting.RELAY_PIN", 16)
+    mocker.patch("main.setting.OLED_ENABLED", False)
+    mocker.patch("main.setting.POTENTIOMETER_ENABLED", False)
+    mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", False)
+    mock_relay_cls = mocker.patch("main.RelayAdapter")
+    mock_oled_cls = mocker.patch("main.OLEDAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_oled_cls.assert_not_called()
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[],
+        subscribe_adapters=[("relay", mock_relay_cls.return_value)],
+        topics=None,
+    )
+
+
+def test_start_wires_relay_and_oled_together(mocker):
+    mocker.patch("main.setting.DHT_ENABLED", False)
+    mocker.patch("main.setting.RELAY_ENABLED", True)
+    mocker.patch("main.setting.RELAY_PIN", 16)
+    mocker.patch("main.setting.OLED_ENABLED", True)
+    mocker.patch("main.setting.POTENTIOMETER_ENABLED", False)
+    mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", False)
+    mocker.patch("main.setting.OLED_SDA_PIN", 21)
+    mocker.patch("main.setting.OLED_SCL_PIN", 22)
+    mocker.patch("main.setting.OLED_I2C_ADDR", 0x3C)
+    mocker.patch("main.setting.OLED_WIDTH", 128)
+    mocker.patch("main.setting.OLED_HEIGHT", 64)
+    mock_relay_cls = mocker.patch("main.RelayAdapter")
+    mock_oled_cls = mocker.patch("main.OLEDAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[],
+        subscribe_adapters=[
+            ("relay", mock_relay_cls.return_value),
+            ("oled", mock_oled_cls.return_value),
+        ],
+        topics=None,
+    )
+
+
+def test_start_wires_potentiometer_adapter_when_enabled(mocker):
+    mocker.patch("main.setting.DHT_ENABLED", False)
+    mocker.patch("main.setting.RELAY_ENABLED", False)
+    mocker.patch("main.setting.OLED_ENABLED", False)
+    mocker.patch("main.setting.POTENTIOMETER_ENABLED", True)
+    mocker.patch("main.setting.POTENTIOMETER_PIN", 34)
+    mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", False)
+    mock_pot_cls = mocker.patch("main.PotentiometerAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_pot_cls.assert_called_once_with(pin=34)
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[("potentiometer", mock_pot_cls.return_value)],
+        subscribe_adapters=[],
+        topics=[],
+    )
+
+
+def test_start_wires_rotary_angle_adapter_when_enabled(mocker):
+    mocker.patch("main.setting.DHT_ENABLED", False)
+    mocker.patch("main.setting.RELAY_ENABLED", False)
+    mocker.patch("main.setting.OLED_ENABLED", False)
+    mocker.patch("main.setting.POTENTIOMETER_ENABLED", False)
+    mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", True)
+    mocker.patch("main.setting.ROTARY_ANGLE_PIN", 35)
+    mock_rotary_cls = mocker.patch("main.RotaryAngleAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_rotary_cls.assert_called_once_with(pin=35)
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[("rotary_angle", mock_rotary_cls.return_value)],
+        subscribe_adapters=[],
+        topics=[],
+    )
+
+
+def test_start_skips_potentiometer_and_rotary_angle_when_disabled(mocker):
+    mocker.patch("main.setting.DHT_ENABLED", True)
+    mocker.patch("main.setting.DHT_PIN", 15)
+    mocker.patch("main.setting.DHT_SENSOR_TYPE", "dht22")
+    mocker.patch("main.setting.RELAY_ENABLED", False)
+    mocker.patch("main.setting.OLED_ENABLED", False)
+    mocker.patch("main.setting.POTENTIOMETER_ENABLED", False)
+    mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", False)
+    mock_dht22_cls = mocker.patch("main.DHT22Adapter")
+    mock_pot_cls = mocker.patch("main.PotentiometerAdapter")
+    mock_rotary_cls = mocker.patch("main.RotaryAngleAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_pot_cls.assert_not_called()
+    mock_rotary_cls.assert_not_called()
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[("dht22", mock_dht22_cls.return_value)],
+        subscribe_adapters=[],
+        topics=[],
+    )
+
+
+def test_start_wires_potentiometer_and_rotary_angle_together_with_dht(mocker):
+    mocker.patch("main.setting.DHT_ENABLED", True)
+    mocker.patch("main.setting.DHT_PIN", 15)
+    mocker.patch("main.setting.DHT_SENSOR_TYPE", "dht22")
+    mocker.patch("main.setting.RELAY_ENABLED", False)
+    mocker.patch("main.setting.OLED_ENABLED", False)
+    mocker.patch("main.setting.POTENTIOMETER_ENABLED", True)
+    mocker.patch("main.setting.POTENTIOMETER_PIN", 34)
+    mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", True)
+    mocker.patch("main.setting.ROTARY_ANGLE_PIN", 35)
+    mock_dht22_cls = mocker.patch("main.DHT22Adapter")
+    mock_pot_cls = mocker.patch("main.PotentiometerAdapter")
+    mock_rotary_cls = mocker.patch("main.RotaryAngleAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[
+            ("dht22", mock_dht22_cls.return_value),
+            ("potentiometer", mock_pot_cls.return_value),
+            ("rotary_angle", mock_rotary_cls.return_value),
+        ],
         subscribe_adapters=[],
         topics=[],
     )

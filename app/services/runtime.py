@@ -35,7 +35,7 @@ SUBACK_FAILURE_RC = 128
 
 class RuntimeService:
     def __init__(self, publish_adapters=None, subscribe_adapters=None, topics=None):
-        self.topic = setting.MQTT_TOPIC_PUB
+        self.topics_pub = list(setting.MQTT_TOPIC_PUB)
         self.topics = (
             list(topics) if topics is not None else list(setting.MQTT_TOPIC_SUB)
         )
@@ -232,8 +232,21 @@ class RuntimeService:
         else:
             print("Not connected to MQTT.")
 
-    def publish_message(self, message):
-        self._publish(self.topic, message)
+    def publish_message(self, topic, message):
+        self._publish(topic, message)
+
+    def _resolve_publish_topic(self, name):
+        """Mirrors _resolve_command_adapter's routing, inverted: given a
+        publish adapter's name, pick which configured mqtt_topic_pub entry
+        it publishes to. A single configured topic is shared by every
+        publish adapter (backward compatible with the pre-list default);
+        with more than one, match by exact topic or topic-suffix == name."""
+        if len(self.topics_pub) == 1:
+            return self.topics_pub[0]
+        for topic in self.topics_pub:
+            if topic == name or topic.rsplit("/", 1)[-1] == name:
+                return topic
+        return None
 
     def connect_to_mqtt(self):
         self.client = self.connection.connect()
@@ -333,8 +346,13 @@ class RuntimeService:
             if reading is None:
                 continue
             payload = self._to_publish_payload(name, adapter, reading)
-            if payload is not None:
-                self.publish_message(payload)
+            if payload is None:
+                continue
+            topic = self._resolve_publish_topic(name)
+            if topic is None:
+                print("No publish topic matched for adapter:", name)
+                continue
+            self.publish_message(topic, payload)
 
     def _to_publish_payload(self, name, adapter, reading):
         if isinstance(reading, dict):

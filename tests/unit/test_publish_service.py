@@ -26,7 +26,7 @@ def test_run_reconnects_after_connection_loss(mocker):
     assert mock_connection.connect.call_count == 2
     assert mock_connection.disconnect.call_count == 2
     mock_client.publish.assert_called_once_with(
-        service.topic, b"hi", qos=0, retain=False
+        service.topics_pub[0], b"hi", qos=0, retain=False
     )
 
 
@@ -110,8 +110,12 @@ def test_run_reconnects_through_repeated_drops(mocker):
 
     assert mock_connection.connect.call_count == 3
     assert mock_connection.disconnect.call_count == 3
-    client_a.publish.assert_called_once_with(service.topic, b"hi", qos=0, retain=False)
-    client_b.publish.assert_called_once_with(service.topic, b"hi", qos=0, retain=False)
+    client_a.publish.assert_called_once_with(
+        service.topics_pub[0], b"hi", qos=0, retain=False
+    )
+    client_b.publish.assert_called_once_with(
+        service.topics_pub[0], b"hi", qos=0, retain=False
+    )
 
 
 def test_run_feeds_watchdog_each_publish(mocker):
@@ -183,7 +187,7 @@ def test_publish_message_survives_publish_exception():
     service.publish_message("hi")
 
     service.client.publish.assert_called_once_with(
-        service.topic, b"hi", qos=0, retain=False
+        service.topics_pub[0], b"hi", qos=0, retain=False
     )
 
 
@@ -204,7 +208,7 @@ def test_publish_message_uses_configured_qos_and_retain(mocker):
     service.publish_message("hi")
 
     service.client.publish.assert_called_once_with(
-        service.topic, b"hi", qos=1, retain=True
+        service.topics_pub[0], b"hi", qos=1, retain=True
     )
 
 

@@ -31,5 +31,5 @@ def test_to_payload_output_is_ready_for_publish_message(mocker):
     service.publish_message(to_payload(state="on"))
 
     service.client.publish.assert_called_once_with(
-        service.topic, b'{"state": "on"}', qos=0, retain=False
+        service.topics_pub[0], b'{"state": "on"}', qos=0, retain=False
     )

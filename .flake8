@@ -10,5 +10,6 @@ exclude =
     .venv,
     node_modules,
    environment.py,
+    app/libs/ssd1306.py,
 max-complexity = 10
 docstring_style=sphinx

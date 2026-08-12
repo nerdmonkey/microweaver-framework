@@ -82,7 +82,9 @@ def test_poll_publish_adapters_publishes_dht22_payload(mocker):
 
     service._poll_publish_adapters()
 
-    publish_message.assert_called_once_with('{"temperature": 21.5, "humidity": 55.0}')
+    publish_message.assert_called_once_with(
+        service.topics_pub[0], '{"temperature": 21.5, "humidity": 55.0}'
+    )
 
 
 def test_run_publishes_and_receives_with_one_connection(mocker):
@@ -113,7 +115,7 @@ def test_run_publishes_and_receives_with_one_connection(mocker):
     mock_client.set_callback.assert_called_once_with(service.on_message)
     mock_client.subscribe.assert_called_once_with(service.topics[0])
     mock_client.publish.assert_called_once_with(
-        service.topic,
+        service.topics_pub[0],
         b'{"temperature": 21.5, "humidity": 55.0}',
         qos=0,
         retain=False,
@@ -933,6 +935,91 @@ def test_poll_publish_adapters_skips_unsupported_payload(mocker):
     service._poll_publish_adapters()
 
     publish_message.assert_not_called()
+
+
+# --------------------------------------------------------------------------
+# _resolve_publish_topic (mirrors _resolve_command_adapter, inverted)
+# --------------------------------------------------------------------------
+
+
+def test_resolve_publish_topic_single_topic_shared_by_all_adapters(mocker):
+    mocker.patch("app.services.runtime.setting.MQTT_TOPIC_PUB", ["shared/topic"])
+    service = RuntimeService()
+
+    assert service._resolve_publish_topic("dht22") == "shared/topic"
+    assert service._resolve_publish_topic("anything") == "shared/topic"
+
+
+def test_resolve_publish_topic_matches_full_topic(mocker):
+    mocker.patch(
+        "app.services.runtime.setting.MQTT_TOPIC_PUB", ["dht22", "potentiometer"]
+    )
+    service = RuntimeService()
+
+    assert service._resolve_publish_topic("dht22") == "dht22"
+
+
+def test_resolve_publish_topic_matches_by_suffix(mocker):
+    mocker.patch(
+        "app.services.runtime.setting.MQTT_TOPIC_PUB",
+        ["data/sensor/room/dht22", "data/sensor/room/potentiometer"],
+    )
+    service = RuntimeService()
+
+    assert (
+        service._resolve_publish_topic("potentiometer")
+        == "data/sensor/room/potentiometer"
+    )
+
+
+def test_resolve_publish_topic_returns_none_when_unmatched(mocker):
+    mocker.patch(
+        "app.services.runtime.setting.MQTT_TOPIC_PUB",
+        ["data/sensor/room/dht22", "data/sensor/room/potentiometer"],
+    )
+    service = RuntimeService()
+
+    assert service._resolve_publish_topic("rotary_angle") is None
+
+
+def test_poll_publish_adapters_routes_multiple_adapters_to_matching_topics(mocker):
+    mocker.patch(
+        "app.services.runtime.setting.MQTT_TOPIC_PUB",
+        ["data/sensor/room/dht22", "data/sensor/room/potentiometer"],
+    )
+    dht = MagicMock()
+    dht.read.return_value = (21.5, 55.0)
+    pot = MagicMock()
+    pot.read.return_value = 42
+    service = RuntimeService(publish_adapters=[("dht22", dht), ("potentiometer", pot)])
+    publish_message = mocker.patch.object(service, "publish_message")
+
+    service._poll_publish_adapters()
+
+    assert publish_message.call_args_list == [
+        mocker.call(
+            "data/sensor/room/dht22", '{"temperature": 21.5, "humidity": 55.0}'
+        ),
+        mocker.call("data/sensor/room/potentiometer", '{"value": 42}'),
+    ]
+
+
+def test_poll_publish_adapters_skips_and_warns_when_topic_unmatched(mocker, capsys):
+    mocker.patch(
+        "app.services.runtime.setting.MQTT_TOPIC_PUB",
+        ["data/sensor/room/dht22", "data/sensor/room/potentiometer"],
+    )
+    rotary = MagicMock()
+    rotary.read.return_value = 10
+    service = RuntimeService(publish_adapters=[("rotary_angle", rotary)])
+    publish_message = mocker.patch.object(service, "publish_message")
+
+    service._poll_publish_adapters()
+
+    publish_message.assert_not_called()
+    assert (
+        "No publish topic matched for adapter: rotary_angle" in capsys.readouterr().out
+    )
 
 
 # --------------------------------------------------------------------------
