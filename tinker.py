@@ -1415,6 +1415,62 @@ def device_reset(
     print(f"Reset {resolved_port}")
 
 
+# Keys whose values are masked in `device config` output unless --reveal is
+# passed, mirroring PROVISION_FIELDS' is_secret flag plus device_key (a
+# private key, never prompted for so it isn't in PROVISION_FIELDS at all).
+SECRET_CONFIG_KEYS = {
+    "wifi_password",
+    "mqtt_password",
+    "device_key",
+    "provisioning_ap_password",
+}
+
+
+def _format_config_value(key: str, value, reveal: bool):
+    if not reveal and key in SECRET_CONFIG_KEYS and value:
+        return "********"
+    return value
+
+
+@device_app.command("config")
+def device_config(
+    config_path: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        help="Path to device_config.json (default: repo's own, "
+        "falling back to device_config.json.example if not provisioned yet)",
+    ),
+    reveal: bool = typer.Option(
+        False, "--reveal", help="Show secret values in full instead of masked"
+    ),
+) -> None:
+    """Show device_config.json contents as a table, Azure CLI-style."""
+    if config_path is None:
+        real = ROOT / "device_config.json"
+        config_path = real if real.exists() else ROOT / "device_config.json.example"
+    if not config_path.exists():
+        print(f"ERROR: config file not found: {config_path}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    try:
+        with config_path.open() as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"ERROR: could not read {config_path}: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    try:
+        source = config_path.relative_to(ROOT)
+    except ValueError:
+        source = config_path
+    print(f"Config source: {source}\n")
+
+    rows = [
+        (key, _format_config_value(key, value, reveal)) for key, value in raw.items()
+    ]
+    print_table(["Key", "Value"], rows)
+
+
 @device_app.command("info")
 def device_info(
     port: Optional[str] = typer.Option(

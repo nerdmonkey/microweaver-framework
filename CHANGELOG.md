@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `tinker.py device config` prints `device_config.json` (falling back to
+  `device_config.json.example` when not yet provisioned) as an Azure
+  CLI-style key/value table, with secret fields (`wifi_password`,
+  `mqtt_password`, `device_key`, `provisioning_ap_password`) masked unless
+  `--reveal` is passed.
 - `device_name`/`timezone`/`timezone_offset_minutes` config keys, plus an
   envelope wrapping every adapter publish payload with `action`, `client_id`,
   `ok`, `timestamp`, `timestamp_local`, `device`, and `timezone` fields

@@ -2853,3 +2853,89 @@ def test_topics_rejects_invalid_config(tmp_path):
     result = runner.invoke(tinker.app, ["topics"])
     assert result.exit_code == 1
     assert "ERROR" in result.stderr
+
+
+def test_device_config_errors_when_no_config_found(tmp_path):
+    result = runner.invoke(tinker.app, ["device", "config"])
+    assert result.exit_code == 1
+    assert "config file not found" in result.stderr
+
+
+def test_device_config_falls_back_to_example_when_device_config_missing(tmp_path):
+    (tmp_path / "device_config.json.example").write_text(
+        json.dumps({"mqtt_broker": "example-broker", "wifi_password": "secret"})
+    )
+    result = runner.invoke(tinker.app, ["device", "config"])
+    assert result.exit_code == 0
+    assert result.stdout.splitlines()[0] == "Config source: device_config.json.example"
+    assert "example-broker" in result.stdout
+
+
+def test_device_config_prefers_device_config_over_example(tmp_path):
+    (tmp_path / "device_config.json.example").write_text(
+        json.dumps({"mqtt_broker": "example-broker"})
+    )
+    (tmp_path / "device_config.json").write_text(
+        json.dumps({"mqtt_broker": "real-broker"})
+    )
+    result = runner.invoke(tinker.app, ["device", "config"])
+    assert result.exit_code == 0
+    assert "real-broker" in result.stdout
+    assert "example-broker" not in result.stdout
+    assert result.stdout.splitlines()[0] == "Config source: device_config.json"
+
+
+def test_device_config_explicit_config_path_outside_root(tmp_path):
+    external = tmp_path.parent / "external_device_config.json"
+    external.write_text(json.dumps({"mqtt_broker": "outside-broker"}))
+    result = runner.invoke(tinker.app, ["device", "config", "--config", str(external)])
+    assert result.exit_code == 0
+    assert f"Config source: {external}" in result.stdout
+    assert "outside-broker" in result.stdout
+    external.unlink()
+
+
+def test_device_config_masks_secrets_by_default(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "wifi_password": "hunter2",
+                "mqtt_password": "swordfish",
+                "device_key": "-----BEGIN KEY-----",
+                "provisioning_ap_password": "apsecret",
+                "mqtt_broker": "plainly-visible",
+            }
+        )
+    )
+    result = runner.invoke(tinker.app, ["device", "config"])
+    assert result.exit_code == 0
+    assert "plainly-visible" in result.stdout
+    for secret in ("hunter2", "swordfish", "-----BEGIN KEY-----", "apsecret"):
+        assert secret not in result.stdout
+    assert result.stdout.count("********") == 4
+
+
+def test_device_config_reveal_shows_secret_values(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"wifi_password": "hunter2"}))
+    result = runner.invoke(tinker.app, ["device", "config", "--reveal"])
+    assert result.exit_code == 0
+    assert "hunter2" in result.stdout
+    assert "********" not in result.stdout
+
+
+def test_device_config_leaves_empty_secret_field_blank(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"wifi_password": ""}))
+    result = runner.invoke(tinker.app, ["device", "config"])
+    assert result.exit_code == 0
+    assert "********" not in result.stdout
+
+
+def test_device_config_rejects_invalid_json(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text("{not valid json")
+    result = runner.invoke(tinker.app, ["device", "config"])
+    assert result.exit_code == 1
+    assert "ERROR" in result.stderr
