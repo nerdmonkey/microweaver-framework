@@ -68,18 +68,23 @@ _SCHEMA = {
     "dht_enabled": {"type": bool},
     "dht_sensor_type": {"type": str, "choices": ("dht11", "dht22")},
     "dht_pin": {"type": "int", "min": 0, "max": 39},
+    "dht_topic_suffix": {"type": str},
     "relay_enabled": {"type": bool},
     "relay_pin": {"type": "int", "min": 0, "max": 39},
+    "relay_topic_suffix": {"type": str},
     "oled_enabled": {"type": bool},
     "oled_sda_pin": {"type": "int", "min": 0, "max": 39},
     "oled_scl_pin": {"type": "int", "min": 0, "max": 39},
     "oled_i2c_addr": {"type": "int", "min": 0, "max": 127},
     "oled_width": {"type": "int", "min": 1},
     "oled_height": {"type": "int", "min": 1},
+    "oled_topic_suffix": {"type": str},
     "potentiometer_enabled": {"type": bool},
     "potentiometer_pin": {"type": "int", "min": 0, "max": 39},
+    "potentiometer_topic_suffix": {"type": str},
     "rotary_angle_enabled": {"type": bool},
     "rotary_angle_pin": {"type": "int", "min": 0, "max": 39},
+    "rotary_angle_topic_suffix": {"type": str},
     "provisioning_ap_ssid": {"type": str},
     "provisioning_ap_password": {"type": str},
     "provisioning_ap_ip": {"type": str},
@@ -225,18 +230,27 @@ class Setting:
         self.DHT_ENABLED = self._bool("dht_enabled", True)
         self.DHT_SENSOR_TYPE = self._value("dht_sensor_type", "dht22")
         self.DHT_PIN = self._int_alias(("dht_pin", "dht22_pin"), 4)
+        self.DHT_TOPIC_SUFFIX = self._value("dht_topic_suffix", "dht")
         self.RELAY_ENABLED = self._bool("relay_enabled", True)
         self.RELAY_PIN = self._int("relay_pin", 5)
+        self.RELAY_TOPIC_SUFFIX = self._value("relay_topic_suffix", "relay")
         self.OLED_ENABLED = self._bool("oled_enabled", False)
         self.OLED_SDA_PIN = self._int("oled_sda_pin", 21)
         self.OLED_SCL_PIN = self._int("oled_scl_pin", 22)
         self.OLED_I2C_ADDR = self._int("oled_i2c_addr", 0x3C)
         self.OLED_WIDTH = self._int("oled_width", 128)
         self.OLED_HEIGHT = self._int("oled_height", 64)
+        self.OLED_TOPIC_SUFFIX = self._value("oled_topic_suffix", "oled")
         self.POTENTIOMETER_ENABLED = self._bool("potentiometer_enabled", False)
         self.POTENTIOMETER_PIN = self._int("potentiometer_pin", 34)
+        self.POTENTIOMETER_TOPIC_SUFFIX = self._value(
+            "potentiometer_topic_suffix", "potentiometer"
+        )
         self.ROTARY_ANGLE_ENABLED = self._bool("rotary_angle_enabled", False)
         self.ROTARY_ANGLE_PIN = self._int("rotary_angle_pin", 34)
+        self.ROTARY_ANGLE_TOPIC_SUFFIX = self._value(
+            "rotary_angle_topic_suffix", "rotary_angle"
+        )
 
         self.PROVISIONING_AP_SSID = self._value(
             "provisioning_ap_ssid", "Microweaver-Setup"

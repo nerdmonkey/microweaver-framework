@@ -64,6 +64,23 @@ def test_topics_override_is_independent_list_from_input(mocker):
     assert given_topics == ["custom/topic"]
 
 
+def test_topics_pub_override_replaces_configured_mqtt_topic_pub(mocker):
+    mocker.patch("app.services.runtime.setting.MQTT_TOPIC_PUB", ["topic/a"])
+
+    service = RuntimeService(topics_pub=["base/dht", "base/potentiometer"])
+
+    assert service.topics_pub == ["base/dht", "base/potentiometer"]
+
+
+def test_topics_pub_override_is_independent_list_from_input(mocker):
+    given_topics_pub = ["custom/topic"]
+
+    service = RuntimeService(topics_pub=given_topics_pub)
+    service.topics_pub.append("mutated")
+
+    assert given_topics_pub == ["custom/topic"]
+
+
 def test_on_message_routes_raw_command_to_single_command_adapter():
     relay = MagicMock()
     service = RuntimeService(subscribe_adapters=[("relay", relay)])

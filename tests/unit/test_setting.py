@@ -67,18 +67,23 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "dht_enabled": False,
                 "dht_sensor_type": "dht11",
                 "dht_pin": 21,
+                "dht_topic_suffix": "temperature",
                 "relay_enabled": False,
                 "relay_pin": 22,
+                "relay_topic_suffix": "switch",
                 "oled_enabled": True,
                 "oled_sda_pin": 19,
                 "oled_scl_pin": 23,
                 "oled_i2c_addr": 61,
                 "oled_width": 128,
                 "oled_height": 32,
+                "oled_topic_suffix": "display",
                 "potentiometer_enabled": True,
                 "potentiometer_pin": 32,
+                "potentiometer_topic_suffix": "moisture",
                 "rotary_angle_enabled": True,
                 "rotary_angle_pin": 33,
+                "rotary_angle_topic_suffix": "dial",
                 "ota_enabled": True,
                 "ota_manifest_url": "https://api.example.com/manifest.json",
                 "ota_state_path": "test_ota_state.json",
@@ -149,18 +154,23 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.DHT_ENABLED is False
     assert setting.DHT_SENSOR_TYPE == "dht11"
     assert setting.DHT_PIN == 21
+    assert setting.DHT_TOPIC_SUFFIX == "temperature"
     assert setting.RELAY_ENABLED is False
     assert setting.RELAY_PIN == 22
+    assert setting.RELAY_TOPIC_SUFFIX == "switch"
     assert setting.OLED_ENABLED is True
     assert setting.OLED_SDA_PIN == 19
     assert setting.OLED_SCL_PIN == 23
     assert setting.OLED_I2C_ADDR == 61
     assert setting.OLED_WIDTH == 128
     assert setting.OLED_HEIGHT == 32
+    assert setting.OLED_TOPIC_SUFFIX == "display"
     assert setting.POTENTIOMETER_ENABLED is True
     assert setting.POTENTIOMETER_PIN == 32
+    assert setting.POTENTIOMETER_TOPIC_SUFFIX == "moisture"
     assert setting.ROTARY_ANGLE_ENABLED is True
     assert setting.ROTARY_ANGLE_PIN == 33
+    assert setting.ROTARY_ANGLE_TOPIC_SUFFIX == "dial"
     assert setting.OTA_ENABLED is True
     assert setting.OTA_MANIFEST_URL == "https://api.example.com/manifest.json"
     assert setting.OTA_STATE_PATH == "test_ota_state.json"
@@ -230,17 +240,22 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.DHT_ENABLED is True
     assert setting.DHT_SENSOR_TYPE == "dht22"
     assert setting.DHT_PIN == 4
+    assert setting.DHT_TOPIC_SUFFIX == "dht"
     assert setting.RELAY_ENABLED is True
+    assert setting.RELAY_TOPIC_SUFFIX == "relay"
     assert setting.OLED_ENABLED is False
     assert setting.OLED_SDA_PIN == 21
     assert setting.OLED_SCL_PIN == 22
     assert setting.OLED_I2C_ADDR == 0x3C
     assert setting.OLED_WIDTH == 128
     assert setting.OLED_HEIGHT == 64
+    assert setting.OLED_TOPIC_SUFFIX == "oled"
     assert setting.POTENTIOMETER_ENABLED is False
     assert setting.POTENTIOMETER_PIN == 34
+    assert setting.POTENTIOMETER_TOPIC_SUFFIX == "potentiometer"
     assert setting.ROTARY_ANGLE_ENABLED is False
     assert setting.ROTARY_ANGLE_PIN == 34
+    assert setting.ROTARY_ANGLE_TOPIC_SUFFIX == "rotary_angle"
     assert setting.DEVICE_NAME == ""
     assert setting.TIMEZONE == "UTC"
     assert setting.TIMEZONE_OFFSET_MINUTES == 0

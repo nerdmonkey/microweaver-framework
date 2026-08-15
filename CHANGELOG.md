@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `dht_topic_suffix`/`relay_topic_suffix`/`oled_topic_suffix`/
+  `potentiometer_topic_suffix`/`rotary_angle_topic_suffix` config keys (each
+  defaulting to a short device name, e.g. `dht`, `relay`) let each enabled
+  adapter get its own MQTT topic composed from `mqtt_topic_pub`/
+  `mqtt_topic_sub` (as a single base) plus the device's suffix, e.g. base
+  `data/sensor/room` + suffix `oled` -> `data/sensor/room/oled` — instead of
+  every enabled adapter needing a fully spelled-out topic in
+  `mqtt_topic_pub`/`mqtt_topic_sub`. `RuntimeService` gained a `topics_pub`
+  constructor override (mirrors the existing `topics` override) so `main.py`
+  can hand it the composed publish-topic list.
 - `tinker.py device config` prints `device_config.json` (falling back to
   `device_config.json.example` when not yet provisioned) as an Azure
   CLI-style key/value table, with secret fields (`wifi_password`,
