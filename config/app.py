@@ -38,6 +38,7 @@ _SCHEMA = {
     "mqtt_lwt_qos": {"type": "int", "min": 0, "max": 1},
     "mqtt_publish_retain": {"type": bool},
     "mqtt_publish_qos": {"type": "int", "min": 0, "max": 1},
+    "mqtt_rejection_retry_seconds": {"type": "int", "min": 0},
     "publish_interval_seconds": {"type": "int", "min": 1},
     "watchdog_enabled": {"type": bool},
     "watchdog_timeout_ms": {"type": "int", "min": 0},
