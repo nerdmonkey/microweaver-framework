@@ -1674,6 +1674,11 @@ def test_provision_interactive_prompts_fill_only_missing(tmp_path, mocker):
         mqtt_topic_sub=None,
         mqtt_username=None,
         mqtt_password=None,
+        api_url=None,
+        api_key=None,
+        ca_cert=None,
+        profile=None,
+        name=None,
     )
 
     written = json.loads((tmp_path / "device_config.json").read_text())
@@ -1719,6 +1724,11 @@ def test_provision_masks_existing_secret_default(tmp_path, mocker):
         mqtt_topic_sub=None,
         mqtt_username=None,
         mqtt_password=None,
+        api_url=None,
+        api_key=None,
+        ca_cert=None,
+        profile=None,
+        name=None,
     )
 
     written = json.loads((tmp_path / "device_config.json").read_text())

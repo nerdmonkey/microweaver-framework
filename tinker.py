@@ -1301,7 +1301,9 @@ def provision(
         # a broker host/port, so derive the host from --api-url and default
         # to the plain dynsec port (1883) - mqtt_ssl stays off, matching the
         # dynsec username/password auth these credentials are for.
-        given["mqtt_broker"] = given["mqtt_broker"] or urlparse(resolved_api_url).hostname
+        given["mqtt_broker"] = (
+            given["mqtt_broker"] or urlparse(resolved_api_url).hostname
+        )
         given["mqtt_port"] = given["mqtt_port"] or 1883
         given["mqtt_client_id"] = given["mqtt_client_id"] or api_result["device_id"]
         given["mqtt_username"] = given["mqtt_username"] or api_result["username"]
@@ -1361,7 +1363,9 @@ def provision(
     if device_pushed:
         print(f"\nProvisioned {resolved_port} with {config_path.name}")
     else:
-        print(f"\nWrote {config_path.name} locally (not pushed - no device on {resolved_port})")
+        print(
+            f"\nWrote {config_path.name} locally (not pushed - no device on {resolved_port})"
+        )
 
 
 # Mirrors main.py's subscribe-adapter wiring (name -> enabled-flag attribute).
