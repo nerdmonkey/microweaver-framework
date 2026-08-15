@@ -1010,7 +1010,11 @@ def _provision_device_via_api(
     if urlparse(url).scheme == "https":
         context = ssl.create_default_context(cafile=str(ca_cert) if ca_cert else None)
     try:
-        with urllib.request.urlopen(request, context=context, timeout=30) as resp:
+        # url is operator-supplied (--api-url/.microweaver config), not
+        # untrusted input; https gets a verified ssl context above.
+        with urllib.request.urlopen(  # nosec B310
+            request, context=context, timeout=30
+        ) as resp:
             return json.load(resp)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")
@@ -1046,7 +1050,11 @@ def _fetch_ca_cert(api_url: str) -> str:
         context.verify_mode = ssl.CERT_NONE
     request = urllib.request.Request(url, method="GET")
     try:
-        with urllib.request.urlopen(request, context=context, timeout=30) as resp:
+        # url is operator-supplied (--api-url); this fetch is deliberately
+        # unverified (trust-on-first-use, see docstring above).
+        with urllib.request.urlopen(  # nosec B310
+            request, context=context, timeout=30
+        ) as resp:
             pem = resp.read().decode()
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")
@@ -1166,6 +1174,114 @@ def _require_tty_for_missing(missing: list) -> None:
         raise typer.Exit(code=1)
 
 
+def _resolve_provision_connection_args(port, baud, api_url, api_key, profile, ca_cert):
+    """Resolve --port/--baud/--api-url/--api-key/--profile/--ca-cert against
+    .microweaver config, in CLI flag > .microweaver > hardcoded default order."""
+    config = load_config()
+    resolved_ca_cert = ca_cert or (
+        Path(config["ca_cert"]) if config.get("ca_cert") else None
+    )
+    resolved_profile = profile or config.get("profile")
+    if resolved_ca_cert is None and resolved_profile:
+        profile_ca_cert = _profile_ca_cert_path(resolved_profile)
+        if profile_ca_cert.exists():
+            resolved_ca_cert = profile_ca_cert
+    return {
+        "port": port or config.get("port"),
+        "baud": baud if baud is not None else int(config.get("baud", DEFAULT_BAUD)),
+        "api_url": api_url or config.get("api_url"),
+        "api_key": api_key or config.get("api_key"),
+        "profile": resolved_profile,
+        "ca_cert": resolved_ca_cert,
+    }
+
+
+def _maybe_register_via_api(name, resolved_api_url, resolved_api_key, resolved_ca_cert):
+    """Register the device with the Agnes API when --api-key was given,
+    prompting for --name if needed. Returns the API result dict, or None if
+    no API key was given. Exits the CLI on any resolution/registration error."""
+    if not resolved_api_key:
+        return None
+    if not resolved_api_url:
+        print(
+            "ERROR: --api-key given without --api-url (and none saved "
+            "in .microweaver).",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    if urlparse(resolved_api_url).scheme == "https" and not resolved_ca_cert:
+        print(
+            "ERROR: --ca-cert is required to verify a https --api-url.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    resolved_name = name
+    if resolved_name is None:
+        if not sys.stdin.isatty():
+            print("ERROR: no TTY to prompt for: --name.", file=sys.stderr)
+            raise typer.Exit(code=1)
+        resolved_name = typer.prompt("Device name")
+
+    print(f"Registering device '{resolved_name}' with {resolved_api_url}...")
+    try:
+        api_result = _provision_device_via_api(
+            resolved_api_url, resolved_api_key, resolved_ca_cert, resolved_name
+        )
+    except ProvisionApiError as exc:
+        print(f"ERROR: device registration failed: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+    print(f"Registered device_id={api_result['device_id']}")
+    if api_result.get("warning"):
+        print(f"NOTE: {api_result['warning']}")
+    return api_result
+
+
+def _resolve_given_fields(cli_fields, api_result, resolved_api_url):
+    """Build the CLI-given field overrides, filling MQTT identity/credentials
+    from an Agnes API registration result when one was returned."""
+    given = dict(cli_fields)
+    if api_result is None:
+        return given
+    # API supplies the broker's identity/credentials; it doesn't return
+    # a broker host/port, so derive the host from --api-url and default
+    # to the plain dynsec port (1883) - mqtt_ssl stays off, matching the
+    # dynsec username/password auth these credentials are for.
+    given["mqtt_broker"] = given["mqtt_broker"] or urlparse(resolved_api_url).hostname
+    given["mqtt_port"] = given["mqtt_port"] or 1883
+    given["mqtt_client_id"] = given["mqtt_client_id"] or api_result["device_id"]
+    given["mqtt_username"] = given["mqtt_username"] or api_result["username"]
+    given["mqtt_password"] = given["mqtt_password"] or api_result["password"]
+    return given
+
+
+def _push_provisioned_config(resolved_port, config_path):
+    """Push config_path to the device over raw REPL. Returns True if pushed,
+    False if written locally only because no device was reachable on
+    resolved_port. Exits the CLI on any other raw-REPL/exec failure."""
+    try:
+        with _raw_repl_session(
+            resolved_port, "provision", exit_on_missing_port=False
+        ) as transport:
+            transport.put_file(config_path, ":device_config.json")
+        return True
+    except DevicePortUnavailable:
+        print(
+            f"NOTE: serial port '{resolved_port}' could not be opened - "
+            f"{config_path.name} was written locally but not pushed to a "
+            "device. Connect the device and rerun 'tinker.py deploy' (or "
+            "provision again) to push it.",
+            file=sys.stderr,
+        )
+        return False
+    except RawReplEntryError as exc:
+        _print_raw_repl_failure(resolved_port)
+        raise typer.Exit(code=1) from exc
+    except DeviceExecError as exc:
+        print(f"ERROR: {exc.stderr}", file=sys.stderr)
+        raise typer.Exit(code=1) from exc
+
+
 @app.command()
 def provision(
     port: Optional[str] = typer.Option(
@@ -1222,20 +1338,15 @@ def provision(
     are set, device details and MQTT credentials come from the Agnes API
     (POST /devices) instead of being typed in by hand.
     """
-    # Resolution order: CLI flag > .microweaver > hardcoded default.
-    config = load_config()
-    resolved_port = port or config.get("port")
-    resolved_baud = baud if baud is not None else int(config.get("baud", DEFAULT_BAUD))
-    resolved_api_url = api_url or config.get("api_url")
-    resolved_api_key = api_key or config.get("api_key")
-    resolved_profile = profile or config.get("profile")
-    resolved_ca_cert = ca_cert or (
-        Path(config["ca_cert"]) if config.get("ca_cert") else None
+    resolved = _resolve_provision_connection_args(
+        port, baud, api_url, api_key, profile, ca_cert
     )
-    if resolved_ca_cert is None and resolved_profile:
-        profile_ca_cert = _profile_ca_cert_path(resolved_profile)
-        if profile_ca_cert.exists():
-            resolved_ca_cert = profile_ca_cert
+    resolved_port = resolved["port"]
+    resolved_baud = resolved["baud"]
+    resolved_api_url = resolved["api_url"]
+    resolved_api_key = resolved["api_key"]
+    resolved_profile = resolved["profile"]
+    resolved_ca_cert = resolved["ca_cert"]
 
     if resolved_port is None:
         resolved_port = prompt_for_port()
@@ -1250,42 +1361,11 @@ def provision(
             file=sys.stderr,
         )
 
-    api_result = None
-    if resolved_api_key:
-        if not resolved_api_url:
-            print(
-                "ERROR: --api-key given without --api-url (and none saved "
-                "in .microweaver).",
-                file=sys.stderr,
-            )
-            raise typer.Exit(code=1)
-        if urlparse(resolved_api_url).scheme == "https" and not resolved_ca_cert:
-            print(
-                "ERROR: --ca-cert is required to verify a https --api-url.",
-                file=sys.stderr,
-            )
-            raise typer.Exit(code=1)
+    api_result = _maybe_register_via_api(
+        name, resolved_api_url, resolved_api_key, resolved_ca_cert
+    )
 
-        resolved_name = name
-        if resolved_name is None:
-            if not sys.stdin.isatty():
-                print("ERROR: no TTY to prompt for: --name.", file=sys.stderr)
-                raise typer.Exit(code=1)
-            resolved_name = typer.prompt("Device name")
-
-        print(f"Registering device '{resolved_name}' with {resolved_api_url}...")
-        try:
-            api_result = _provision_device_via_api(
-                resolved_api_url, resolved_api_key, resolved_ca_cert, resolved_name
-            )
-        except ProvisionApiError as exc:
-            print(f"ERROR: device registration failed: {exc}", file=sys.stderr)
-            raise typer.Exit(code=1)
-        print(f"Registered device_id={api_result['device_id']}")
-        if api_result.get("warning"):
-            print(f"NOTE: {api_result['warning']}")
-
-    given = {
+    cli_fields = {
         "wifi_ssid": wifi_ssid,
         "wifi_password": wifi_password,
         "mqtt_broker": mqtt_broker,
@@ -1296,18 +1376,7 @@ def provision(
         "mqtt_username": mqtt_username,
         "mqtt_password": mqtt_password,
     }
-    if api_result is not None:
-        # API supplies the broker's identity/credentials; it doesn't return
-        # a broker host/port, so derive the host from --api-url and default
-        # to the plain dynsec port (1883) - mqtt_ssl stays off, matching the
-        # dynsec username/password auth these credentials are for.
-        given["mqtt_broker"] = (
-            given["mqtt_broker"] or urlparse(resolved_api_url).hostname
-        )
-        given["mqtt_port"] = given["mqtt_port"] or 1883
-        given["mqtt_client_id"] = given["mqtt_client_id"] or api_result["device_id"]
-        given["mqtt_username"] = given["mqtt_username"] or api_result["username"]
-        given["mqtt_password"] = given["mqtt_password"] or api_result["password"]
+    given = _resolve_given_fields(cli_fields, api_result, resolved_api_url)
 
     missing = [key for key, value in given.items() if value is None]
     _require_tty_for_missing(missing)
@@ -1330,27 +1399,7 @@ def provision(
         print(f"ERROR: {exc}", file=sys.stderr)
         raise typer.Exit(code=1)
 
-    device_pushed = False
-    try:
-        with _raw_repl_session(
-            resolved_port, "provision", exit_on_missing_port=False
-        ) as transport:
-            transport.put_file(config_path, ":device_config.json")
-        device_pushed = True
-    except DevicePortUnavailable:
-        print(
-            f"NOTE: serial port '{resolved_port}' could not be opened - "
-            f"{config_path.name} was written locally but not pushed to a "
-            "device. Connect the device and rerun 'tinker.py deploy' (or "
-            "provision again) to push it.",
-            file=sys.stderr,
-        )
-    except RawReplEntryError as exc:
-        _print_raw_repl_failure(resolved_port)
-        raise typer.Exit(code=1) from exc
-    except DeviceExecError as exc:
-        print(f"ERROR: {exc.stderr}", file=sys.stderr)
-        raise typer.Exit(code=1) from exc
+    device_pushed = _push_provisioned_config(resolved_port, config_path)
 
     save_config(
         port=port,
@@ -1364,7 +1413,8 @@ def provision(
         print(f"\nProvisioned {resolved_port} with {config_path.name}")
     else:
         print(
-            f"\nWrote {config_path.name} locally (not pushed - no device on {resolved_port})"
+            f"\nWrote {config_path.name} locally "
+            f"(not pushed - no device on {resolved_port})"
         )
 
 
