@@ -1418,111 +1418,70 @@ def provision(
         )
 
 
-# Mirrors main.py's subscribe-adapter wiring (name -> enabled-flag attribute).
-# Kept in sync by hand, same as PROVISION_FIELDS above -- update this list
-# whenever main.py gains/removes a subscribe adapter.
-SUBSCRIBE_ADAPTER_FLAGS = [
-    ("relay", "RELAY_ENABLED"),
-    ("oled", "OLED_ENABLED"),
-]
-
-
-# Mirrors main.py's publish-adapter wiring for the pub-side "driven by" column,
-# beyond the DHT special case handled separately below (name is
-# DHT_SENSOR_TYPE itself, not a fixed "dht" name).
+# Mirrors main.py's publish-adapter wiring (enabled-flag attr -> topic-suffix
+# attr). Kept in sync by hand, same as PROVISION_FIELDS above -- update this
+# list whenever main.py gains/removes a publish adapter.
 PUBLISH_ADAPTER_FLAGS = [
-    ("potentiometer", "POTENTIOMETER_ENABLED"),
-    ("rotary_angle", "ROTARY_ANGLE_ENABLED"),
+    ("DHT_ENABLED", "DHT_TOPIC_SUFFIX"),
+    ("POTENTIOMETER_ENABLED", "POTENTIOMETER_TOPIC_SUFFIX"),
+    ("ROTARY_ANGLE_ENABLED", "ROTARY_ANGLE_TOPIC_SUFFIX"),
 ]
 
 
-def _enabled_publish_adapter_names(setting) -> list:
-    names = []
-    if setting.DHT_ENABLED:
-        names.append(setting.DHT_SENSOR_TYPE)
-    names.extend(name for name, flag in PUBLISH_ADAPTER_FLAGS if getattr(setting, flag))
-    return names
+# Mirrors main.py's subscribe-adapter wiring (enabled-flag attr -> topic-suffix
+# attr).
+SUBSCRIBE_ADAPTER_FLAGS = [
+    ("RELAY_ENABLED", "RELAY_TOPIC_SUFFIX"),
+    ("OLED_ENABLED", "OLED_TOPIC_SUFFIX"),
+]
 
 
-def _resolve_sub_topic_route(topic: str, enabled_names: list) -> str:
-    """Replicate RuntimeService._resolve_command_adapter's routing rules
-    (app/services/runtime.py) against the statically-known enabled adapter
-    names, so this reports the same outcome the device would at runtime."""
-    if topic in enabled_names:
-        return topic
-    suffix = topic.rsplit("/", 1)[-1]
-    if suffix in enabled_names:
-        return suffix
-    if len(enabled_names) == 1:
-        return enabled_names[0]
-    return None
-
-
-def _resolve_pub_topic_route(name: str, pub_topics: list) -> Optional[str]:
-    """Replicate RuntimeService._resolve_publish_topic's routing rules,
-    inverted from _resolve_sub_topic_route: given an adapter name, pick
-    which configured mqtt_topic_pub entry it publishes to."""
-    if len(pub_topics) == 1:
-        return pub_topics[0]
-    for topic in pub_topics:
-        if topic == name or topic.rsplit("/", 1)[-1] == name:
-            return topic
-    return None
+def _topic(base_topics: list, suffix: str) -> str:
+    """Mirrors main.py's _topic: base (mqtt_topic_pub/sub, first entry)
+    plus the device's own topic suffix."""
+    base = base_topics[0] if base_topics else ""
+    return f"{base}/{suffix}" if base else suffix
 
 
 def _build_pub_rows(setting) -> list:
-    publish_names = _enabled_publish_adapter_names(setting)
-    pub_topics = list(setting.MQTT_TOPIC_PUB)
-    if not publish_names:
-        return [("PUB", topic, "(no publish adapters enabled)") for topic in pub_topics]
-
-    topic_to_names = {topic: [] for topic in pub_topics}
-    unmatched_names = []
-    for name in publish_names:
-        topic = _resolve_pub_topic_route(name, pub_topics)
-        if topic is None:
-            unmatched_names.append(name)
-        else:
-            topic_to_names[topic].append(name)
+    pub_base = list(setting.MQTT_TOPIC_PUB)
     rows = [
         (
             "PUB",
-            topic,
-            ", ".join(names) if names else "(no publish adapters route here)",
+            _topic(pub_base, getattr(setting, suffix_attr)),
+            getattr(setting, suffix_attr),
         )
-        for topic, names in topic_to_names.items()
+        for enabled_attr, suffix_attr in PUBLISH_ADAPTER_FLAGS
+        if getattr(setting, enabled_attr)
     ]
-    rows.extend(
-        ("PUB", f"(unmatched: {name})", "reading dropped - no topic suffix match")
-        for name in unmatched_names
-    )
-    return rows
+    return rows or [
+        ("PUB", topic, "(no publish adapters enabled)") for topic in pub_base
+    ]
 
 
 def _build_sub_rows(setting) -> list:
-    enabled_sub_names = [
-        name for name, flag in SUBSCRIBE_ADAPTER_FLAGS if getattr(setting, flag)
+    sub_base = list(setting.MQTT_TOPIC_SUB)
+    rows = [
+        (
+            "SUB",
+            _topic(sub_base, getattr(setting, suffix_attr)),
+            getattr(setting, suffix_attr),
+        )
+        for enabled_attr, suffix_attr in SUBSCRIBE_ADAPTER_FLAGS
+        if getattr(setting, enabled_attr)
     ]
-    if not enabled_sub_names:
-        # Matches main.py: topics = None if subscribe_adapters else [] -- with
-        # zero subscribe adapters enabled, RuntimeService is handed topics=[]
-        # and never subscribes to anything, regardless of mqtt_topic_sub.
-        return [
-            (
-                "SUB",
-                "(none - no subscribe adapters enabled)",
-                "main.py overrides mqtt_topic_sub to [] when none enabled",
-            )
-        ]
+    if rows:
+        return rows
+    # Matches main.py: topics = subscribe_topics if subscribe_adapters else []
+    # -- with zero subscribe adapters enabled, RuntimeService is handed
+    # topics=[] and never subscribes to anything, regardless of mqtt_topic_sub.
     return [
         (
             "SUB",
-            sub_topic,
-            _resolve_sub_topic_route(sub_topic, enabled_sub_names)
-            or "(unmatched - no adapter routed)",
+            "(none - no subscribe adapters enabled)",
+            "main.py overrides mqtt_topic_sub to [] when none enabled",
         )
-        for sub_topic in setting.MQTT_TOPIC_SUB
-    ] or [("SUB", "(none configured)", "-")]
+    ]
 
 
 @app.command()

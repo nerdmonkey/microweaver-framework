@@ -2722,9 +2722,7 @@ def test_topics_falls_back_to_example_when_device_config_missing(tmp_path):
     assert result.exit_code == 0
     assert "device_config.json.example" in result.stdout
     assert "data/sensor/room/temperature" in result.stdout
-    # Single enabled subscribe adapter (relay) falls back for any topic,
-    # matching RuntimeService._resolve_command_adapter's single-adapter rule.
-    assert "command/control/room/light" in result.stdout
+    assert "command/control/room/light/relay" in result.stdout
     assert "relay" in result.stdout
 
 
@@ -2752,83 +2750,69 @@ def test_topics_explicit_config_path_outside_root(tmp_path):
     external.unlink()
 
 
-def test_topics_routes_multiple_adapters_and_flags_unmatched(tmp_path):
+def test_topics_routes_relay_and_oled_to_distinct_composed_topics(tmp_path):
     config_path = tmp_path / "device_config.json"
     config_path.write_text(
         json.dumps(
             {
                 "relay_enabled": True,
                 "oled_enabled": True,
-                "dht_enabled": True,
-                "dht_sensor_type": "dht11",
-                "mqtt_topic_pub": "data/pub",
-                "mqtt_topic_sub": [
-                    "command/control/room/relay",
-                    "command/control/room/oled",
-                    "command/control/room/typo",
-                ],
+                "dht_enabled": False,
+                "mqtt_topic_sub": "command/control/room",
             }
         )
     )
     result = runner.invoke(tinker.app, ["topics"])
     assert result.exit_code == 0
-    assert "dht11" in result.stdout
     lines = result.stdout.splitlines()
     relay_line = next(line for line in lines if "command/control/room/relay" in line)
     oled_line = next(line for line in lines if "command/control/room/oled" in line)
-    typo_line = next(line for line in lines if "command/control/room/typo" in line)
     assert "relay" in relay_line
     assert "oled" in oled_line
-    assert "unmatched" in typo_line
 
 
-def test_topics_routes_multiple_pub_adapters_and_flags_unmatched(tmp_path):
+def test_topics_routes_multiple_pub_adapters_to_distinct_composed_topics(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "relay_enabled": False,
+                "dht_enabled": True,
+                "dht_sensor_type": "dht22",
+                "potentiometer_enabled": True,
+                "rotary_angle_enabled": True,
+                "mqtt_topic_pub": "data/sensor/room",
+            }
+        )
+    )
+    result = runner.invoke(tinker.app, ["topics"])
+    assert result.exit_code == 0
+    lines = result.stdout.splitlines()
+    dht_line = next(line for line in lines if "data/sensor/room/dht" in line)
+    pot_line = next(line for line in lines if "data/sensor/room/potentiometer" in line)
+    rotary_line = next(
+        line for line in lines if "data/sensor/room/rotary_angle" in line
+    )
+    assert "dht" in dht_line
+    assert "potentiometer" in pot_line
+    assert "rotary_angle" in rotary_line
+
+
+def test_topics_uses_configured_topic_suffix_override(tmp_path):
     config_path = tmp_path / "device_config.json"
     config_path.write_text(
         json.dumps(
             {
                 "relay_enabled": True,
-                "dht_enabled": True,
-                "dht_sensor_type": "dht22",
-                "potentiometer_enabled": True,
-                "rotary_angle_enabled": True,
-                "mqtt_topic_pub": [
-                    "data/sensor/room/dht22",
-                    "data/sensor/room/potentiometer",
-                ],
-                "mqtt_topic_sub": ["command/control/room/relay"],
+                "relay_topic_suffix": "pump",
+                "dht_enabled": False,
+                "mqtt_topic_sub": "command/control/room",
             }
         )
     )
     result = runner.invoke(tinker.app, ["topics"])
     assert result.exit_code == 0
-    lines = result.stdout.splitlines()
-    dht_line = next(line for line in lines if "data/sensor/room/dht22" in line)
-    pot_line = next(line for line in lines if "data/sensor/room/potentiometer" in line)
-    unmatched_line = next(line for line in lines if "unmatched" in line)
-    assert "dht22" in dht_line
-    assert "potentiometer" in pot_line
-    assert "rotary_angle" in unmatched_line
-
-
-def test_topics_single_pub_topic_shared_by_all_adapters(tmp_path):
-    config_path = tmp_path / "device_config.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "dht_enabled": True,
-                "dht_sensor_type": "dht11",
-                "potentiometer_enabled": True,
-                "mqtt_topic_pub": "shared/topic",
-            }
-        )
-    )
-    result = runner.invoke(tinker.app, ["topics"])
-    assert result.exit_code == 0
-    lines = result.stdout.splitlines()
-    shared_line = next(line for line in lines if "shared/topic" in line)
-    assert "dht11" in shared_line
-    assert "potentiometer" in shared_line
+    assert "command/control/room/pump" in result.stdout
 
 
 def test_topics_notes_override_when_no_subscribe_adapters_enabled(tmp_path):
