@@ -1,3 +1,4 @@
+import gc
 import time
 
 try:
@@ -43,20 +44,6 @@ class RuntimeService:
         self.publish_retain = setting.MQTT_PUBLISH_RETAIN
         self.ota_status_topic = setting.OTA_STATUS_TOPIC
         self.message_handlers = {}
-        self.log_service = LogService(
-            format=setting.LOG_FORMAT, level=setting.LOG_LEVEL
-        )
-        self.crash_log = CrashLogService(
-            setting.CRASH_LOG_PATH,
-            setting.CRASH_LOG_ENABLED,
-            max_bytes=setting.CRASH_LOG_MAX_BYTES,
-        )
-        self.metrics_service = MetricsService()
-        self.error_handler = ErrorHandlerService(
-            logger=self.log_service,
-            crash_log=self.crash_log,
-            metrics=self.metrics_service,
-        )
         self.watchdog_service = None
         if setting.WATCHDOG_ENABLED:
             self.watchdog_service = WatchdogService(setting.WATCHDOG_TIMEOUT_MS)
@@ -73,6 +60,12 @@ class RuntimeService:
                 setting.WIFI_GATEWAY,
                 setting.WIFI_DNS,
             )
+        # network.WLAN() needs one contiguous internal-DRAM block for its rx/tx
+        # buffers, so grab it before the log/crash-log/metrics/error-handler
+        # objects below churn and fragment the heap. gc.collect() here prevents
+        # esp-idf's "Expected to init 10 rx buffer, actual is 2" OOM at
+        # construction time.
+        gc.collect()
         self.wifi_service = WiFiService(
             setting.WIFI_SSID,
             setting.WIFI_PASSWORD,
@@ -82,6 +75,20 @@ class RuntimeService:
             self.watchdog_service,
             wifi_static_ip,
             setting.WIFI_DISABLE_POWER_SAVE,
+        )
+        self.log_service = LogService(
+            format=setting.LOG_FORMAT, level=setting.LOG_LEVEL
+        )
+        self.crash_log = CrashLogService(
+            setting.CRASH_LOG_PATH,
+            setting.CRASH_LOG_ENABLED,
+            max_bytes=setting.CRASH_LOG_MAX_BYTES,
+        )
+        self.metrics_service = MetricsService()
+        self.error_handler = ErrorHandlerService(
+            logger=self.log_service,
+            crash_log=self.crash_log,
+            metrics=self.metrics_service,
         )
         self.registry = ServiceRegistry(error_handler=self.error_handler)
         if self.watchdog_service:

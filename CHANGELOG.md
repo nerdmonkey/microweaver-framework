@@ -66,6 +66,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resulting per-adapter pub routing the same way it already does for sub.
 
 ### Fixed
+- `boot.py` now claims the `network.WLAN(network.STA_IF)` singleton as its
+  first action, before `import _boot` pulls in the rest of the app's module
+  tree. On the ESP32 port, `network.WLAN(id)` only runs the heap-heavy
+  `esp_wifi_init()` rx/tx buffer allocation on its first call per interface;
+  doing that call after the full service import graph had already eaten the
+  heap could fail with `OSError: WiFi Out of Memory` (esp-idf's "Expected to
+  init 10 rx buffer, actual is 2"). `RuntimeService.__init__`
+  (`app/services/runtime.py`) also now constructs `WiFiService` before the
+  heavier `LogService`/`CrashLogService`/`MetricsService`/`ErrorHandlerService`
+  objects, with an explicit `gc.collect()` first.
 - `RuntimeService.run()` now backs off with exponential delay (reset on
   successful reconnect) before retrying after any post-connect failure,
   including a broker-refused subscribe (SUBACK failure), instead of hammering
