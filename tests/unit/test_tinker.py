@@ -1961,6 +1961,37 @@ def test_profile_create_no_activate():
     assert "Created empty profile 'lab'" in result.stdout
 
 
+def test_profile_create_no_name_not_tty():
+    result = runner.invoke(tinker.app, ["profile", "create"])
+    assert result.exit_code == 1
+    assert "no TTY to prompt for: name" in result.stderr
+
+
+def test_profile_create_interactive_prompts_for_name(mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker.typer,
+        "prompt",
+        side_effect=["lab", "https://lab.local", "secret-key", "/dev/ttyUSB0"],
+    )
+    tinker.profile_create(
+        name=None, api_url=None, api_key=None, port=None, baud=None, activate=True
+    )
+    saved = tinker.load_profile("lab")
+    assert saved["api_url"] == "https://lab.local"
+    assert saved["api_key"] == "secret-key"
+    assert saved["port"] == "/dev/ttyUSB0"
+
+
+def test_profile_create_interactive_blank_name_rejected(mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(tinker.typer, "prompt", side_effect=[""])
+    with pytest.raises(typer.Exit):
+        tinker.profile_create(
+            name=None, api_url=None, api_key=None, port=None, baud=None, activate=True
+        )
+
+
 def test_profile_create_interactive_prompts(mocker):
     # CliRunner swaps sys.stdin for its own fake stream during invoke(), so
     # isatty must be mocked directly and the command called without the CLI

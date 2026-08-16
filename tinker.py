@@ -1244,7 +1244,7 @@ def _prompt_profile_fields(given: dict) -> None:
 
 @profile_app.command("create")
 def profile_create(
-    name: str = typer.Argument(..., help="Profile name"),
+    name: Optional[str] = typer.Argument(None, help="Profile name"),
     api_url: Optional[str] = typer.Option(None, "--api-url", help="Agnes API base URL"),
     api_key: Optional[str] = typer.Option(None, "--api-key", help="Agnes API key"),
     port: Optional[str] = typer.Option(
@@ -1260,8 +1260,17 @@ def profile_create(
     ),
 ) -> None:
     """Create a new profile. Fails if one already exists with this name -
-    use 'profile edit' to change an existing one instead. Prompts for any of
-    api_url/api_key/port left unset when run interactively."""
+    use 'profile edit' to change an existing one instead. Prompts for name
+    (if omitted) and any of api_url/api_key/port left unset when run
+    interactively."""
+    if name is None:
+        if not sys.stdin.isatty():
+            print("ERROR: no TTY to prompt for: name.", file=sys.stderr)
+            raise typer.Exit(code=1)
+        name = typer.prompt("Profile name")
+        if not name:
+            print("ERROR: profile name cannot be blank.", file=sys.stderr)
+            raise typer.Exit(code=1)
     if name in list_profiles():
         print(
             f"ERROR: profile '{name}' already exists. Use 'profile edit' to "
