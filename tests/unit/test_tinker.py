@@ -1922,6 +1922,268 @@ def test_config_set_interactive_prompts(mocker):
 
 
 # --------------------------------------------------------------------------
+# profile list / show / create / edit / delete / use
+# --------------------------------------------------------------------------
+
+
+def test_profile_list_empty():
+    result = runner.invoke(tinker.app, ["profile", "list"])
+    assert result.exit_code == 0
+    assert "No profiles saved" in result.stdout
+
+
+def test_profile_create_via_flags():
+    result = runner.invoke(
+        tinker.app,
+        [
+            "profile",
+            "create",
+            "lab",
+            "--api-url",
+            "https://lab.local",
+            "--port",
+            "/dev/ttyUSB0",
+        ],
+    )
+    assert result.exit_code == 0
+    assert tinker.load_profile("lab") == {
+        "api_url": "https://lab.local",
+        "port": "/dev/ttyUSB0",
+    }
+    # 'create' defaults to activating the new profile.
+    assert tinker.load_config()["profile"] == "lab"
+
+
+def test_profile_create_no_activate():
+    result = runner.invoke(tinker.app, ["profile", "create", "lab", "--no-activate"])
+    assert result.exit_code == 0
+    assert tinker.load_config().get("profile") is None
+    assert "Created empty profile 'lab'" in result.stdout
+
+
+def test_profile_create_duplicate_rejected():
+    tinker.save_profile("lab", api_url="https://lab.local")
+    result = runner.invoke(tinker.app, ["profile", "create", "lab"])
+    assert result.exit_code == 1
+    assert "already exists" in result.stderr
+
+
+def test_profile_edit_updates_existing():
+    tinker.save_profile("lab", api_url="https://lab.local")
+    result = runner.invoke(
+        tinker.app, ["profile", "edit", "lab", "--api-key", "secret-key"]
+    )
+    assert result.exit_code == 0
+    assert tinker.load_profile("lab")["api_key"] == "secret-key"
+    assert tinker.load_profile("lab")["api_url"] == "https://lab.local"
+
+
+def test_profile_edit_missing_profile_rejected():
+    result = runner.invoke(tinker.app, ["profile", "edit", "ghost", "--port", "x"])
+    assert result.exit_code == 1
+    assert "no profile named 'ghost'" in result.stderr
+
+
+def test_profile_edit_nothing_to_set():
+    tinker.save_profile("lab", api_url="https://lab.local")
+    result = runner.invoke(tinker.app, ["profile", "edit", "lab"])
+    assert result.exit_code == 1
+    assert "Nothing to set" in result.stderr
+
+
+def test_profile_show_masks_api_key_by_default():
+    tinker.save_profile("lab", api_url="https://lab.local", api_key="secret-key")
+    result = runner.invoke(tinker.app, ["profile", "show", "lab"])
+    assert result.exit_code == 0
+    assert "secret-key" not in result.stdout
+    assert "********" in result.stdout
+
+
+def test_profile_show_reveal():
+    tinker.save_profile("lab", api_key="secret-key")
+    result = runner.invoke(tinker.app, ["profile", "show", "lab", "--reveal"])
+    assert result.exit_code == 0
+    assert "secret-key" in result.stdout
+
+
+def test_profile_show_missing_profile_rejected():
+    result = runner.invoke(tinker.app, ["profile", "show", "ghost"])
+    assert result.exit_code == 1
+    assert "no profile named 'ghost'" in result.stderr
+
+
+def test_profile_list_marks_active():
+    tinker.save_profile("lab", api_url="https://lab.local")
+    tinker.save_profile("field", api_url="https://field.local")
+    tinker.save_config(profile="lab")
+    result = runner.invoke(tinker.app, ["profile", "list"])
+    assert result.exit_code == 0
+    assert "* lab" in result.stdout
+    assert "field" in result.stdout and "* field" not in result.stdout
+
+
+def test_profile_delete():
+    tinker.save_profile("lab", api_url="https://lab.local")
+    result = runner.invoke(tinker.app, ["profile", "delete", "lab", "--yes"])
+    assert result.exit_code == 0
+    assert "Deleted profile 'lab'" in result.stdout
+    assert tinker.load_profile("lab") == {}
+
+
+def test_profile_delete_clears_active_pointer():
+    tinker.save_profile("lab", api_url="https://lab.local")
+    tinker.save_config(profile="lab")
+    runner.invoke(tinker.app, ["profile", "delete", "lab", "--yes"])
+    assert tinker.load_config().get("profile") is None
+
+
+def test_profile_delete_missing_profile_rejected():
+    result = runner.invoke(tinker.app, ["profile", "delete", "ghost", "--yes"])
+    assert result.exit_code == 1
+    assert "no profile named 'ghost'" in result.stderr
+
+
+def test_profile_delete_declined_confirmation(mocker):
+    tinker.save_profile("lab", api_url="https://lab.local")
+    mocker.patch.object(tinker.typer, "confirm", return_value=False)
+    result = runner.invoke(tinker.app, ["profile", "delete", "lab"])
+    assert result.exit_code == 0
+    assert tinker.load_profile("lab") != {}
+
+
+def test_profile_use():
+    tinker.save_profile("lab", api_url="https://lab.local")
+    result = runner.invoke(tinker.app, ["profile", "use", "lab"])
+    assert result.exit_code == 0
+    assert "Active profile -> lab" in result.stdout
+    assert tinker.load_config()["profile"] == "lab"
+
+
+def test_profile_use_missing_profile_rejected():
+    result = runner.invoke(tinker.app, ["profile", "use", "ghost"])
+    assert result.exit_code == 1
+    assert "no profile named 'ghost'" in result.stderr
+
+
+def test_delete_profile_missing_config_file_returns_false():
+    assert tinker.delete_profile("ghost") is False
+
+
+# --------------------------------------------------------------------------
+# _resolve_provision_connection_args precedence: CLI > profile > [default]
+# --------------------------------------------------------------------------
+
+
+def test_resolve_provision_args_prefers_cli_over_profile():
+    tinker.save_profile("lab", api_url="https://profile.local", port="/dev/ttyUSB1")
+    resolved = tinker._resolve_provision_connection_args(
+        port="/dev/ttyUSB9",
+        baud=None,
+        api_url=None,
+        api_key=None,
+        profile="lab",
+        ca_cert=None,
+    )
+    assert resolved["port"] == "/dev/ttyUSB9"
+    assert resolved["api_url"] == "https://profile.local"
+
+
+def test_resolve_provision_args_prefers_profile_over_default():
+    tinker.save_config(api_url="https://default.local", port="/dev/default")
+    tinker.save_profile("lab", api_url="https://profile.local")
+    resolved = tinker._resolve_provision_connection_args(
+        port=None, baud=None, api_url=None, api_key=None, profile="lab", ca_cert=None
+    )
+    assert resolved["api_url"] == "https://profile.local"
+    # profile has no port saved, so it falls through to [default].
+    assert resolved["port"] == "/dev/default"
+
+
+def test_resolve_provision_args_uses_active_profile_when_none_given():
+    tinker.save_profile("lab", api_url="https://profile.local")
+    tinker.save_config(profile="lab")
+    resolved = tinker._resolve_provision_connection_args(
+        port=None, baud=None, api_url=None, api_key=None, profile=None, ca_cert=None
+    )
+    assert resolved["profile"] == "lab"
+    assert resolved["api_url"] == "https://profile.local"
+
+
+def test_resolve_provision_args_profile_ca_cert_overrides_default(tmp_path):
+    profile_ca = tmp_path / "profile-ca.pem"
+    profile_ca.write_text("profile-pem")
+    default_ca = tmp_path / "default-ca.pem"
+    default_ca.write_text("default-pem")
+    tinker.save_config(ca_cert=str(default_ca))
+    tinker.save_profile("lab", ca_cert=str(profile_ca))
+    resolved = tinker._resolve_provision_connection_args(
+        port=None, baud=None, api_url=None, api_key=None, profile="lab", ca_cert=None
+    )
+    assert resolved["ca_cert"] == profile_ca
+
+
+def test_resolve_provision_args_baud_falls_back_to_default_when_no_flag():
+    resolved = tinker._resolve_provision_connection_args(
+        port=None, baud=None, api_url=None, api_key=None, profile=None, ca_cert=None
+    )
+    assert resolved["baud"] == tinker.DEFAULT_BAUD
+
+
+# --------------------------------------------------------------------------
+# fetch-ca-cert / profile integration
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def isolate_home_config_dir(tmp_path, monkeypatch):
+    """Keep 'fetch-ca-cert's ~/.microweaver/<profile>/ca.pem writes off the
+    real home directory."""
+    monkeypatch.setattr(tinker, "HOME_CONFIG_DIR", tmp_path / "home-microweaver")
+
+
+def test_fetch_ca_cert_saves_cert_and_creates_profile(mocker):
+    mocker.patch.object(tinker, "_fetch_ca_cert", return_value="PEM-BEGIN CERTIFICATE")
+    result = runner.invoke(
+        tinker.app,
+        ["fetch-ca-cert", "lab", "--api-url", "https://lab.local"],
+    )
+    assert result.exit_code == 0
+    ca_path = tinker.HOME_CONFIG_DIR / "lab" / "ca.pem"
+    assert ca_path.read_text() == "PEM-BEGIN CERTIFICATE"
+    assert tinker.load_profile("lab")["api_url"] == "https://lab.local"
+    assert tinker.load_config()["profile"] == "lab"
+
+
+def test_fetch_ca_cert_reuses_saved_profile_api_url(mocker):
+    tinker.save_profile("lab", api_url="https://lab.local")
+    mock_fetch = mocker.patch.object(
+        tinker, "_fetch_ca_cert", return_value="PEM-BEGIN CERTIFICATE"
+    )
+    result = runner.invoke(tinker.app, ["fetch-ca-cert", "lab"])
+    assert result.exit_code == 0
+    mock_fetch.assert_called_once_with("https://lab.local")
+
+
+def test_fetch_ca_cert_no_api_url_anywhere_errors():
+    result = runner.invoke(tinker.app, ["fetch-ca-cert", "lab"])
+    assert result.exit_code == 1
+    assert "--api-url required" in result.stderr
+
+
+def test_fetch_ca_cert_api_error(mocker):
+    mocker.patch.object(
+        tinker,
+        "_fetch_ca_cert",
+        side_effect=tinker.ProvisionApiError("connection refused"),
+    )
+    result = runner.invoke(
+        tinker.app, ["fetch-ca-cert", "lab", "--api-url", "https://lab.local"]
+    )
+    assert result.exit_code == 1
+    assert "connection refused" in result.stderr
+
+
+# --------------------------------------------------------------------------
 # device reset / info / ls / tree
 # --------------------------------------------------------------------------
 

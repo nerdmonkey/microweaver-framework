@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `tinker.py profile` command group (`create`/`edit`/`delete`/`list`/`show`/
+  `use`) for managing named Agnes API connection profiles (`api_url`,
+  `api_key`, `port`, `baud`) saved in `.microweaver`, instead of `--profile`
+  only being usable as a bare name for CA-cert lookup. `provision` and
+  `fetch-ca-cert` now resolve `--port`/`--baud`/`--api-url`/`--api-key`/
+  `--ca-cert` from the named (or active) profile when not passed explicitly,
+  in CLI flag > profile > `.microweaver` `[default]` > hardcoded default
+  order. `fetch-ca-cert` now also saves the resolved `api_url` into the
+  profile it fetches for.
 - `dht_topic_suffix`/`relay_topic_suffix`/`oled_topic_suffix`/
   `potentiometer_topic_suffix`/`rotary_angle_topic_suffix` config keys (each
   defaulting to a short device name, e.g. `dht`, `relay`) let each enabled

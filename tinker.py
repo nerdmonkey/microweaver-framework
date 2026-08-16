@@ -69,6 +69,11 @@ config_app = typer.Typer(
 app.add_typer(config_app, name="config")
 device_app = typer.Typer(no_args_is_help=True, help="Interrupt or reset the device.")
 app.add_typer(device_app, name="device")
+profile_app = typer.Typer(
+    no_args_is_help=True,
+    help="Create, list, and switch between saved Agnes API connection profiles.",
+)
+app.add_typer(profile_app, name="profile")
 fleet_app = typer.Typer(no_args_is_help=True, help="Push a build to multiple devices.")
 app.add_typer(fleet_app, name="fleet")
 ota_app = typer.Typer(
@@ -118,6 +123,69 @@ def save_config(**values) -> dict:
     with CONFIG_PATH.open("w") as f:
         cp.write(f)
     return saved
+
+
+def _profile_section(name: str) -> str:
+    return f"profile:{name}"
+
+
+def list_profiles() -> list[str]:
+    """Names of profiles saved under CONFIG_PATH, sorted."""
+    if not CONFIG_PATH.exists():
+        return []
+    cp = configparser.ConfigParser()
+    cp.read(CONFIG_PATH)
+    return sorted(
+        section.split(":", 1)[1]
+        for section in cp.sections()
+        if section.startswith("profile:")
+    )
+
+
+def load_profile(name: str) -> dict:
+    if not CONFIG_PATH.exists():
+        return {}
+    cp = configparser.ConfigParser()
+    cp.read(CONFIG_PATH)
+    section = _profile_section(name)
+    return dict(cp[section]) if cp.has_section(section) else {}
+
+
+def save_profile(name: str, **values) -> dict:
+    cp = configparser.ConfigParser()
+    if CONFIG_PATH.exists():
+        cp.read(CONFIG_PATH)
+    section = _profile_section(name)
+    if not cp.has_section(section):
+        cp.add_section(section)
+    saved = {}
+    for key, value in values.items():
+        if value is not None:
+            cp.set(section, key, str(value))
+            saved[key] = value
+    with CONFIG_PATH.open("w") as f:
+        cp.write(f)
+    return saved
+
+
+def delete_profile(name: str) -> bool:
+    """Remove a saved profile section. Clears the active-profile pointer in
+    [default] if it pointed at this profile. Returns whether it existed."""
+    if not CONFIG_PATH.exists():
+        return False
+    cp = configparser.ConfigParser()
+    cp.read(CONFIG_PATH)
+    removed = cp.remove_section(_profile_section(name))
+    if not removed:
+        return False
+    if (
+        cp.has_section("default")
+        and cp.get("default", "profile", fallback=None) == name
+    ):
+        cp.remove_option("default", "profile")
+    with CONFIG_PATH.open("w") as f:
+        cp.write(f)
+    return True
 
 
 def print_table(columns: list, rows) -> None:
@@ -1086,10 +1154,13 @@ def fetch_ca_cert(
     treat the saved ca.pem as the trust anchor from then on.
     """
     config = load_config()
-    resolved_api_url = api_url or config.get("api_url")
+    resolved_api_url = (
+        api_url or load_profile(profile).get("api_url") or config.get("api_url")
+    )
     if not resolved_api_url:
         print(
-            "ERROR: --api-url required (none saved in .microweaver).",
+            "ERROR: --api-url required (none saved for this profile or in "
+            ".microweaver).",
             file=sys.stderr,
         )
         raise typer.Exit(code=1)
@@ -1108,8 +1179,149 @@ def fetch_ca_cert(
     ca_path.parent.mkdir(parents=True, exist_ok=True)
     ca_path.write_text(pem)
 
-    save_config(profile=profile, api_url=api_url)
+    save_profile(profile, api_url=resolved_api_url)
+    save_config(profile=profile)
     print(f"Saved CA cert -> {ca_path}")
+
+
+# Secret-masked like SECRET_CONFIG_KEYS below, kept separate since profile
+# fields are a different, smaller set (api_url/api_key/port/baud/ca_cert).
+PROFILE_SECRET_KEYS = {"api_key"}
+
+
+@profile_app.command("list")
+def profile_list() -> None:
+    """List saved profiles, marking the active one with '*'."""
+    names = list_profiles()
+    if not names:
+        print("No profiles saved. Create one with 'profile create <name>'.")
+        raise typer.Exit(code=0)
+    active = load_config().get("profile")
+    rows = [(f"* {name}" if name == active else name,) for name in names]
+    print_table(["Profile"], rows)
+
+
+@profile_app.command("show")
+def profile_show(
+    name: str = typer.Argument(..., help="Profile name"),
+    reveal: bool = typer.Option(
+        False, "--reveal", help="Show the api_key value in full instead of masked"
+    ),
+) -> None:
+    """Show a saved profile's settings."""
+    values = load_profile(name)
+    if not values:
+        print(f"ERROR: no profile named '{name}'.", file=sys.stderr)
+        raise typer.Exit(code=1)
+    rows = [
+        (
+            key,
+            "********"
+            if key in PROFILE_SECRET_KEYS and value and not reveal
+            else value,
+        )
+        for key, value in values.items()
+    ]
+    print_table(["Key", "Value"], rows)
+
+
+@profile_app.command("create")
+def profile_create(
+    name: str = typer.Argument(..., help="Profile name"),
+    api_url: Optional[str] = typer.Option(None, "--api-url", help="Agnes API base URL"),
+    api_key: Optional[str] = typer.Option(None, "--api-key", help="Agnes API key"),
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Default serial port for this profile"
+    ),
+    baud: Optional[int] = typer.Option(
+        None, "--baud", "-b", help="Default baud rate for this profile"
+    ),
+    activate: bool = typer.Option(
+        True,
+        "--activate/--no-activate",
+        help="Make this the active profile (default: yes)",
+    ),
+) -> None:
+    """Create a new profile. Fails if one already exists with this name -
+    use 'profile edit' to change an existing one instead."""
+    if name in list_profiles():
+        print(
+            f"ERROR: profile '{name}' already exists. Use 'profile edit' to "
+            "change it.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    saved = save_profile(name, api_url=api_url, api_key=api_key, port=port, baud=baud)
+    if activate:
+        save_config(profile=name)
+    if saved:
+        print_table(["Key", "Value"], saved.items())
+    else:
+        print(f"Created empty profile '{name}'.")
+    suffix = " (active)" if activate else ""
+    print(f"\nSaved to {CONFIG_PATH.relative_to(ROOT)}{suffix}")
+
+
+@profile_app.command("edit")
+def profile_edit(
+    name: str = typer.Argument(..., help="Profile name"),
+    api_url: Optional[str] = typer.Option(None, "--api-url", help="Agnes API base URL"),
+    api_key: Optional[str] = typer.Option(None, "--api-key", help="Agnes API key"),
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Default serial port for this profile"
+    ),
+    baud: Optional[int] = typer.Option(
+        None, "--baud", "-b", help="Default baud rate for this profile"
+    ),
+) -> None:
+    """Update fields on an existing profile."""
+    if name not in list_profiles():
+        print(
+            f"ERROR: no profile named '{name}'. Use 'profile create' first.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    saved = save_profile(name, api_url=api_url, api_key=api_key, port=port, baud=baud)
+    if not saved:
+        print(
+            "Nothing to set. Pass --api-url/--api-key/--port/--baud.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    print_table(["Key", "Value"], saved.items())
+    print(f"\nSaved to {CONFIG_PATH.relative_to(ROOT)}")
+
+
+@profile_app.command("delete")
+def profile_delete(
+    name: str = typer.Argument(..., help="Profile name"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
+) -> None:
+    """Delete a saved profile. Does not remove its cached CA cert under
+    ~/.microweaver/<name>/ - re-run 'fetch-ca-cert' if you recreate it."""
+    if name not in list_profiles():
+        print(f"ERROR: no profile named '{name}'.", file=sys.stderr)
+        raise typer.Exit(code=1)
+    if not yes and not typer.confirm(f"Delete profile '{name}'?"):
+        raise typer.Exit(code=0)
+    delete_profile(name)
+    print(f"Deleted profile '{name}'.")
+
+
+@profile_app.command("use")
+def profile_use(
+    name: str = typer.Argument(..., help="Profile name to make active"),
+) -> None:
+    """Make a saved profile the active one - used by default in 'provision'
+    and 'fetch-ca-cert' when --profile isn't passed."""
+    if name not in list_profiles():
+        print(
+            f"ERROR: no profile named '{name}'. Use 'profile create' first.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    save_config(profile=name)
+    print(f"Active profile -> {name}")
 
 
 PROVISION_FIELDS = [
@@ -1176,21 +1388,32 @@ def _require_tty_for_missing(missing: list) -> None:
 
 def _resolve_provision_connection_args(port, baud, api_url, api_key, profile, ca_cert):
     """Resolve --port/--baud/--api-url/--api-key/--profile/--ca-cert against
-    .microweaver config, in CLI flag > .microweaver > hardcoded default order."""
+    a saved 'profile <name>' section and .microweaver's [default] section, in
+    CLI flag > profile > [default] > hardcoded default order."""
     config = load_config()
-    resolved_ca_cert = ca_cert or (
-        Path(config["ca_cert"]) if config.get("ca_cert") else None
-    )
     resolved_profile = profile or config.get("profile")
+    profile_values = load_profile(resolved_profile) if resolved_profile else {}
+
+    resolved_ca_cert = ca_cert or (
+        Path(profile_values["ca_cert"])
+        if profile_values.get("ca_cert")
+        else Path(config["ca_cert"])
+        if config.get("ca_cert")
+        else None
+    )
     if resolved_ca_cert is None and resolved_profile:
         profile_ca_cert = _profile_ca_cert_path(resolved_profile)
         if profile_ca_cert.exists():
             resolved_ca_cert = profile_ca_cert
     return {
-        "port": port or config.get("port"),
-        "baud": baud if baud is not None else int(config.get("baud", DEFAULT_BAUD)),
-        "api_url": api_url or config.get("api_url"),
-        "api_key": api_key or config.get("api_key"),
+        "port": port or profile_values.get("port") or config.get("port"),
+        "baud": (
+            baud
+            if baud is not None
+            else int(profile_values.get("baud", config.get("baud", DEFAULT_BAUD)))
+        ),
+        "api_url": api_url or profile_values.get("api_url") or config.get("api_url"),
+        "api_key": api_key or profile_values.get("api_key") or config.get("api_key"),
         "profile": resolved_profile,
         "ca_cert": resolved_ca_cert,
     }
@@ -1321,9 +1544,10 @@ def provision(
     profile: Optional[str] = typer.Option(
         None,
         "--profile",
-        help="Profile name to resolve the CA cert from "
-        "(~/.microweaver/<profile>/ca.pem, see 'fetch-ca-cert'). Ignored "
-        "if --ca-cert is also given.",
+        help="Saved profile name (see 'profile create'/'profile list') to "
+        "fill in --port/--baud/--api-url/--api-key/--ca-cert from. Defaults "
+        "to the active profile ('profile use'). Any of those flags given "
+        "explicitly wins over the profile's value.",
     ),
     name: Optional[str] = typer.Option(
         None, "--name", help="Device name to register with the Agnes API"
