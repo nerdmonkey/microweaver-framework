@@ -1225,20 +1225,42 @@ def profile_show(
     print_table(["Key", "Value"], rows)
 
 
-def _prompt_profile_fields(given: dict, header: str) -> None:
+def _prompt_profile_fields(given: dict, defaults: dict, header: str) -> None:
     """Fill any None values in `given` (api_url/api_key/port) in place by
-    prompting interactively. Blank input leaves that field unset/unchanged."""
+    prompting interactively, showing `defaults` (an existing profile's saved
+    values, or {} when creating) as the default for a blank Enter. api_key
+    is masked - like _prompt_missing_fields's secret handling - so an
+    existing secret is never echoed, not even as the prompt's own hint."""
     print(f"{header}\n")
+
     if given["api_url"] is None:
-        value = typer.prompt("Agnes API base URL", default="", show_default=False)
-        given["api_url"] = value or None
-    if given["api_key"] is None:
+        existing = defaults.get("api_url", "")
         value = typer.prompt(
-            "Agnes API key", default="", show_default=False, hide_input=True
+            "Agnes API base URL", default=existing, show_default=bool(existing)
         )
-        given["api_key"] = value or None
+        given["api_url"] = value or None
+
+    if given["api_key"] is None:
+        existing = defaults.get("api_key", "")
+        if existing:
+            typed = typer.prompt(
+                "Agnes API key [unchanged]",
+                default="",
+                show_default=False,
+                hide_input=True,
+            )
+            given["api_key"] = existing if typed == "" else typed
+        else:
+            value = typer.prompt(
+                "Agnes API key", default="", show_default=False, hide_input=True
+            )
+            given["api_key"] = value or None
+
     if given["port"] is None:
-        value = typer.prompt("Serial port", default="", show_default=False)
+        existing = defaults.get("port", "")
+        value = typer.prompt(
+            "Serial port", default=existing, show_default=bool(existing)
+        )
         given["port"] = value or None
 
 
@@ -1281,7 +1303,7 @@ def profile_create(
     if sys.stdin.isatty() and (api_url is None or api_key is None or port is None):
         given = {"api_url": api_url, "api_key": api_key, "port": port}
         _prompt_profile_fields(
-            given, "Creating profile. Press Enter to leave a field unset."
+            given, {}, "Creating profile. Press Enter to leave a field unset."
         )
         api_url, api_key, port = given["api_url"], given["api_key"], given["port"]
     saved = save_profile(name, api_url=api_url, api_key=api_key, port=port, baud=baud)
@@ -1326,7 +1348,9 @@ def profile_edit(
     if sys.stdin.isatty() and (api_url is None or api_key is None or port is None):
         given = {"api_url": api_url, "api_key": api_key, "port": port}
         _prompt_profile_fields(
-            given, "Editing profile. Press Enter to keep a field unchanged."
+            given,
+            load_profile(name),
+            "Editing profile. Press Enter to keep the current value.",
         )
         api_url, api_key, port = given["api_url"], given["api_key"], given["port"]
     saved = save_profile(name, api_url=api_url, api_key=api_key, port=port, baud=baud)

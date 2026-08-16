@@ -2078,14 +2078,18 @@ def test_profile_edit_no_name_not_tty():
 def test_profile_edit_interactive_prompts_for_name(mocker):
     tinker.save_profile("lab", api_url="https://lab.local")
     mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    # typer.prompt is mocked wholesale, so click's own default-substitution
+    # never runs - "https://lab.local" here simulates what a real user
+    # pressing Enter on that field would get back (the existing value shown
+    # as the prompt's default), not a literal blank.
     mocker.patch.object(
         tinker.typer,
         "prompt",
-        side_effect=["lab", "", "secret-key", ""],
+        side_effect=["lab", "https://lab.local", "secret-key", ""],
     )
     tinker.profile_edit(name=None, api_url=None, api_key=None, port=None, baud=None)
     saved = tinker.load_profile("lab")
-    assert saved["api_url"] == "https://lab.local"  # left blank, kept unchanged
+    assert saved["api_url"] == "https://lab.local"  # default re-affirmed, unchanged
     assert saved["api_key"] == "secret-key"
 
 
@@ -2094,6 +2098,22 @@ def test_profile_edit_interactive_blank_name_rejected(mocker):
     mocker.patch.object(tinker.typer, "prompt", side_effect=[""])
     with pytest.raises(typer.Exit):
         tinker.profile_edit(name=None, api_url=None, api_key=None, port=None, baud=None)
+
+
+def test_profile_edit_interactive_existing_secret_kept_when_blank(mocker):
+    tinker.save_profile("lab", api_key="old-secret")
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(tinker.typer, "prompt", side_effect=["", "", ""])
+    tinker.profile_edit(name="lab", api_url=None, api_key=None, port=None, baud=None)
+    assert tinker.load_profile("lab")["api_key"] == "old-secret"
+
+
+def test_profile_edit_interactive_existing_secret_replaced_when_typed(mocker):
+    tinker.save_profile("lab", api_key="old-secret")
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(tinker.typer, "prompt", side_effect=["", "new-secret", ""])
+    tinker.profile_edit(name="lab", api_url=None, api_key=None, port=None, baud=None)
+    assert tinker.load_profile("lab")["api_key"] == "new-secret"
 
 
 def test_profile_edit_interactive_fills_only_missing(mocker):
