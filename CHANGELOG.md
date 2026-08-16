@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   any `api_url` it ends up with (a fetch failure only warns, since the
   profile is already saved by that point - retry later with
   `fetch-ca-cert`).
+- `tinker.py provision`, when registering via the Agnes API
+  (`--api-url`/`--api-key`), now also saves the registration response's cert
+  bundle to `./certs/ca.pem`, `client.pem`, and `private.pem` (gitignored),
+  mirroring the Agnes project's own tinker.py cert layout - the API only
+  returns a device's certs once, at registration time, so this is the only
+  chance to keep a local copy of them.
 - `dht_topic_suffix`/`relay_topic_suffix`/`oled_topic_suffix`/
   `potentiometer_topic_suffix`/`rotary_angle_topic_suffix` config keys (each
   defaulting to a short device name, e.g. `dht`, `relay`) let each enabled

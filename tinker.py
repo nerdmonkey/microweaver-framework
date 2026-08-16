@@ -1577,6 +1577,23 @@ def _resolve_given_fields(cli_fields, api_result, resolved_api_url):
     return given
 
 
+def _write_provisioned_certs(certs_dir: Path, api_result: dict) -> dict[str, Path]:
+    """Save an API registration result's cert bundle to certs_dir as
+    ca.pem/client.pem/private.pem - the API only returns a device's certs
+    once, at registration time, so this is the only chance to keep a local
+    copy. Mirrors the Agnes project's own tinker.py cert-bundle layout."""
+    paths = {
+        "ca_cert": certs_dir / "ca.pem",
+        "client_cert": certs_dir / "client.pem",
+        "client_key": certs_dir / "private.pem",
+    }
+    certs_dir.mkdir(parents=True, exist_ok=True)
+    paths["ca_cert"].write_text(api_result["ca_cert"])
+    paths["client_cert"].write_text(api_result["certificate"])
+    paths["client_key"].write_text(api_result["private_key"])
+    return paths
+
+
 def _push_provisioned_config(resolved_port, config_path):
     """Push config_path to the device over raw REPL. Returns True if pushed,
     False if written locally only because no device was reachable on
@@ -1659,7 +1676,10 @@ def provision(
     are entered locally and pushed over the same serial connection used by
     deploy/backup. When --api-url/--api-key (or their .microweaver defaults)
     are set, device details and MQTT credentials come from the Agnes API
-    (POST /devices) instead of being typed in by hand.
+    (POST /devices) instead of being typed in by hand - registration also
+    saves that response's cert bundle to ./certs/ca.pem, client.pem, and
+    private.pem (mirroring the Agnes project's own tinker.py cert layout),
+    since the API only returns a device's certs once, at registration time.
     """
     resolved = _resolve_provision_connection_args(
         port, baud, api_url, api_key, profile, ca_cert
@@ -1715,6 +1735,8 @@ def provision(
         merged["device_id"] = api_result["device_id"]
         merged["device_cert"] = api_result["certificate"]
         merged["device_key"] = api_result["private_key"]
+        cert_paths = _write_provisioned_certs(ROOT / "certs", api_result)
+        print(f"Saved cert bundle -> {cert_paths['ca_cert'].parent}")
 
     try:
         Setting(config_path=str(config_path)).save(**merged)

@@ -1742,6 +1742,62 @@ def test_provision_masks_existing_secret_default(tmp_path, mocker):
     assert wifi_password_call.kwargs["show_default"] is False
 
 
+def test_provision_via_api_saves_cert_bundle(tmp_path, mocker):
+    # The Agnes API only returns a device's certs once, at registration
+    # time - 'provision' must save them to ./certs/ right then, since
+    # there's no later endpoint to re-fetch them from.
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    mocker.patch.object(
+        tinker,
+        "_provision_device_via_api",
+        return_value={
+            "device_id": "dev-123",
+            "username": "mqtt-user",
+            "password": "mqtt-pass",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+        },
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "provision",
+            "--port",
+            "/dev/ttyUSB0",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--name",
+            "test-device",
+            *PROVISION_FLAGS,
+        ],
+    )
+    assert result.exit_code == 0
+    certs_dir = tmp_path / "certs"
+    assert (certs_dir / "ca.pem").read_text() == "CA-PEM"
+    assert (certs_dir / "client.pem").read_text() == "CERT-PEM"
+    assert (certs_dir / "private.pem").read_text() == "KEY-PEM"
+    assert f"Saved cert bundle -> {certs_dir}" in result.stdout
+
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["device_cert"] == "CERT-PEM"
+    assert written["device_key"] == "KEY-PEM"
+
+
+def test_provision_without_api_key_skips_cert_bundle(tmp_path, mocker):
+    fake_transport = FakeDeviceTransport()
+    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+    result = runner.invoke(
+        tinker.app,
+        ["provision", "--port", "/dev/ttyUSB0", *PROVISION_FLAGS],
+    )
+    assert result.exit_code == 0
+    assert not (tmp_path / "certs").exists()
+
+
 def test_load_provision_defaults_prefers_existing_config(tmp_path):
     (tmp_path / "device_config.json.example").write_text(
         json.dumps({"mqtt_broker": "from-example"})
