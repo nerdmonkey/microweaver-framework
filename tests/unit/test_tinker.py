@@ -2421,14 +2421,13 @@ def test_fetch_ca_cert_api_error(mocker):
 # --------------------------------------------------------------------------
 
 
-def _fake_api_bundle(**overrides):
+def _fake_renew_bundle(**overrides):
     bundle = {
         "device_id": "dev-123",
-        "username": "mqtt-user",
-        "password": "mqtt-pass",
         "certificate": "CERT-PEM",
         "private_key": "KEY-PEM",
         "ca_cert": "CA-PEM",
+        "expires_at": "2027-01-01T00:00:00Z",
     }
     bundle.update(overrides)
     return bundle
@@ -2436,7 +2435,7 @@ def _fake_api_bundle(**overrides):
 
 def test_certs_download_saves_bundle(tmp_path, mocker):
     mocker.patch.object(
-        tinker, "_provision_device_via_api", return_value=_fake_api_bundle()
+        tinker, "_renew_device_cert_via_api", return_value=_fake_renew_bundle()
     )
     result = runner.invoke(
         tinker.app,
@@ -2447,8 +2446,8 @@ def test_certs_download_saves_bundle(tmp_path, mocker):
             "http://agnes.local",
             "--api-key",
             "test-key",
-            "--name",
-            "test-device",
+            "--device-id",
+            "dev-123",
         ],
     )
     assert result.exit_code == 0
@@ -2459,9 +2458,32 @@ def test_certs_download_saves_bundle(tmp_path, mocker):
     assert f"Saved cert bundle -> {certs_dir}" in result.stdout
 
 
+def test_certs_download_does_not_register_new_device(mocker):
+    # 'certs download' must never touch the register-a-new-device endpoint -
+    # it only renews an existing device's cert.
+    provision_mock = mocker.patch.object(tinker, "_provision_device_via_api")
+    mocker.patch.object(
+        tinker, "_renew_device_cert_via_api", return_value=_fake_renew_bundle()
+    )
+    runner.invoke(
+        tinker.app,
+        [
+            "certs",
+            "download",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--device-id",
+            "dev-123",
+        ],
+    )
+    provision_mock.assert_not_called()
+
+
 def test_certs_download_custom_out_dir(tmp_path, mocker):
     mocker.patch.object(
-        tinker, "_provision_device_via_api", return_value=_fake_api_bundle()
+        tinker, "_renew_device_cert_via_api", return_value=_fake_renew_bundle()
     )
     out_dir = tmp_path / "elsewhere"
     result = runner.invoke(
@@ -2473,8 +2495,8 @@ def test_certs_download_custom_out_dir(tmp_path, mocker):
             "http://agnes.local",
             "--api-key",
             "test-key",
-            "--name",
-            "test-device",
+            "--device-id",
+            "dev-123",
             "--out-dir",
             str(out_dir),
         ],
@@ -2487,22 +2509,31 @@ def test_certs_download_uses_active_profile(tmp_path, mocker):
     tinker.save_profile("lab", api_url="http://agnes.local", api_key="profile-key")
     tinker.save_config(profile="lab")
     mock_api = mocker.patch.object(
-        tinker, "_provision_device_via_api", return_value=_fake_api_bundle()
+        tinker, "_renew_device_cert_via_api", return_value=_fake_renew_bundle()
     )
-    result = runner.invoke(tinker.app, ["certs", "download", "--name", "test-device"])
+    result = runner.invoke(tinker.app, ["certs", "download", "--device-id", "dev-123"])
     assert result.exit_code == 0
     mock_api.assert_called_once_with(
-        "http://agnes.local", "profile-key", None, "test-device"
+        "http://agnes.local", "profile-key", None, "dev-123"
     )
 
 
 def test_certs_download_missing_api_key_errors():
     result = runner.invoke(
         tinker.app,
-        ["certs", "download", "--api-url", "http://agnes.local", "--name", "d"],
+        ["certs", "download", "--api-url", "http://agnes.local", "--device-id", "d"],
     )
     assert result.exit_code == 1
     assert "--api-key required" in result.stderr
+
+
+def test_certs_download_missing_api_url_errors():
+    result = runner.invoke(
+        tinker.app,
+        ["certs", "download", "--api-key", "test-key", "--device-id", "d"],
+    )
+    assert result.exit_code == 1
+    assert "--api-url required" in result.stderr
 
 
 def test_certs_download_https_without_ca_cert_errors():
@@ -2515,7 +2546,7 @@ def test_certs_download_https_without_ca_cert_errors():
             "https://agnes.local",
             "--api-key",
             "test-key",
-            "--name",
+            "--device-id",
             "d",
         ],
     )
@@ -2523,20 +2554,37 @@ def test_certs_download_https_without_ca_cert_errors():
     assert "--ca-cert is required" in result.stderr
 
 
-def test_certs_download_no_tty_missing_name_errors():
+def test_certs_download_no_tty_missing_device_id_errors():
     result = runner.invoke(
         tinker.app,
         ["certs", "download", "--api-url", "http://agnes.local", "--api-key", "k"],
     )
     assert result.exit_code == 1
-    assert "no TTY to prompt for: --name" in result.stderr
+    assert "no TTY to prompt for: --device-id" in result.stderr
 
 
-def test_certs_download_registration_api_error(mocker):
+def test_certs_download_interactive_prompts_for_device_id(mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(tinker.typer, "prompt", return_value="dev-123")
+    mock_api = mocker.patch.object(
+        tinker, "_renew_device_cert_via_api", return_value=_fake_renew_bundle()
+    )
+    tinker.certs_download(
+        device_id=None,
+        api_url="http://agnes.local",
+        api_key="test-key",
+        ca_cert=None,
+        profile=None,
+        out_dir=None,
+    )
+    mock_api.assert_called_once_with("http://agnes.local", "test-key", None, "dev-123")
+
+
+def test_certs_download_renewal_api_error(mocker):
     mocker.patch.object(
         tinker,
-        "_provision_device_via_api",
-        side_effect=tinker.ProvisionApiError("device already exists"),
+        "_renew_device_cert_via_api",
+        side_effect=tinker.ProvisionApiError("device not found"),
     )
     result = runner.invoke(
         tinker.app,
@@ -2547,12 +2595,12 @@ def test_certs_download_registration_api_error(mocker):
             "http://agnes.local",
             "--api-key",
             "test-key",
-            "--name",
-            "test-device",
+            "--device-id",
+            "dev-123",
         ],
     )
     assert result.exit_code == 1
-    assert "device already exists" in result.stderr
+    assert "device not found" in result.stderr
 
 
 # --------------------------------------------------------------------------

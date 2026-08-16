@@ -1065,16 +1065,16 @@ class ProvisionApiError(Exception):
     """Raised when the Agnes API rejects or fails a device-provision request."""
 
 
-def _provision_device_via_api(
-    api_url: str, api_key: str, ca_cert: Optional[Path], name: str
+def _post_agnes_api(
+    url: str, api_key: str, ca_cert: Optional[Path], body: dict
 ) -> dict:
-    """POST {api_url}/devices to register a managed device with Agnes and
-    return its one-time MQTT credentials + cert bundle (DeviceProvisionResponse:
-    device_id, username, password, certificate, private_key, ca_cert, ...)."""
-    url = f"{api_url.rstrip('/')}/devices"
+    """POST body as JSON to url with the Agnes X-API-Key header and return
+    the decoded JSON response. url is operator-supplied (--api-url/
+    .microweaver config), not untrusted input; https gets a verified ssl
+    context."""
     request = urllib.request.Request(
         url,
-        data=json.dumps({"name": name}).encode(),
+        data=json.dumps(body).encode(),
         method="POST",
         headers={"Content-Type": "application/json", API_KEY_HEADER: api_key},
     )
@@ -1082,8 +1082,6 @@ def _provision_device_via_api(
     if urlparse(url).scheme == "https":
         context = ssl.create_default_context(cafile=str(ca_cert) if ca_cert else None)
     try:
-        # url is operator-supplied (--api-url/.microweaver config), not
-        # untrusted input; https gets a verified ssl context above.
         with urllib.request.urlopen(  # nosec B310
             request, context=context, timeout=30
         ) as resp:
@@ -1097,6 +1095,33 @@ def _provision_device_via_api(
         raise ProvisionApiError(f"{exc.code} {exc.reason}: {detail}") from exc
     except urllib.error.URLError as exc:
         raise ProvisionApiError(str(exc.reason)) from exc
+
+
+def _provision_device_via_api(
+    api_url: str, api_key: str, ca_cert: Optional[Path], name: str
+) -> dict:
+    """POST {api_url}/devices to register a managed device with Agnes and
+    return its one-time MQTT credentials + cert bundle (DeviceProvisionResponse:
+    device_id, username, password, certificate, private_key, ca_cert, ...)."""
+    return _post_agnes_api(
+        f"{api_url.rstrip('/')}/devices", api_key, ca_cert, {"name": name}
+    )
+
+
+def _renew_device_cert_via_api(
+    api_url: str, api_key: str, ca_cert: Optional[Path], device_id: str
+) -> dict:
+    """POST {api_url}/devices/{device_id}/renew-cert to issue a fresh cert
+    bundle for an already-registered device (CertRenewResponse: device_id,
+    certificate, private_key, ca_cert, expires_at) - revokes that device's
+    previously active certificate. Unlike _provision_device_via_api, this
+    doesn't create a new device identity."""
+    return _post_agnes_api(
+        f"{api_url.rstrip('/')}/devices/{device_id}/renew-cert",
+        api_key,
+        ca_cert,
+        {"validity_days": 365},
+    )
 
 
 HOME_CONFIG_DIR = Path.home() / ".microweaver"
@@ -1522,6 +1547,15 @@ def _resolve_provision_connection_args(port, baud, api_url, api_key, profile, ca
     }
 
 
+def _require_ca_cert_for_https(api_url: str, ca_cert: Optional[Path]) -> None:
+    if urlparse(api_url).scheme == "https" and not ca_cert:
+        print(
+            "ERROR: --ca-cert is required to verify a https --api-url.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+
 def _maybe_register_via_api(name, resolved_api_url, resolved_api_key, resolved_ca_cert):
     """Register the device with the Agnes API when --api-key was given,
     prompting for --name if needed. Returns the API result dict, or None if
@@ -1535,12 +1569,7 @@ def _maybe_register_via_api(name, resolved_api_url, resolved_api_key, resolved_c
             file=sys.stderr,
         )
         raise typer.Exit(code=1)
-    if urlparse(resolved_api_url).scheme == "https" and not resolved_ca_cert:
-        print(
-            "ERROR: --ca-cert is required to verify a https --api-url.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
+    _require_ca_cert_for_https(resolved_api_url, resolved_ca_cert)
 
     resolved_name = name
     if resolved_name is None:
@@ -1769,8 +1798,11 @@ def provision(
 
 @certs_app.command("download")
 def certs_download(
-    name: Optional[str] = typer.Option(
-        None, "--name", help="Device name to register with the Agnes API"
+    device_id: Optional[str] = typer.Option(
+        None,
+        "--device-id",
+        help="Existing device's ID (see 'devices list' on the Agnes side) "
+        "to renew and download certs for",
     ),
     api_url: Optional[str] = typer.Option(
         None,
@@ -1803,30 +1835,54 @@ def certs_download(
         "(default: ./certs)",
     ),
 ) -> None:
-    """Register a device with the Agnes API and save its cert bundle to
-    --out-dir, without provisioning a device over serial.
+    """Renew an existing device's cert and save the resulting bundle to
+    --out-dir. Prompts for --device-id if omitted and running interactively.
 
-    This is 'provision's --api-url/--api-key registration step and cert
-    save, standalone - for when you just want a device's certs (e.g. to
-    inspect them, or to flash a device by some other means) without also
-    pushing a device_config.json anywhere. The API only returns a device's
-    certs once, at registration time, so each run mints a new device
-    identity - it isn't a way to re-fetch a previously issued bundle.
+    Calls POST /devices/{device_id}/renew-cert - this issues a fresh
+    certificate for that device and revokes its previously active one, it
+    does not create a new device (see 'provision --api-url' for that). The
+    device's old certificate stops working immediately, so push the new
+    bundle to it (or re-run 'provision'/'deploy') soon after.
     """
     resolved = _resolve_provision_connection_args(
         None, None, api_url, api_key, profile, ca_cert
     )
-    if not resolved["api_key"]:
+    resolved_api_url = resolved["api_url"]
+    resolved_api_key = resolved["api_key"]
+    resolved_ca_cert = resolved["ca_cert"]
+
+    if not resolved_api_key:
         print(
             "ERROR: --api-key required (none saved for this profile or in "
             ".microweaver).",
             file=sys.stderr,
         )
         raise typer.Exit(code=1)
+    if not resolved_api_url:
+        print(
+            "ERROR: --api-url required (none saved for this profile or in "
+            ".microweaver).",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    _require_ca_cert_for_https(resolved_api_url, resolved_ca_cert)
 
-    api_result = _maybe_register_via_api(
-        name, resolved["api_url"], resolved["api_key"], resolved["ca_cert"]
-    )
+    resolved_device_id = device_id
+    if resolved_device_id is None:
+        if not sys.stdin.isatty():
+            print("ERROR: no TTY to prompt for: --device-id.", file=sys.stderr)
+            raise typer.Exit(code=1)
+        resolved_device_id = typer.prompt("Device ID")
+
+    print(f"Renewing cert for device '{resolved_device_id}' via {resolved_api_url}...")
+    try:
+        api_result = _renew_device_cert_via_api(
+            resolved_api_url, resolved_api_key, resolved_ca_cert, resolved_device_id
+        )
+    except ProvisionApiError as exc:
+        print(f"ERROR: cert renewal failed: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
     cert_paths = _write_provisioned_certs(out_dir or (ROOT / "certs"), api_result)
     print(f"Saved cert bundle -> {cert_paths['ca_cert'].parent}")
 
