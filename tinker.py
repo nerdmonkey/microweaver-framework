@@ -1717,39 +1717,8 @@ def _write_provisioned_certs(certs_dir: Path, api_result: dict) -> dict[str, Pat
     return paths
 
 
-def _push_provisioned_config(resolved_port, config_path):
-    """Push config_path to the device over raw REPL. Returns True if pushed,
-    False if written locally only because no device was reachable on
-    resolved_port. Exits the CLI on any other raw-REPL/exec failure."""
-    try:
-        with _raw_repl_session(
-            resolved_port, "provision", exit_on_missing_port=False
-        ) as transport:
-            transport.put_file(config_path, ":device_config.json")
-        return True
-    except DevicePortUnavailable:
-        print(
-            f"NOTE: serial port '{resolved_port}' could not be opened - "
-            f"{config_path.name} was written locally but not pushed to a "
-            "device. Connect the device and rerun 'tinker.py deploy' (or "
-            "provision again) to push it.",
-            file=sys.stderr,
-        )
-        return False
-    except RawReplEntryError as exc:
-        _print_raw_repl_failure(resolved_port)
-        raise typer.Exit(code=1) from exc
-    except DeviceExecError as exc:
-        print(f"ERROR: {exc.stderr}", file=sys.stderr)
-        raise typer.Exit(code=1) from exc
-
-
 @app.command()
 def provision(
-    port: Optional[str] = typer.Option(
-        None, "--port", "-p", help="Serial port of device (see 'tinker.py port')"
-    ),
-    baud: Optional[int] = typer.Option(None, "--baud", "-b", help="Baud rate"),
     wifi_ssid: Optional[str] = typer.Option(None, help="WiFi SSID"),
     wifi_password: Optional[str] = typer.Option(None, help="WiFi password"),
     mqtt_broker: Optional[str] = typer.Option(None, help="MQTT broker host"),
@@ -1803,44 +1772,33 @@ def provision(
         "registering/renewing via the API.",
     ),
 ) -> None:
-    """Prompt for WiFi/MQTT settings and push a generated device_config.json.
+    """Prompt for WiFi/MQTT settings and write device_config.json.
 
-    Bench/headless alternative to the SoftAP captive-portal setup flow: no
-    phone or laptop needs to join the device's access point, since settings
-    are entered locally and pushed over the same serial connection used by
-    deploy/backup. When --api-url/--api-key (or their .microweaver defaults)
-    are set and --name is omitted on a TTY, existing devices are listed
-    (Azure-CLI-picker style, see 'certs download') so you can either pick
-    one to renew its cert, or choose to register a brand new device -
-    device details and MQTT credentials then come from the Agnes API
-    instead of being typed in by hand. Either way the response's cert
-    bundle is also saved to ./certs/ca.pem, client.pem, and private.pem
-    (mirroring the Agnes project's own tinker.py cert layout) unless
-    --skip-certs is given, since the API only returns a device's certs
-    once, at registration/renewal time.
+    Fills in the settings a device needs to connect to WiFi/MQTT, purely on
+    the host - it doesn't touch a serial port. Run 'build' then 'deploy' (or
+    'watch') afterward to actually push it to a device; provisioning and
+    deploying are separate steps; this used to also push over serial, but
+    that duplicated 'deploy' and only added a second, provision-specific
+    raw-REPL failure mode for no benefit.
+
+    When --api-url/--api-key (or their .microweaver defaults) are set and
+    --name is omitted on a TTY, existing devices are listed (Azure-CLI-
+    picker style, see 'certs download') so you can either pick one to renew
+    its cert, or choose to register a brand new device - device details and
+    MQTT credentials then come from the Agnes API instead of being typed in
+    by hand. Either way the response's cert bundle is also saved to
+    ./certs/ca.pem, client.pem, and private.pem (mirroring the Agnes
+    project's own tinker.py cert layout) unless --skip-certs is given,
+    since the API only returns a device's certs once, at registration/
+    renewal time.
     """
     resolved = _resolve_provision_connection_args(
-        port, baud, api_url, api_key, profile, ca_cert
+        None, None, api_url, api_key, profile, ca_cert
     )
-    resolved_port = resolved["port"]
-    resolved_baud = resolved["baud"]
     resolved_api_url = resolved["api_url"]
     resolved_api_key = resolved["api_key"]
     resolved_profile = resolved["profile"]
     resolved_ca_cert = resolved["ca_cert"]
-
-    if resolved_port is None:
-        resolved_port = prompt_for_port()
-        port = resolved_port
-
-    # DeviceTransport always runs at 115200 baud; --baud is accepted for
-    # interface/config-file compatibility but has no effect on the transfer.
-    if resolved_baud != 115200:
-        print(
-            f"NOTE: provision ignores --baud (requested {resolved_baud}), "
-            "connection always runs at 115200.",
-            file=sys.stderr,
-        )
 
     mqtt_api_result, cert_bundle = _maybe_register_or_renew_via_api(
         name, resolved_api_url, resolved_api_key, resolved_ca_cert
@@ -1883,23 +1841,16 @@ def provision(
         print(f"ERROR: {exc}", file=sys.stderr)
         raise typer.Exit(code=1)
 
-    device_pushed = _push_provisioned_config(resolved_port, config_path)
-
     save_config(
-        port=port,
-        baud=baud,
         api_url=resolved_api_url if cert_bundle is not None else None,
         api_key=resolved_api_key if cert_bundle is not None else None,
         ca_cert=resolved_ca_cert if cert_bundle is not None else None,
         profile=resolved_profile if cert_bundle is not None else None,
     )
-    if device_pushed:
-        print(f"\nProvisioned {resolved_port} with {config_path.name}")
-    else:
-        print(
-            f"\nWrote {config_path.name} locally "
-            f"(not pushed - no device on {resolved_port})"
-        )
+    print(
+        f"\nWrote {config_path.name}. Run 'tinker.py build && tinker.py deploy' "
+        "to push it to a device."
+    )
 
 
 def _prompt_device_selection(
@@ -2632,28 +2583,12 @@ def _enter_raw_repl_with_retries(
     raise last_error
 
 
-class DevicePortUnavailable(Exception):
-    """Raised by _raw_repl_session (when exit_on_missing_port=False) instead
-    of exiting the process, so a caller can treat 'no device connected' as a
-    non-fatal, skippable condition rather than a hard failure."""
-
-
 @contextmanager
-def _raw_repl_session(
-    resolved_port: str, command_label: str, exit_on_missing_port: bool = True
-):
-    """Yield a DeviceTransport already in raw REPL; always exits+closes after.
-
-    exit_on_missing_port=False turns a closed/missing serial port into
-    DevicePortUnavailable instead of typer.Exit, for callers where talking to
-    a physical device is optional (e.g. 'provision' already did useful work -
-    API registration, local device_config.json - before reaching this step).
-    """
+def _raw_repl_session(resolved_port: str, command_label: str):
+    """Yield a DeviceTransport already in raw REPL; always exits+closes after."""
     try:
         transport = _enter_raw_repl_with_retries(resolved_port, command_label)
     except SerialException as exc:
-        if not exit_on_missing_port:
-            raise DevicePortUnavailable(str(exc)) from exc
         typer.secho(
             f"ERROR: Serial port '{resolved_port}' could not be opened.",
             fg=typer.colors.RED,

@@ -12,10 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `use`) for managing named Agnes API connection profiles (`api_url`,
   `api_key`, `port`, `baud`) saved in `.microweaver`, instead of `--profile`
   only being usable as a bare name for CA-cert lookup. `provision` and
-  `fetch-ca-cert` now resolve `--port`/`--baud`/`--api-url`/`--api-key`/
-  `--ca-cert` from the named (or active) profile when not passed explicitly,
-  in CLI flag > profile > `.microweaver` `[default]` > hardcoded default
-  order. `fetch-ca-cert` now also saves the resolved `api_url` into the
+  `fetch-ca-cert` now resolve `--api-url`/`--api-key`/`--ca-cert` from the
+  named (or active) profile when not passed explicitly, in CLI flag >
+  profile > `.microweaver` `[default]` > hardcoded default order.
+  `fetch-ca-cert` now also saves the resolved `api_url` into the
   profile it fetches for. `profile create` also interactively prompts for
   name/`api_url`/`api_key`/`port` when omitted on a TTY (edit shows existing
   values as defaults), and automatically fetches and saves the CA cert for
@@ -93,6 +93,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `read_u16()`) and report position as a 0–100 percentage.
 
 ### Changed
+- `tinker.py provision` no longer pushes `device_config.json` to a device
+  over serial (and no longer takes `--port`/`--baud`) - it now only writes
+  `device_config.json` (and, via the Agnes API, `./certs/`) on the host.
+  Provisioning and deploying were doing the same upload with a second,
+  provision-specific raw-REPL failure mode for no benefit; run `build` then
+  `deploy` (or `watch`) to push the result to a device, same as any other
+  code change.
 - `mqtt_topic_pub` now accepts one or more topics (comma-separated string or
   JSON array), matching `mqtt_topic_sub`'s existing list support, instead of
   a single fixed publish topic shared unconditionally by every sensor.
