@@ -74,6 +74,10 @@ profile_app = typer.Typer(
     help="Create, list, and switch between saved Agnes API connection profiles.",
 )
 app.add_typer(profile_app, name="profile")
+certs_app = typer.Typer(
+    no_args_is_help=True, help="Fetch a device's cert bundle from the Agnes API."
+)
+app.add_typer(certs_app, name="certs")
 fleet_app = typer.Typer(no_args_is_help=True, help="Push a build to multiple devices.")
 app.add_typer(fleet_app, name="fleet")
 ota_app = typer.Typer(
@@ -1761,6 +1765,70 @@ def provision(
             f"\nWrote {config_path.name} locally "
             f"(not pushed - no device on {resolved_port})"
         )
+
+
+@certs_app.command("download")
+def certs_download(
+    name: Optional[str] = typer.Option(
+        None, "--name", help="Device name to register with the Agnes API"
+    ),
+    api_url: Optional[str] = typer.Option(
+        None,
+        "--api-url",
+        help="Agnes API base URL (default: resolved from --profile/.microweaver)",
+    ),
+    api_key: Optional[str] = typer.Option(
+        None,
+        "--api-key",
+        help="Agnes X-API-Key with devices:write scope (default: resolved "
+        "from --profile/.microweaver)",
+    ),
+    ca_cert: Optional[Path] = typer.Option(
+        None,
+        "--ca-cert",
+        help="CA cert to verify --api-url's TLS. Required when --api-url is "
+        "https, unless --profile resolves one via 'fetch-ca-cert'.",
+    ),
+    profile: Optional[str] = typer.Option(
+        None,
+        "--profile",
+        help="Saved profile name (see 'profile create'/'profile list') to "
+        "resolve --api-url/--api-key/--ca-cert from. Defaults to the active "
+        "profile ('profile use').",
+    ),
+    out_dir: Optional[Path] = typer.Option(
+        None,
+        "--out-dir",
+        help="Directory to save ca.pem/client.pem/private.pem into "
+        "(default: ./certs)",
+    ),
+) -> None:
+    """Register a device with the Agnes API and save its cert bundle to
+    --out-dir, without provisioning a device over serial.
+
+    This is 'provision's --api-url/--api-key registration step and cert
+    save, standalone - for when you just want a device's certs (e.g. to
+    inspect them, or to flash a device by some other means) without also
+    pushing a device_config.json anywhere. The API only returns a device's
+    certs once, at registration time, so each run mints a new device
+    identity - it isn't a way to re-fetch a previously issued bundle.
+    """
+    resolved = _resolve_provision_connection_args(
+        None, None, api_url, api_key, profile, ca_cert
+    )
+    if not resolved["api_key"]:
+        print(
+            "ERROR: --api-key required (none saved for this profile or in "
+            ".microweaver).",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    api_result = _maybe_register_via_api(
+        name, resolved["api_url"], resolved["api_key"], resolved["ca_cert"]
+    )
+    cert_paths = _write_provisioned_certs(out_dir or (ROOT / "certs"), api_result)
+    print(f"Saved cert bundle -> {cert_paths['ca_cert'].parent}")
 
 
 # Mirrors main.py's publish-adapter wiring (enabled-flag attr -> topic-suffix

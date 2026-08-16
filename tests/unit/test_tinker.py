@@ -2417,6 +2417,145 @@ def test_fetch_ca_cert_api_error(mocker):
 
 
 # --------------------------------------------------------------------------
+# certs download
+# --------------------------------------------------------------------------
+
+
+def _fake_api_bundle(**overrides):
+    bundle = {
+        "device_id": "dev-123",
+        "username": "mqtt-user",
+        "password": "mqtt-pass",
+        "certificate": "CERT-PEM",
+        "private_key": "KEY-PEM",
+        "ca_cert": "CA-PEM",
+    }
+    bundle.update(overrides)
+    return bundle
+
+
+def test_certs_download_saves_bundle(tmp_path, mocker):
+    mocker.patch.object(
+        tinker, "_provision_device_via_api", return_value=_fake_api_bundle()
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "certs",
+            "download",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--name",
+            "test-device",
+        ],
+    )
+    assert result.exit_code == 0
+    certs_dir = tmp_path / "certs"
+    assert (certs_dir / "ca.pem").read_text() == "CA-PEM"
+    assert (certs_dir / "client.pem").read_text() == "CERT-PEM"
+    assert (certs_dir / "private.pem").read_text() == "KEY-PEM"
+    assert f"Saved cert bundle -> {certs_dir}" in result.stdout
+
+
+def test_certs_download_custom_out_dir(tmp_path, mocker):
+    mocker.patch.object(
+        tinker, "_provision_device_via_api", return_value=_fake_api_bundle()
+    )
+    out_dir = tmp_path / "elsewhere"
+    result = runner.invoke(
+        tinker.app,
+        [
+            "certs",
+            "download",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--name",
+            "test-device",
+            "--out-dir",
+            str(out_dir),
+        ],
+    )
+    assert result.exit_code == 0
+    assert (out_dir / "ca.pem").read_text() == "CA-PEM"
+
+
+def test_certs_download_uses_active_profile(tmp_path, mocker):
+    tinker.save_profile("lab", api_url="http://agnes.local", api_key="profile-key")
+    tinker.save_config(profile="lab")
+    mock_api = mocker.patch.object(
+        tinker, "_provision_device_via_api", return_value=_fake_api_bundle()
+    )
+    result = runner.invoke(tinker.app, ["certs", "download", "--name", "test-device"])
+    assert result.exit_code == 0
+    mock_api.assert_called_once_with(
+        "http://agnes.local", "profile-key", None, "test-device"
+    )
+
+
+def test_certs_download_missing_api_key_errors():
+    result = runner.invoke(
+        tinker.app,
+        ["certs", "download", "--api-url", "http://agnes.local", "--name", "d"],
+    )
+    assert result.exit_code == 1
+    assert "--api-key required" in result.stderr
+
+
+def test_certs_download_https_without_ca_cert_errors():
+    result = runner.invoke(
+        tinker.app,
+        [
+            "certs",
+            "download",
+            "--api-url",
+            "https://agnes.local",
+            "--api-key",
+            "test-key",
+            "--name",
+            "d",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "--ca-cert is required" in result.stderr
+
+
+def test_certs_download_no_tty_missing_name_errors():
+    result = runner.invoke(
+        tinker.app,
+        ["certs", "download", "--api-url", "http://agnes.local", "--api-key", "k"],
+    )
+    assert result.exit_code == 1
+    assert "no TTY to prompt for: --name" in result.stderr
+
+
+def test_certs_download_registration_api_error(mocker):
+    mocker.patch.object(
+        tinker,
+        "_provision_device_via_api",
+        side_effect=tinker.ProvisionApiError("device already exists"),
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "certs",
+            "download",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--name",
+            "test-device",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "device already exists" in result.stderr
+
+
+# --------------------------------------------------------------------------
 # device reset / info / ls / tree
 # --------------------------------------------------------------------------
 
