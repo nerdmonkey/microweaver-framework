@@ -28,11 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mirroring the Agnes project's own tinker.py cert layout - the API only
   returns a device's certs once, at registration time, so this is the only
   chance to keep a local copy of them.
-- `tinker.py certs download` command: prompts for (or takes `--device-id`
-  of) an *existing* device, calls `POST /devices/{device_id}/renew-cert` on
-  the Agnes API (`--api-url`/`--api-key`, or a saved `--profile`), and saves
-  the resulting cert bundle to `./certs/` (or `--out-dir`) - reissues that
-  device's certs without registering a new device or touching serial.
+- `tinker.py certs download` command: takes an *existing* device's
+  `--device-id`, calls `POST /devices/{device_id}/renew-cert` on the Agnes
+  API (`--api-url`/`--api-key`, or a saved `--profile`), and saves the
+  resulting cert bundle to `./certs/` (or `--out-dir`) - reissues that
+  device's certs without registering a new device or touching serial. When
+  `--device-id` is omitted on a TTY, lists devices from the API
+  (`GET /devices`) and prompts for one by number, Azure-CLI-picker style,
+  instead of requiring the ID to already be known.
 - `dht_topic_suffix`/`relay_topic_suffix`/`oled_topic_suffix`/
   `potentiometer_topic_suffix`/`rotary_angle_topic_suffix` config keys (each
   defaulting to a short device name, e.g. `dht`, `relay`) let each enabled

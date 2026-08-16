@@ -2563,10 +2563,30 @@ def test_certs_download_no_tty_missing_device_id_errors():
     assert "no TTY to prompt for: --device-id" in result.stderr
 
 
-def test_certs_download_interactive_prompts_for_device_id(mocker):
+def _fake_device_list():
+    return [
+        {
+            "id": "dev-1",
+            "name": "kitchen-sensor",
+            "is_online": True,
+            "last_seen_at": "2026-08-16T00:00:00Z",
+        },
+        {
+            "id": "dev-2",
+            "name": "garage-relay",
+            "is_online": False,
+            "last_seen_at": None,
+        },
+    ]
+
+
+def test_certs_download_interactive_lists_and_prompts_for_device(mocker):
     mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
-    mocker.patch.object(tinker.typer, "prompt", return_value="dev-123")
-    mock_api = mocker.patch.object(
+    mocker.patch.object(
+        tinker, "_list_devices_via_api", return_value=_fake_device_list()
+    )
+    mocker.patch.object(tinker.typer, "prompt", return_value="2")
+    mock_renew = mocker.patch.object(
         tinker, "_renew_device_cert_via_api", return_value=_fake_renew_bundle()
     )
     tinker.certs_download(
@@ -2577,7 +2597,81 @@ def test_certs_download_interactive_prompts_for_device_id(mocker):
         profile=None,
         out_dir=None,
     )
-    mock_api.assert_called_once_with("http://agnes.local", "test-key", None, "dev-123")
+    # Picked #2 - garage-relay/dev-2, not the first device in the list.
+    mock_renew.assert_called_once_with("http://agnes.local", "test-key", None, "dev-2")
+
+
+def test_certs_download_given_device_id_skips_listing(mocker):
+    list_mock = mocker.patch.object(tinker, "_list_devices_via_api")
+    mocker.patch.object(
+        tinker, "_renew_device_cert_via_api", return_value=_fake_renew_bundle()
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "certs",
+            "download",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--device-id",
+            "dev-1",
+        ],
+    )
+    assert result.exit_code == 0
+    list_mock.assert_not_called()
+
+
+def test_certs_download_no_devices_found_errors(mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(tinker, "_list_devices_via_api", return_value=[])
+    with pytest.raises(typer.Exit):
+        tinker.certs_download(
+            device_id=None,
+            api_url="http://agnes.local",
+            api_key="test-key",
+            ca_cert=None,
+            profile=None,
+            out_dir=None,
+        )
+
+
+def test_certs_download_list_devices_api_error(mocker, capsys):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker,
+        "_list_devices_via_api",
+        side_effect=tinker.ProvisionApiError("unauthorized"),
+    )
+    with pytest.raises(typer.Exit):
+        tinker.certs_download(
+            device_id=None,
+            api_url="http://agnes.local",
+            api_key="test-key",
+            ca_cert=None,
+            profile=None,
+            out_dir=None,
+        )
+    assert "could not list devices: unauthorized" in capsys.readouterr().err
+
+
+def test_prompt_device_selection_valid_choice(mocker):
+    mocker.patch.object(tinker.typer, "prompt", return_value="2")
+    assert tinker._prompt_device_selection(_fake_device_list()) == "dev-2"
+
+
+def test_prompt_device_selection_invalid_choice_rejected(mocker, capsys):
+    mocker.patch.object(tinker.typer, "prompt", return_value="99")
+    with pytest.raises(typer.Exit):
+        tinker._prompt_device_selection(_fake_device_list())
+    assert "not a valid selection" in capsys.readouterr().err
+
+
+def test_prompt_device_selection_non_numeric_rejected(mocker):
+    mocker.patch.object(tinker.typer, "prompt", return_value="not-a-number")
+    with pytest.raises(typer.Exit):
+        tinker._prompt_device_selection(_fake_device_list())
 
 
 def test_certs_download_renewal_api_error(mocker):

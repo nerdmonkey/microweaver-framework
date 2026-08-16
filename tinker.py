@@ -1065,21 +1065,15 @@ class ProvisionApiError(Exception):
     """Raised when the Agnes API rejects or fails a device-provision request."""
 
 
-def _post_agnes_api(
-    url: str, api_key: str, ca_cert: Optional[Path], body: dict
+def _agnes_api_request(
+    request: urllib.request.Request, ca_cert: Optional[Path]
 ) -> dict:
-    """POST body as JSON to url with the Agnes X-API-Key header and return
-    the decoded JSON response. url is operator-supplied (--api-url/
-    .microweaver config), not untrusted input; https gets a verified ssl
-    context."""
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode(),
-        method="POST",
-        headers={"Content-Type": "application/json", API_KEY_HEADER: api_key},
-    )
+    """Run an already-built Agnes API request and return its decoded JSON
+    response, wrapping any HTTP/URL failure as ProvisionApiError. request's
+    url is operator-supplied (--api-url/.microweaver config), not untrusted
+    input; https gets a verified ssl context."""
     context = None
-    if urlparse(url).scheme == "https":
+    if urlparse(request.full_url).scheme == "https":
         context = ssl.create_default_context(cafile=str(ca_cert) if ca_cert else None)
     try:
         with urllib.request.urlopen(  # nosec B310
@@ -1097,6 +1091,29 @@ def _post_agnes_api(
         raise ProvisionApiError(str(exc.reason)) from exc
 
 
+def _post_agnes_api(
+    url: str, api_key: str, ca_cert: Optional[Path], body: dict
+) -> dict:
+    """POST body as JSON to url with the Agnes X-API-Key header and return
+    the decoded JSON response."""
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json", API_KEY_HEADER: api_key},
+    )
+    return _agnes_api_request(request, ca_cert)
+
+
+def _get_agnes_api(url: str, api_key: str, ca_cert: Optional[Path]) -> dict:
+    """GET url with the Agnes X-API-Key header and return the decoded JSON
+    response."""
+    request = urllib.request.Request(
+        url, method="GET", headers={API_KEY_HEADER: api_key}
+    )
+    return _agnes_api_request(request, ca_cert)
+
+
 def _provision_device_via_api(
     api_url: str, api_key: str, ca_cert: Optional[Path], name: str
 ) -> dict:
@@ -1106,6 +1123,15 @@ def _provision_device_via_api(
     return _post_agnes_api(
         f"{api_url.rstrip('/')}/devices", api_key, ca_cert, {"name": name}
     )
+
+
+def _list_devices_via_api(
+    api_url: str, api_key: str, ca_cert: Optional[Path], limit: int = 100
+) -> list[dict]:
+    """GET {api_url}/devices?limit=... and return its items (each a
+    DeviceResponse: id, name, is_online, last_seen_at, ...)."""
+    url = f"{api_url.rstrip('/')}/devices?limit={limit}"
+    return _get_agnes_api(url, api_key, ca_cert)["items"]
 
 
 def _renew_device_cert_via_api(
@@ -1796,6 +1822,61 @@ def provision(
         )
 
 
+def _prompt_device_selection(devices: list[dict]) -> str:
+    """Print a numbered table of devices and prompt for one, Azure-CLI
+    picker style. Returns the chosen device's id."""
+    rows = [
+        (
+            index,
+            device["id"],
+            device["name"],
+            "online" if device.get("is_online") else "offline",
+            device.get("last_seen_at") or "never",
+        )
+        for index, device in enumerate(devices, start=1)
+    ]
+    print_table(["#", "Device ID", "Name", "Status", "Last Seen"], rows)
+    choice = typer.prompt("Select a device by number")
+    try:
+        index = int(choice)
+        if not 1 <= index <= len(devices):
+            raise ValueError
+    except ValueError:
+        print(
+            f"ERROR: '{choice}' is not a valid selection (1-{len(devices)}).",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    return devices[index - 1]["id"]
+
+
+def _resolve_device_id(
+    device_id: Optional[str],
+    resolved_api_url: str,
+    resolved_api_key: str,
+    resolved_ca_cert: Optional[Path],
+) -> str:
+    """Return device_id as given, or list devices via the API and prompt
+    for one (see _prompt_device_selection). Exits the CLI if there's no TTY
+    to pick from, the listing fails, or there are no devices to choose."""
+    if device_id is not None:
+        return device_id
+    if not sys.stdin.isatty():
+        print("ERROR: no TTY to prompt for: --device-id.", file=sys.stderr)
+        raise typer.Exit(code=1)
+    try:
+        devices = _list_devices_via_api(
+            resolved_api_url, resolved_api_key, resolved_ca_cert
+        )
+    except ProvisionApiError as exc:
+        print(f"ERROR: could not list devices: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+    if not devices:
+        print("ERROR: no devices found for this API key.", file=sys.stderr)
+        raise typer.Exit(code=1)
+    return _prompt_device_selection(devices)
+
+
 @certs_app.command("download")
 def certs_download(
     device_id: Optional[str] = typer.Option(
@@ -1836,7 +1917,9 @@ def certs_download(
     ),
 ) -> None:
     """Renew an existing device's cert and save the resulting bundle to
-    --out-dir. Prompts for --device-id if omitted and running interactively.
+    --out-dir. When --device-id is omitted and running interactively, lists
+    devices from the Agnes API and prompts for one to pick, Azure-CLI-picker
+    style.
 
     Calls POST /devices/{device_id}/renew-cert - this issues a fresh
     certificate for that device and revokes its previously active one, it
@@ -1867,12 +1950,9 @@ def certs_download(
         raise typer.Exit(code=1)
     _require_ca_cert_for_https(resolved_api_url, resolved_ca_cert)
 
-    resolved_device_id = device_id
-    if resolved_device_id is None:
-        if not sys.stdin.isatty():
-            print("ERROR: no TTY to prompt for: --device-id.", file=sys.stderr)
-            raise typer.Exit(code=1)
-        resolved_device_id = typer.prompt("Device ID")
+    resolved_device_id = _resolve_device_id(
+        device_id, resolved_api_url, resolved_api_key, resolved_ca_cert
+    )
 
     print(f"Renewing cert for device '{resolved_device_id}' via {resolved_api_url}...")
     try:
