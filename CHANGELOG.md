@@ -27,7 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bundle to `./certs/ca.pem`, `client.pem`, and `private.pem` (gitignored),
   mirroring the Agnes project's own tinker.py cert layout - the API only
   returns a device's certs once, at registration time, so this is the only
-  chance to keep a local copy of them.
+  chance to keep a local copy of them. When `--name` is omitted on a TTY,
+  `provision` now lists existing devices first (Azure-CLI-picker style) so
+  you can pick one to renew its cert instead of always registering a new
+  device - MQTT credentials in that case still come from CLI flags/prompts
+  as before, since renewing only reissues certs, not MQTT credentials. A new
+  `--skip-certs` flag opts out of all of this: no `./certs/` write and no
+  `device_cert`/`device_key` in `device_config.json`.
 - `tinker.py certs download` command: takes an *existing* device's
   `--device-id`, calls `POST /devices/{device_id}/renew-cert` on the Agnes
   API (`--api-url`/`--api-key`, or a saved `--profile`), and saves the

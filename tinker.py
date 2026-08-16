@@ -1582,12 +1582,62 @@ def _require_ca_cert_for_https(api_url: str, ca_cert: Optional[Path]) -> None:
         raise typer.Exit(code=1)
 
 
-def _maybe_register_via_api(name, resolved_api_url, resolved_api_key, resolved_ca_cert):
-    """Register the device with the Agnes API when --api-key was given,
-    prompting for --name if needed. Returns the API result dict, or None if
-    no API key was given. Exits the CLI on any resolution/registration error."""
-    if not resolved_api_key:
+def _prompt_provision_device_choice(
+    resolved_api_url: str, resolved_api_key: str, resolved_ca_cert: Optional[Path]
+) -> Optional[str]:
+    """List devices via the API and let the operator pick an existing one
+    (to renew its cert) or create a new one instead. Returns the chosen
+    device's id, or None to create new - also None, with a warning, if the
+    listing itself fails or there are no devices yet, since 'create new' is
+    always a safe fallback here (unlike certs_download, which has no
+    fallback path without a device id already in hand)."""
+    try:
+        devices = _list_devices_via_api(
+            resolved_api_url, resolved_api_key, resolved_ca_cert
+        )
+    except ProvisionApiError as exc:
+        print(f"NOTE: could not list devices ({exc}) - creating new.", file=sys.stderr)
         return None
+    if not devices:
+        return None
+    return _prompt_device_selection(devices, allow_create=True)
+
+
+def _resolve_provision_device_identity(
+    name, resolved_api_url, resolved_api_key, resolved_ca_cert
+):
+    """Return (resolved_name, resolved_device_id) - exactly one is set, the
+    other None. Prompts for --name (after offering to pick an existing
+    device to renew instead, see _prompt_provision_device_choice) when name
+    isn't given. Exits the CLI if there's no TTY to prompt on."""
+    if name is not None:
+        return name, None
+    if not sys.stdin.isatty():
+        print("ERROR: no TTY to prompt for: --name.", file=sys.stderr)
+        raise typer.Exit(code=1)
+    device_id = _prompt_provision_device_choice(
+        resolved_api_url, resolved_api_key, resolved_ca_cert
+    )
+    if device_id is not None:
+        return None, device_id
+    return typer.prompt("Device name"), None
+
+
+def _maybe_register_or_renew_via_api(
+    name, resolved_api_url, resolved_api_key, resolved_ca_cert
+):
+    """Register a new device, or renew an existing one's cert, with the
+    Agnes API when --api-key was given - see _resolve_provision_device_identity
+    for how the choice between the two is made. Returns
+    (mqtt_api_result, cert_bundle):
+    - mqtt_api_result is the DeviceProvisionResponse (has username/password
+      to fill MQTT credentials) when a new device was registered, else None
+      - renew-cert doesn't reissue MQTT credentials, only certs.
+    - cert_bundle is whichever response carries the fresh certs (either
+      one), or None if no API key was given at all.
+    Exits the CLI on any resolution/registration/renewal error."""
+    if not resolved_api_key:
+        return None, None
     if not resolved_api_url:
         print(
             "ERROR: --api-key given without --api-url (and none saved "
@@ -1597,12 +1647,26 @@ def _maybe_register_via_api(name, resolved_api_url, resolved_api_key, resolved_c
         raise typer.Exit(code=1)
     _require_ca_cert_for_https(resolved_api_url, resolved_ca_cert)
 
-    resolved_name = name
-    if resolved_name is None:
-        if not sys.stdin.isatty():
-            print("ERROR: no TTY to prompt for: --name.", file=sys.stderr)
+    resolved_name, resolved_device_id = _resolve_provision_device_identity(
+        name, resolved_api_url, resolved_api_key, resolved_ca_cert
+    )
+
+    if resolved_device_id is not None:
+        print(
+            f"Renewing cert for device '{resolved_device_id}' via "
+            f"{resolved_api_url}..."
+        )
+        try:
+            cert_bundle = _renew_device_cert_via_api(
+                resolved_api_url,
+                resolved_api_key,
+                resolved_ca_cert,
+                resolved_device_id,
+            )
+        except ProvisionApiError as exc:
+            print(f"ERROR: cert renewal failed: {exc}", file=sys.stderr)
             raise typer.Exit(code=1)
-        resolved_name = typer.prompt("Device name")
+        return None, cert_bundle
 
     print(f"Registering device '{resolved_name}' with {resolved_api_url}...")
     try:
@@ -1615,7 +1679,7 @@ def _maybe_register_via_api(name, resolved_api_url, resolved_api_key, resolved_c
     print(f"Registered device_id={api_result['device_id']}")
     if api_result.get("warning"):
         print(f"NOTE: {api_result['warning']}")
-    return api_result
+    return api_result, api_result
 
 
 def _resolve_given_fields(cli_fields, api_result, resolved_api_url):
@@ -1725,7 +1789,18 @@ def provision(
         "explicitly wins over the profile's value.",
     ),
     name: Optional[str] = typer.Option(
-        None, "--name", help="Device name to register with the Agnes API"
+        None,
+        "--name",
+        help="Device name to register with the Agnes API. When omitted "
+        "interactively, existing devices are listed first so you can pick "
+        "one to renew instead of registering a new one.",
+    ),
+    skip_certs: bool = typer.Option(
+        False,
+        "--skip-certs",
+        help="Don't touch cert material at all: omit device_cert/device_key "
+        "from device_config.json and skip writing ./certs/, even when "
+        "registering/renewing via the API.",
     ),
 ) -> None:
     """Prompt for WiFi/MQTT settings and push a generated device_config.json.
@@ -1734,11 +1809,15 @@ def provision(
     phone or laptop needs to join the device's access point, since settings
     are entered locally and pushed over the same serial connection used by
     deploy/backup. When --api-url/--api-key (or their .microweaver defaults)
-    are set, device details and MQTT credentials come from the Agnes API
-    (POST /devices) instead of being typed in by hand - registration also
-    saves that response's cert bundle to ./certs/ca.pem, client.pem, and
-    private.pem (mirroring the Agnes project's own tinker.py cert layout),
-    since the API only returns a device's certs once, at registration time.
+    are set and --name is omitted on a TTY, existing devices are listed
+    (Azure-CLI-picker style, see 'certs download') so you can either pick
+    one to renew its cert, or choose to register a brand new device -
+    device details and MQTT credentials then come from the Agnes API
+    instead of being typed in by hand. Either way the response's cert
+    bundle is also saved to ./certs/ca.pem, client.pem, and private.pem
+    (mirroring the Agnes project's own tinker.py cert layout) unless
+    --skip-certs is given, since the API only returns a device's certs
+    once, at registration/renewal time.
     """
     resolved = _resolve_provision_connection_args(
         port, baud, api_url, api_key, profile, ca_cert
@@ -1763,7 +1842,7 @@ def provision(
             file=sys.stderr,
         )
 
-    api_result = _maybe_register_via_api(
+    mqtt_api_result, cert_bundle = _maybe_register_or_renew_via_api(
         name, resolved_api_url, resolved_api_key, resolved_ca_cert
     )
 
@@ -1778,7 +1857,7 @@ def provision(
         "mqtt_username": mqtt_username,
         "mqtt_password": mqtt_password,
     }
-    given = _resolve_given_fields(cli_fields, api_result, resolved_api_url)
+    given = _resolve_given_fields(cli_fields, mqtt_api_result, resolved_api_url)
 
     missing = [key for key, value in given.items() if value is None]
     _require_tty_for_missing(missing)
@@ -1790,12 +1869,13 @@ def provision(
     config_path = ROOT / "device_config.json"
     merged = dict(defaults)
     merged.update(given)
-    if api_result is not None:
-        merged["device_id"] = api_result["device_id"]
-        merged["device_cert"] = api_result["certificate"]
-        merged["device_key"] = api_result["private_key"]
-        cert_paths = _write_provisioned_certs(ROOT / "certs", api_result)
-        print(f"Saved cert bundle -> {cert_paths['ca_cert'].parent}")
+    if cert_bundle is not None:
+        merged["device_id"] = cert_bundle["device_id"]
+        if not skip_certs:
+            merged["device_cert"] = cert_bundle["certificate"]
+            merged["device_key"] = cert_bundle["private_key"]
+            cert_paths = _write_provisioned_certs(ROOT / "certs", cert_bundle)
+            print(f"Saved cert bundle -> {cert_paths['ca_cert'].parent}")
 
     try:
         Setting(config_path=str(config_path)).save(**merged)
@@ -1808,10 +1888,10 @@ def provision(
     save_config(
         port=port,
         baud=baud,
-        api_url=resolved_api_url if api_result is not None else None,
-        api_key=resolved_api_key if api_result is not None else None,
-        ca_cert=resolved_ca_cert if api_result is not None else None,
-        profile=resolved_profile if api_result is not None else None,
+        api_url=resolved_api_url if cert_bundle is not None else None,
+        api_key=resolved_api_key if cert_bundle is not None else None,
+        ca_cert=resolved_ca_cert if cert_bundle is not None else None,
+        profile=resolved_profile if cert_bundle is not None else None,
     )
     if device_pushed:
         print(f"\nProvisioned {resolved_port} with {config_path.name}")
@@ -1822,9 +1902,12 @@ def provision(
         )
 
 
-def _prompt_device_selection(devices: list[dict]) -> str:
+def _prompt_device_selection(
+    devices: list[dict], allow_create: bool = False
+) -> Optional[str]:
     """Print a numbered table of devices and prompt for one, Azure-CLI
-    picker style. Returns the chosen device's id."""
+    picker style. Returns the chosen device's id, or None if allow_create
+    and the added 'create new' row (0) was picked instead."""
     rows = [
         (
             index,
@@ -1835,18 +1918,26 @@ def _prompt_device_selection(devices: list[dict]) -> str:
         )
         for index, device in enumerate(devices, start=1)
     ]
+    prompt_text = "Select a device by number"
+    low = 1
+    if allow_create:
+        rows.append(("0", "-", "Create new device", "-", "-"))
+        prompt_text += ", or 0 to create new"
+        low = 0
     print_table(["#", "Device ID", "Name", "Status", "Last Seen"], rows)
-    choice = typer.prompt("Select a device by number")
+    choice = typer.prompt(prompt_text)
     try:
         index = int(choice)
-        if not 1 <= index <= len(devices):
+        if not low <= index <= len(devices):
             raise ValueError
     except ValueError:
         print(
-            f"ERROR: '{choice}' is not a valid selection (1-{len(devices)}).",
+            f"ERROR: '{choice}' is not a valid selection ({low}-{len(devices)}).",
             file=sys.stderr,
         )
         raise typer.Exit(code=1)
+    if allow_create and index == 0:
+        return None
     return devices[index - 1]["id"]
 
 
