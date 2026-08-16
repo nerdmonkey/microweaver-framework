@@ -1225,10 +1225,10 @@ def profile_show(
     print_table(["Key", "Value"], rows)
 
 
-def _prompt_profile_fields(given: dict) -> None:
+def _prompt_profile_fields(given: dict, header: str) -> None:
     """Fill any None values in `given` (api_url/api_key/port) in place by
-    prompting interactively. Blank input leaves that field unset."""
-    print("Creating profile. Press Enter to leave a field unset.\n")
+    prompting interactively. Blank input leaves that field unset/unchanged."""
+    print(f"{header}\n")
     if given["api_url"] is None:
         value = typer.prompt("Agnes API base URL", default="", show_default=False)
         given["api_url"] = value or None
@@ -1280,7 +1280,9 @@ def profile_create(
         raise typer.Exit(code=1)
     if sys.stdin.isatty() and (api_url is None or api_key is None or port is None):
         given = {"api_url": api_url, "api_key": api_key, "port": port}
-        _prompt_profile_fields(given)
+        _prompt_profile_fields(
+            given, "Creating profile. Press Enter to leave a field unset."
+        )
         api_url, api_key, port = given["api_url"], given["api_key"], given["port"]
     saved = save_profile(name, api_url=api_url, api_key=api_key, port=port, baud=baud)
     if activate:
@@ -1295,7 +1297,7 @@ def profile_create(
 
 @profile_app.command("edit")
 def profile_edit(
-    name: str = typer.Argument(..., help="Profile name"),
+    name: Optional[str] = typer.Argument(None, help="Profile name"),
     api_url: Optional[str] = typer.Option(None, "--api-url", help="Agnes API base URL"),
     api_key: Optional[str] = typer.Option(None, "--api-key", help="Agnes API key"),
     port: Optional[str] = typer.Option(
@@ -1305,13 +1307,28 @@ def profile_edit(
         None, "--baud", "-b", help="Default baud rate for this profile"
     ),
 ) -> None:
-    """Update fields on an existing profile."""
+    """Update fields on an existing profile. Prompts for name (if omitted)
+    and any of api_url/api_key/port left unset when run interactively."""
+    if name is None:
+        if not sys.stdin.isatty():
+            print("ERROR: no TTY to prompt for: name.", file=sys.stderr)
+            raise typer.Exit(code=1)
+        name = typer.prompt("Profile name")
+        if not name:
+            print("ERROR: profile name cannot be blank.", file=sys.stderr)
+            raise typer.Exit(code=1)
     if name not in list_profiles():
         print(
             f"ERROR: no profile named '{name}'. Use 'profile create' first.",
             file=sys.stderr,
         )
         raise typer.Exit(code=1)
+    if sys.stdin.isatty() and (api_url is None or api_key is None or port is None):
+        given = {"api_url": api_url, "api_key": api_key, "port": port}
+        _prompt_profile_fields(
+            given, "Editing profile. Press Enter to keep a field unchanged."
+        )
+        api_url, api_key, port = given["api_url"], given["api_key"], given["port"]
     saved = save_profile(name, api_url=api_url, api_key=api_key, port=port, baud=baud)
     if not saved:
         print(

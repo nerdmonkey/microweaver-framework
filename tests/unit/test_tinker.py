@@ -2069,6 +2069,52 @@ def test_profile_edit_nothing_to_set():
     assert "Nothing to set" in result.stderr
 
 
+def test_profile_edit_no_name_not_tty():
+    result = runner.invoke(tinker.app, ["profile", "edit"])
+    assert result.exit_code == 1
+    assert "no TTY to prompt for: name" in result.stderr
+
+
+def test_profile_edit_interactive_prompts_for_name(mocker):
+    tinker.save_profile("lab", api_url="https://lab.local")
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker.typer,
+        "prompt",
+        side_effect=["lab", "", "secret-key", ""],
+    )
+    tinker.profile_edit(name=None, api_url=None, api_key=None, port=None, baud=None)
+    saved = tinker.load_profile("lab")
+    assert saved["api_url"] == "https://lab.local"  # left blank, kept unchanged
+    assert saved["api_key"] == "secret-key"
+
+
+def test_profile_edit_interactive_blank_name_rejected(mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(tinker.typer, "prompt", side_effect=[""])
+    with pytest.raises(typer.Exit):
+        tinker.profile_edit(name=None, api_url=None, api_key=None, port=None, baud=None)
+
+
+def test_profile_edit_interactive_fills_only_missing(mocker):
+    tinker.save_profile("lab", api_url="https://lab.local")
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker.typer, "prompt", side_effect=["secret-key", "/dev/ttyUSB0"]
+    )
+    tinker.profile_edit(
+        name="lab",
+        api_url="https://given.local",
+        api_key=None,
+        port=None,
+        baud=None,
+    )
+    saved = tinker.load_profile("lab")
+    assert saved["api_url"] == "https://given.local"
+    assert saved["api_key"] == "secret-key"
+    assert saved["port"] == "/dev/ttyUSB0"
+
+
 def test_profile_show_masks_api_key_by_default():
     tinker.save_profile("lab", api_url="https://lab.local", api_key="secret-key")
     result = runner.invoke(tinker.app, ["profile", "show", "lab"])
