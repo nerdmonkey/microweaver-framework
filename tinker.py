@@ -1225,6 +1225,23 @@ def profile_show(
     print_table(["Key", "Value"], rows)
 
 
+def _prompt_profile_fields(given: dict) -> None:
+    """Fill any None values in `given` (api_url/api_key/port) in place by
+    prompting interactively. Blank input leaves that field unset."""
+    print("Creating profile. Press Enter to leave a field unset.\n")
+    if given["api_url"] is None:
+        value = typer.prompt("Agnes API base URL", default="", show_default=False)
+        given["api_url"] = value or None
+    if given["api_key"] is None:
+        value = typer.prompt(
+            "Agnes API key", default="", show_default=False, hide_input=True
+        )
+        given["api_key"] = value or None
+    if given["port"] is None:
+        value = typer.prompt("Serial port", default="", show_default=False)
+        given["port"] = value or None
+
+
 @profile_app.command("create")
 def profile_create(
     name: str = typer.Argument(..., help="Profile name"),
@@ -1243,7 +1260,8 @@ def profile_create(
     ),
 ) -> None:
     """Create a new profile. Fails if one already exists with this name -
-    use 'profile edit' to change an existing one instead."""
+    use 'profile edit' to change an existing one instead. Prompts for any of
+    api_url/api_key/port left unset when run interactively."""
     if name in list_profiles():
         print(
             f"ERROR: profile '{name}' already exists. Use 'profile edit' to "
@@ -1251,6 +1269,10 @@ def profile_create(
             file=sys.stderr,
         )
         raise typer.Exit(code=1)
+    if sys.stdin.isatty() and (api_url is None or api_key is None or port is None):
+        given = {"api_url": api_url, "api_key": api_key, "port": port}
+        _prompt_profile_fields(given)
+        api_url, api_key, port = given["api_url"], given["api_key"], given["port"]
     saved = save_profile(name, api_url=api_url, api_key=api_key, port=port, baud=baud)
     if activate:
         save_config(profile=name)

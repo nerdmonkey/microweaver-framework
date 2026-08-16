@@ -1961,6 +1961,53 @@ def test_profile_create_no_activate():
     assert "Created empty profile 'lab'" in result.stdout
 
 
+def test_profile_create_interactive_prompts(mocker):
+    # CliRunner swaps sys.stdin for its own fake stream during invoke(), so
+    # isatty must be mocked directly and the command called without the CLI
+    # runner to keep the mock in effect (mirrors test_config_set_interactive).
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker.typer,
+        "prompt",
+        side_effect=["https://lab.local", "secret-key", "/dev/ttyUSB0"],
+    )
+    tinker.profile_create(
+        name="lab", api_url=None, api_key=None, port=None, baud=None, activate=True
+    )
+    saved = tinker.load_profile("lab")
+    assert saved["api_url"] == "https://lab.local"
+    assert saved["api_key"] == "secret-key"
+    assert saved["port"] == "/dev/ttyUSB0"
+
+
+def test_profile_create_interactive_blank_skips_field(mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(tinker.typer, "prompt", side_effect=["", "", ""])
+    tinker.profile_create(
+        name="lab", api_url=None, api_key=None, port=None, baud=None, activate=True
+    )
+    assert tinker.load_profile("lab") == {}
+
+
+def test_profile_create_interactive_fills_only_missing(mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker.typer, "prompt", side_effect=["secret-key", "/dev/ttyUSB0"]
+    )
+    tinker.profile_create(
+        name="lab",
+        api_url="https://given.local",
+        api_key=None,
+        port=None,
+        baud=None,
+        activate=True,
+    )
+    saved = tinker.load_profile("lab")
+    assert saved["api_url"] == "https://given.local"
+    assert saved["api_key"] == "secret-key"
+    assert saved["port"] == "/dev/ttyUSB0"
+
+
 def test_profile_create_duplicate_rejected():
     tinker.save_profile("lab", api_url="https://lab.local")
     result = runner.invoke(tinker.app, ["profile", "create", "lab"])
