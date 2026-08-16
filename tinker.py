@@ -1134,6 +1134,18 @@ def _fetch_ca_cert(api_url: str) -> str:
     return pem
 
 
+def _fetch_and_save_ca_cert(profile: str, api_url: str) -> Path:
+    """Fetch api_url's CA cert (trust-on-first-use, see _fetch_ca_cert) and
+    save it to _profile_ca_cert_path(profile). Raises ProvisionApiError."""
+    print(f"Fetching CA from {api_url}/api/ca (insecure, trust-on-first-use)...")
+    pem = _fetch_ca_cert(api_url)
+    ca_path = _profile_ca_cert_path(profile)
+    ca_path.parent.mkdir(parents=True, exist_ok=True)
+    ca_path.write_text(pem)
+    print(f"Saved CA cert -> {ca_path}")
+    return ca_path
+
+
 @app.command("fetch-ca-cert")
 def fetch_ca_cert(
     profile: str = typer.Argument(
@@ -1151,7 +1163,9 @@ def fetch_ca_cert(
 
     Fetched insecurely (trust-on-first-use) since there's no CA to verify
     against yet. Run this once per host over a network you trust, then
-    treat the saved ca.pem as the trust anchor from then on.
+    treat the saved ca.pem as the trust anchor from then on. 'profile
+    create' already does this automatically when given an --api-url - this
+    command is for re-fetching later or for a profile created without one.
     """
     config = load_config()
     resolved_api_url = (
@@ -1165,23 +1179,14 @@ def fetch_ca_cert(
         )
         raise typer.Exit(code=1)
 
-    print(
-        f"Fetching CA from {resolved_api_url}/api/ca "
-        "(insecure, trust-on-first-use)..."
-    )
     try:
-        pem = _fetch_ca_cert(resolved_api_url)
+        _fetch_and_save_ca_cert(profile, resolved_api_url)
     except ProvisionApiError as exc:
         print(f"ERROR: could not fetch CA cert: {exc}", file=sys.stderr)
         raise typer.Exit(code=1)
 
-    ca_path = _profile_ca_cert_path(profile)
-    ca_path.parent.mkdir(parents=True, exist_ok=True)
-    ca_path.write_text(pem)
-
     save_profile(profile, api_url=resolved_api_url)
     save_config(profile=profile)
-    print(f"Saved CA cert -> {ca_path}")
 
 
 # Secret-masked like SECRET_CONFIG_KEYS below, kept separate since profile
@@ -1264,6 +1269,30 @@ def _prompt_profile_fields(given: dict, defaults: dict, header: str) -> None:
         given["port"] = value or None
 
 
+def _prompt_for_profile_name() -> str:
+    if not sys.stdin.isatty():
+        print("ERROR: no TTY to prompt for: name.", file=sys.stderr)
+        raise typer.Exit(code=1)
+    name = typer.prompt("Profile name")
+    if not name:
+        print("ERROR: profile name cannot be blank.", file=sys.stderr)
+        raise typer.Exit(code=1)
+    return name
+
+
+def _fetch_ca_cert_for_new_profile(name: str, api_url: str) -> None:
+    """Best-effort CA-cert fetch right after 'profile create' - a failure
+    only warns since the profile itself is already saved by this point."""
+    try:
+        _fetch_and_save_ca_cert(name, api_url)
+    except ProvisionApiError as exc:
+        print(
+            f"WARNING: could not fetch CA cert: {exc}. Retry later with "
+            f"'fetch-ca-cert {name} --api-url {api_url}'.",
+            file=sys.stderr,
+        )
+
+
 @profile_app.command("create")
 def profile_create(
     name: Optional[str] = typer.Argument(None, help="Profile name"),
@@ -1284,15 +1313,16 @@ def profile_create(
     """Create a new profile. Fails if one already exists with this name -
     use 'profile edit' to change an existing one instead. Prompts for name
     (if omitted) and any of api_url/api_key/port left unset when run
-    interactively."""
+    interactively.
+
+    When api_url ends up set (flag, prompt, or otherwise), also fetches its
+    CA cert (trust-on-first-use, see 'fetch-ca-cert') and saves it to
+    ~/.microweaver/<name>/ca.pem. A fetch failure only warns - the profile
+    itself is already saved by that point - so it can be retried later with
+    'fetch-ca-cert'.
+    """
     if name is None:
-        if not sys.stdin.isatty():
-            print("ERROR: no TTY to prompt for: name.", file=sys.stderr)
-            raise typer.Exit(code=1)
-        name = typer.prompt("Profile name")
-        if not name:
-            print("ERROR: profile name cannot be blank.", file=sys.stderr)
-            raise typer.Exit(code=1)
+        name = _prompt_for_profile_name()
     if name in list_profiles():
         print(
             f"ERROR: profile '{name}' already exists. Use 'profile edit' to "
@@ -1316,6 +1346,9 @@ def profile_create(
     suffix = " (active)" if activate else ""
     print(f"\nSaved to {CONFIG_PATH.relative_to(ROOT)}{suffix}")
 
+    if api_url:
+        _fetch_ca_cert_for_new_profile(name, api_url)
+
 
 @profile_app.command("edit")
 def profile_edit(
@@ -1332,13 +1365,7 @@ def profile_edit(
     """Update fields on an existing profile. Prompts for name (if omitted)
     and any of api_url/api_key/port left unset when run interactively."""
     if name is None:
-        if not sys.stdin.isatty():
-            print("ERROR: no TTY to prompt for: name.", file=sys.stderr)
-            raise typer.Exit(code=1)
-        name = typer.prompt("Profile name")
-        if not name:
-            print("ERROR: profile name cannot be blank.", file=sys.stderr)
-            raise typer.Exit(code=1)
+        name = _prompt_for_profile_name()
     if name not in list_profiles():
         print(
             f"ERROR: no profile named '{name}'. Use 'profile create' first.",

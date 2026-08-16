@@ -1932,7 +1932,8 @@ def test_profile_list_empty():
     assert "No profiles saved" in result.stdout
 
 
-def test_profile_create_via_flags():
+def test_profile_create_via_flags(mocker):
+    mocker.patch.object(tinker, "_fetch_ca_cert", return_value="PEM-BEGIN CERTIFICATE")
     result = runner.invoke(
         tinker.app,
         [
@@ -1954,6 +1955,35 @@ def test_profile_create_via_flags():
     assert tinker.load_config()["profile"] == "lab"
 
 
+def test_profile_create_fetches_ca_cert_when_api_url_given(mocker):
+    mocker.patch.object(tinker, "_fetch_ca_cert", return_value="PEM-BEGIN CERTIFICATE")
+    result = runner.invoke(
+        tinker.app,
+        ["profile", "create", "lab", "--api-url", "https://lab.local"],
+    )
+    assert result.exit_code == 0
+    ca_path = tinker.HOME_CONFIG_DIR / "lab" / "ca.pem"
+    assert ca_path.read_text() == "PEM-BEGIN CERTIFICATE"
+    assert "Saved CA cert" in result.stdout
+
+
+def test_profile_create_ca_cert_fetch_failure_warns_but_succeeds(mocker):
+    mocker.patch.object(
+        tinker,
+        "_fetch_ca_cert",
+        side_effect=tinker.ProvisionApiError("connection refused"),
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["profile", "create", "lab", "--api-url", "https://lab.local"],
+    )
+    # The profile is already saved by the time the CA fetch is attempted, so
+    # a fetch failure only warns instead of failing the whole command.
+    assert result.exit_code == 0
+    assert "WARNING: could not fetch CA cert: connection refused" in result.stderr
+    assert tinker.load_profile("lab")["api_url"] == "https://lab.local"
+
+
 def test_profile_create_no_activate():
     result = runner.invoke(tinker.app, ["profile", "create", "lab", "--no-activate"])
     assert result.exit_code == 0
@@ -1968,6 +1998,7 @@ def test_profile_create_no_name_not_tty():
 
 
 def test_profile_create_interactive_prompts_for_name(mocker):
+    mocker.patch.object(tinker, "_fetch_ca_cert", return_value="PEM-BEGIN CERTIFICATE")
     mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
     mocker.patch.object(
         tinker.typer,
@@ -1996,6 +2027,7 @@ def test_profile_create_interactive_prompts(mocker):
     # CliRunner swaps sys.stdin for its own fake stream during invoke(), so
     # isatty must be mocked directly and the command called without the CLI
     # runner to keep the mock in effect (mirrors test_config_set_interactive).
+    mocker.patch.object(tinker, "_fetch_ca_cert", return_value="PEM-BEGIN CERTIFICATE")
     mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
     mocker.patch.object(
         tinker.typer,
@@ -2021,6 +2053,7 @@ def test_profile_create_interactive_blank_skips_field(mocker):
 
 
 def test_profile_create_interactive_fills_only_missing(mocker):
+    mocker.patch.object(tinker, "_fetch_ca_cert", return_value="PEM-BEGIN CERTIFICATE")
     mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
     mocker.patch.object(
         tinker.typer, "prompt", side_effect=["secret-key", "/dev/ttyUSB0"]

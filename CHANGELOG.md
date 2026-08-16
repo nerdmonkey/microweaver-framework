@@ -16,7 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--ca-cert` from the named (or active) profile when not passed explicitly,
   in CLI flag > profile > `.microweaver` `[default]` > hardcoded default
   order. `fetch-ca-cert` now also saves the resolved `api_url` into the
-  profile it fetches for.
+  profile it fetches for. `profile create` also interactively prompts for
+  name/`api_url`/`api_key`/`port` when omitted on a TTY (edit shows existing
+  values as defaults), and automatically fetches and saves the CA cert for
+  any `api_url` it ends up with (a fetch failure only warns, since the
+  profile is already saved by that point - retry later with
+  `fetch-ca-cert`).
 - `dht_topic_suffix`/`relay_topic_suffix`/`oled_topic_suffix`/
   `potentiometer_topic_suffix`/`rotary_angle_topic_suffix` config keys (each
   defaulting to a short device name, e.g. `dht`, `relay`) let each enabled
