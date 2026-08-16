@@ -69,6 +69,15 @@ config_app = typer.Typer(
 app.add_typer(config_app, name="config")
 device_app = typer.Typer(no_args_is_help=True, help="Interrupt or reset the device.")
 app.add_typer(device_app, name="device")
+profile_app = typer.Typer(
+    no_args_is_help=True,
+    help="Create, list, and switch between saved Agnes API connection profiles.",
+)
+app.add_typer(profile_app, name="profile")
+certs_app = typer.Typer(
+    no_args_is_help=True, help="Fetch a device's cert bundle from the Agnes API."
+)
+app.add_typer(certs_app, name="certs")
 fleet_app = typer.Typer(no_args_is_help=True, help="Push a build to multiple devices.")
 app.add_typer(fleet_app, name="fleet")
 ota_app = typer.Typer(
@@ -118,6 +127,69 @@ def save_config(**values) -> dict:
     with CONFIG_PATH.open("w") as f:
         cp.write(f)
     return saved
+
+
+def _profile_section(name: str) -> str:
+    return f"profile:{name}"
+
+
+def list_profiles() -> list[str]:
+    """Names of profiles saved under CONFIG_PATH, sorted."""
+    if not CONFIG_PATH.exists():
+        return []
+    cp = configparser.ConfigParser()
+    cp.read(CONFIG_PATH)
+    return sorted(
+        section.split(":", 1)[1]
+        for section in cp.sections()
+        if section.startswith("profile:")
+    )
+
+
+def load_profile(name: str) -> dict:
+    if not CONFIG_PATH.exists():
+        return {}
+    cp = configparser.ConfigParser()
+    cp.read(CONFIG_PATH)
+    section = _profile_section(name)
+    return dict(cp[section]) if cp.has_section(section) else {}
+
+
+def save_profile(name: str, **values) -> dict:
+    cp = configparser.ConfigParser()
+    if CONFIG_PATH.exists():
+        cp.read(CONFIG_PATH)
+    section = _profile_section(name)
+    if not cp.has_section(section):
+        cp.add_section(section)
+    saved = {}
+    for key, value in values.items():
+        if value is not None:
+            cp.set(section, key, str(value))
+            saved[key] = value
+    with CONFIG_PATH.open("w") as f:
+        cp.write(f)
+    return saved
+
+
+def delete_profile(name: str) -> bool:
+    """Remove a saved profile section. Clears the active-profile pointer in
+    [default] if it pointed at this profile. Returns whether it existed."""
+    if not CONFIG_PATH.exists():
+        return False
+    cp = configparser.ConfigParser()
+    cp.read(CONFIG_PATH)
+    removed = cp.remove_section(_profile_section(name))
+    if not removed:
+        return False
+    if (
+        cp.has_section("default")
+        and cp.get("default", "profile", fallback=None) == name
+    ):
+        cp.remove_option("default", "profile")
+    with CONFIG_PATH.open("w") as f:
+        cp.write(f)
+    return True
 
 
 def print_table(columns: list, rows) -> None:
@@ -993,25 +1065,17 @@ class ProvisionApiError(Exception):
     """Raised when the Agnes API rejects or fails a device-provision request."""
 
 
-def _provision_device_via_api(
-    api_url: str, api_key: str, ca_cert: Optional[Path], name: str
+def _agnes_api_request(
+    request: urllib.request.Request, ca_cert: Optional[Path]
 ) -> dict:
-    """POST {api_url}/devices to register a managed device with Agnes and
-    return its one-time MQTT credentials + cert bundle (DeviceProvisionResponse:
-    device_id, username, password, certificate, private_key, ca_cert, ...)."""
-    url = f"{api_url.rstrip('/')}/devices"
-    request = urllib.request.Request(
-        url,
-        data=json.dumps({"name": name}).encode(),
-        method="POST",
-        headers={"Content-Type": "application/json", API_KEY_HEADER: api_key},
-    )
+    """Run an already-built Agnes API request and return its decoded JSON
+    response, wrapping any HTTP/URL failure as ProvisionApiError. request's
+    url is operator-supplied (--api-url/.microweaver config), not untrusted
+    input; https gets a verified ssl context."""
     context = None
-    if urlparse(url).scheme == "https":
+    if urlparse(request.full_url).scheme == "https":
         context = ssl.create_default_context(cafile=str(ca_cert) if ca_cert else None)
     try:
-        # url is operator-supplied (--api-url/.microweaver config), not
-        # untrusted input; https gets a verified ssl context above.
         with urllib.request.urlopen(  # nosec B310
             request, context=context, timeout=30
         ) as resp:
@@ -1025,6 +1089,65 @@ def _provision_device_via_api(
         raise ProvisionApiError(f"{exc.code} {exc.reason}: {detail}") from exc
     except urllib.error.URLError as exc:
         raise ProvisionApiError(str(exc.reason)) from exc
+
+
+def _post_agnes_api(
+    url: str, api_key: str, ca_cert: Optional[Path], body: dict
+) -> dict:
+    """POST body as JSON to url with the Agnes X-API-Key header and return
+    the decoded JSON response."""
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json", API_KEY_HEADER: api_key},
+    )
+    return _agnes_api_request(request, ca_cert)
+
+
+def _get_agnes_api(url: str, api_key: str, ca_cert: Optional[Path]) -> dict:
+    """GET url with the Agnes X-API-Key header and return the decoded JSON
+    response."""
+    request = urllib.request.Request(
+        url, method="GET", headers={API_KEY_HEADER: api_key}
+    )
+    return _agnes_api_request(request, ca_cert)
+
+
+def _provision_device_via_api(
+    api_url: str, api_key: str, ca_cert: Optional[Path], name: str
+) -> dict:
+    """POST {api_url}/devices to register a managed device with Agnes and
+    return its one-time MQTT credentials + cert bundle (DeviceProvisionResponse:
+    device_id, username, password, certificate, private_key, ca_cert, ...)."""
+    return _post_agnes_api(
+        f"{api_url.rstrip('/')}/devices", api_key, ca_cert, {"name": name}
+    )
+
+
+def _list_devices_via_api(
+    api_url: str, api_key: str, ca_cert: Optional[Path], limit: int = 100
+) -> list[dict]:
+    """GET {api_url}/devices?limit=... and return its items (each a
+    DeviceResponse: id, name, is_online, last_seen_at, ...)."""
+    url = f"{api_url.rstrip('/')}/devices?limit={limit}"
+    return _get_agnes_api(url, api_key, ca_cert)["items"]
+
+
+def _renew_device_cert_via_api(
+    api_url: str, api_key: str, ca_cert: Optional[Path], device_id: str
+) -> dict:
+    """POST {api_url}/devices/{device_id}/renew-cert to issue a fresh cert
+    bundle for an already-registered device (CertRenewResponse: device_id,
+    certificate, private_key, ca_cert, expires_at) - revokes that device's
+    previously active certificate. Unlike _provision_device_via_api, this
+    doesn't create a new device identity."""
+    return _post_agnes_api(
+        f"{api_url.rstrip('/')}/devices/{device_id}/renew-cert",
+        api_key,
+        ca_cert,
+        {"validity_days": 365},
+    )
 
 
 HOME_CONFIG_DIR = Path.home() / ".microweaver"
@@ -1066,6 +1189,18 @@ def _fetch_ca_cert(api_url: str) -> str:
     return pem
 
 
+def _fetch_and_save_ca_cert(profile: str, api_url: str) -> Path:
+    """Fetch api_url's CA cert (trust-on-first-use, see _fetch_ca_cert) and
+    save it to _profile_ca_cert_path(profile). Raises ProvisionApiError."""
+    print(f"Fetching CA from {api_url}/api/ca (insecure, trust-on-first-use)...")
+    pem = _fetch_ca_cert(api_url)
+    ca_path = _profile_ca_cert_path(profile)
+    ca_path.parent.mkdir(parents=True, exist_ok=True)
+    ca_path.write_text(pem)
+    print(f"Saved CA cert -> {ca_path}")
+    return ca_path
+
+
 @app.command("fetch-ca-cert")
 def fetch_ca_cert(
     profile: str = typer.Argument(
@@ -1083,33 +1218,264 @@ def fetch_ca_cert(
 
     Fetched insecurely (trust-on-first-use) since there's no CA to verify
     against yet. Run this once per host over a network you trust, then
-    treat the saved ca.pem as the trust anchor from then on.
+    treat the saved ca.pem as the trust anchor from then on. 'profile
+    create' already does this automatically when given an --api-url - this
+    command is for re-fetching later or for a profile created without one.
     """
     config = load_config()
-    resolved_api_url = api_url or config.get("api_url")
+    resolved_api_url = (
+        api_url or load_profile(profile).get("api_url") or config.get("api_url")
+    )
     if not resolved_api_url:
         print(
-            "ERROR: --api-url required (none saved in .microweaver).",
+            "ERROR: --api-url required (none saved for this profile or in "
+            ".microweaver).",
             file=sys.stderr,
         )
         raise typer.Exit(code=1)
 
-    print(
-        f"Fetching CA from {resolved_api_url}/api/ca "
-        "(insecure, trust-on-first-use)..."
-    )
     try:
-        pem = _fetch_ca_cert(resolved_api_url)
+        _fetch_and_save_ca_cert(profile, resolved_api_url)
     except ProvisionApiError as exc:
         print(f"ERROR: could not fetch CA cert: {exc}", file=sys.stderr)
         raise typer.Exit(code=1)
 
-    ca_path = _profile_ca_cert_path(profile)
-    ca_path.parent.mkdir(parents=True, exist_ok=True)
-    ca_path.write_text(pem)
+    save_profile(profile, api_url=resolved_api_url)
+    save_config(profile=profile)
 
-    save_config(profile=profile, api_url=api_url)
-    print(f"Saved CA cert -> {ca_path}")
+
+# Secret-masked like SECRET_CONFIG_KEYS below, kept separate since profile
+# fields are a different, smaller set (api_url/api_key/port/baud/ca_cert).
+PROFILE_SECRET_KEYS = {"api_key"}
+
+
+@profile_app.command("list")
+def profile_list() -> None:
+    """List saved profiles, marking the active one with '*'."""
+    names = list_profiles()
+    if not names:
+        print("No profiles saved. Create one with 'profile create <name>'.")
+        raise typer.Exit(code=0)
+    active = load_config().get("profile")
+    rows = [(f"* {name}" if name == active else name,) for name in names]
+    print_table(["Profile"], rows)
+
+
+@profile_app.command("show")
+def profile_show(
+    name: str = typer.Argument(..., help="Profile name"),
+    reveal: bool = typer.Option(
+        False, "--reveal", help="Show the api_key value in full instead of masked"
+    ),
+) -> None:
+    """Show a saved profile's settings."""
+    values = load_profile(name)
+    if not values:
+        print(f"ERROR: no profile named '{name}'.", file=sys.stderr)
+        raise typer.Exit(code=1)
+    rows = [
+        (
+            key,
+            "********"
+            if key in PROFILE_SECRET_KEYS and value and not reveal
+            else value,
+        )
+        for key, value in values.items()
+    ]
+    print_table(["Key", "Value"], rows)
+
+
+def _prompt_profile_fields(given: dict, defaults: dict, header: str) -> None:
+    """Fill any None values in `given` (api_url/api_key/port) in place by
+    prompting interactively, showing `defaults` (an existing profile's saved
+    values, or {} when creating) as the default for a blank Enter. api_key
+    is masked - like _prompt_missing_fields's secret handling - so an
+    existing secret is never echoed, not even as the prompt's own hint."""
+    print(f"{header}\n")
+
+    if given["api_url"] is None:
+        existing = defaults.get("api_url", "")
+        value = typer.prompt(
+            "Agnes API base URL", default=existing, show_default=bool(existing)
+        )
+        given["api_url"] = value or None
+
+    if given["api_key"] is None:
+        existing = defaults.get("api_key", "")
+        if existing:
+            typed = typer.prompt(
+                "Agnes API key [unchanged]",
+                default="",
+                show_default=False,
+                hide_input=True,
+            )
+            given["api_key"] = existing if typed == "" else typed
+        else:
+            value = typer.prompt(
+                "Agnes API key", default="", show_default=False, hide_input=True
+            )
+            given["api_key"] = value or None
+
+    if given["port"] is None:
+        existing = defaults.get("port", "")
+        value = typer.prompt(
+            "Serial port", default=existing, show_default=bool(existing)
+        )
+        given["port"] = value or None
+
+
+def _prompt_for_profile_name() -> str:
+    if not sys.stdin.isatty():
+        print("ERROR: no TTY to prompt for: name.", file=sys.stderr)
+        raise typer.Exit(code=1)
+    name = typer.prompt("Profile name")
+    if not name:
+        print("ERROR: profile name cannot be blank.", file=sys.stderr)
+        raise typer.Exit(code=1)
+    return name
+
+
+def _fetch_ca_cert_for_new_profile(name: str, api_url: str) -> None:
+    """Best-effort CA-cert fetch right after 'profile create' - a failure
+    only warns since the profile itself is already saved by this point."""
+    try:
+        _fetch_and_save_ca_cert(name, api_url)
+    except ProvisionApiError as exc:
+        print(
+            f"WARNING: could not fetch CA cert: {exc}. Retry later with "
+            f"'fetch-ca-cert {name} --api-url {api_url}'.",
+            file=sys.stderr,
+        )
+
+
+@profile_app.command("create")
+def profile_create(
+    name: Optional[str] = typer.Argument(None, help="Profile name"),
+    api_url: Optional[str] = typer.Option(None, "--api-url", help="Agnes API base URL"),
+    api_key: Optional[str] = typer.Option(None, "--api-key", help="Agnes API key"),
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Default serial port for this profile"
+    ),
+    baud: Optional[int] = typer.Option(
+        None, "--baud", "-b", help="Default baud rate for this profile"
+    ),
+    activate: bool = typer.Option(
+        True,
+        "--activate/--no-activate",
+        help="Make this the active profile (default: yes)",
+    ),
+) -> None:
+    """Create a new profile. Fails if one already exists with this name -
+    use 'profile edit' to change an existing one instead. Prompts for name
+    (if omitted) and any of api_url/api_key/port left unset when run
+    interactively.
+
+    When api_url ends up set (flag, prompt, or otherwise), also fetches its
+    CA cert (trust-on-first-use, see 'fetch-ca-cert') and saves it to
+    ~/.microweaver/<name>/ca.pem. A fetch failure only warns - the profile
+    itself is already saved by that point - so it can be retried later with
+    'fetch-ca-cert'.
+    """
+    if name is None:
+        name = _prompt_for_profile_name()
+    if name in list_profiles():
+        print(
+            f"ERROR: profile '{name}' already exists. Use 'profile edit' to "
+            "change it.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    if sys.stdin.isatty() and (api_url is None or api_key is None or port is None):
+        given = {"api_url": api_url, "api_key": api_key, "port": port}
+        _prompt_profile_fields(
+            given, {}, "Creating profile. Press Enter to leave a field unset."
+        )
+        api_url, api_key, port = given["api_url"], given["api_key"], given["port"]
+    saved = save_profile(name, api_url=api_url, api_key=api_key, port=port, baud=baud)
+    if activate:
+        save_config(profile=name)
+    if saved:
+        print_table(["Key", "Value"], saved.items())
+    else:
+        print(f"Created empty profile '{name}'.")
+    suffix = " (active)" if activate else ""
+    print(f"\nSaved to {CONFIG_PATH.relative_to(ROOT)}{suffix}")
+
+    if api_url:
+        _fetch_ca_cert_for_new_profile(name, api_url)
+
+
+@profile_app.command("edit")
+def profile_edit(
+    name: Optional[str] = typer.Argument(None, help="Profile name"),
+    api_url: Optional[str] = typer.Option(None, "--api-url", help="Agnes API base URL"),
+    api_key: Optional[str] = typer.Option(None, "--api-key", help="Agnes API key"),
+    port: Optional[str] = typer.Option(
+        None, "--port", "-p", help="Default serial port for this profile"
+    ),
+    baud: Optional[int] = typer.Option(
+        None, "--baud", "-b", help="Default baud rate for this profile"
+    ),
+) -> None:
+    """Update fields on an existing profile. Prompts for name (if omitted)
+    and any of api_url/api_key/port left unset when run interactively."""
+    if name is None:
+        name = _prompt_for_profile_name()
+    if name not in list_profiles():
+        print(
+            f"ERROR: no profile named '{name}'. Use 'profile create' first.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    if sys.stdin.isatty() and (api_url is None or api_key is None or port is None):
+        given = {"api_url": api_url, "api_key": api_key, "port": port}
+        _prompt_profile_fields(
+            given,
+            load_profile(name),
+            "Editing profile. Press Enter to keep the current value.",
+        )
+        api_url, api_key, port = given["api_url"], given["api_key"], given["port"]
+    saved = save_profile(name, api_url=api_url, api_key=api_key, port=port, baud=baud)
+    if not saved:
+        print(
+            "Nothing to set. Pass --api-url/--api-key/--port/--baud.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    print_table(["Key", "Value"], saved.items())
+    print(f"\nSaved to {CONFIG_PATH.relative_to(ROOT)}")
+
+
+@profile_app.command("delete")
+def profile_delete(
+    name: str = typer.Argument(..., help="Profile name"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
+) -> None:
+    """Delete a saved profile. Does not remove its cached CA cert under
+    ~/.microweaver/<name>/ - re-run 'fetch-ca-cert' if you recreate it."""
+    if name not in list_profiles():
+        print(f"ERROR: no profile named '{name}'.", file=sys.stderr)
+        raise typer.Exit(code=1)
+    if not yes and not typer.confirm(f"Delete profile '{name}'?"):
+        raise typer.Exit(code=0)
+    delete_profile(name)
+    print(f"Deleted profile '{name}'.")
+
+
+@profile_app.command("use")
+def profile_use(
+    name: str = typer.Argument(..., help="Profile name to make active"),
+) -> None:
+    """Make a saved profile the active one - used by default in 'provision'
+    and 'fetch-ca-cert' when --profile isn't passed."""
+    if name not in list_profiles():
+        print(
+            f"ERROR: no profile named '{name}'. Use 'profile create' first.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    save_config(profile=name)
+    print(f"Active profile -> {name}")
 
 
 PROVISION_FIELDS = [
@@ -1176,32 +1542,102 @@ def _require_tty_for_missing(missing: list) -> None:
 
 def _resolve_provision_connection_args(port, baud, api_url, api_key, profile, ca_cert):
     """Resolve --port/--baud/--api-url/--api-key/--profile/--ca-cert against
-    .microweaver config, in CLI flag > .microweaver > hardcoded default order."""
+    a saved 'profile <name>' section and .microweaver's [default] section, in
+    CLI flag > profile > [default] > hardcoded default order."""
     config = load_config()
-    resolved_ca_cert = ca_cert or (
-        Path(config["ca_cert"]) if config.get("ca_cert") else None
-    )
     resolved_profile = profile or config.get("profile")
+    profile_values = load_profile(resolved_profile) if resolved_profile else {}
+
+    resolved_ca_cert = ca_cert or (
+        Path(profile_values["ca_cert"])
+        if profile_values.get("ca_cert")
+        else Path(config["ca_cert"])
+        if config.get("ca_cert")
+        else None
+    )
     if resolved_ca_cert is None and resolved_profile:
         profile_ca_cert = _profile_ca_cert_path(resolved_profile)
         if profile_ca_cert.exists():
             resolved_ca_cert = profile_ca_cert
     return {
-        "port": port or config.get("port"),
-        "baud": baud if baud is not None else int(config.get("baud", DEFAULT_BAUD)),
-        "api_url": api_url or config.get("api_url"),
-        "api_key": api_key or config.get("api_key"),
+        "port": port or profile_values.get("port") or config.get("port"),
+        "baud": (
+            baud
+            if baud is not None
+            else int(profile_values.get("baud", config.get("baud", DEFAULT_BAUD)))
+        ),
+        "api_url": api_url or profile_values.get("api_url") or config.get("api_url"),
+        "api_key": api_key or profile_values.get("api_key") or config.get("api_key"),
         "profile": resolved_profile,
         "ca_cert": resolved_ca_cert,
     }
 
 
-def _maybe_register_via_api(name, resolved_api_url, resolved_api_key, resolved_ca_cert):
-    """Register the device with the Agnes API when --api-key was given,
-    prompting for --name if needed. Returns the API result dict, or None if
-    no API key was given. Exits the CLI on any resolution/registration error."""
-    if not resolved_api_key:
+def _require_ca_cert_for_https(api_url: str, ca_cert: Optional[Path]) -> None:
+    if urlparse(api_url).scheme == "https" and not ca_cert:
+        print(
+            "ERROR: --ca-cert is required to verify a https --api-url.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+
+def _prompt_provision_device_choice(
+    resolved_api_url: str, resolved_api_key: str, resolved_ca_cert: Optional[Path]
+) -> Optional[str]:
+    """List devices via the API and let the operator pick an existing one
+    (to renew its cert) or create a new one instead. Returns the chosen
+    device's id, or None to create new - also None, with a warning, if the
+    listing itself fails or there are no devices yet, since 'create new' is
+    always a safe fallback here (unlike certs_download, which has no
+    fallback path without a device id already in hand)."""
+    try:
+        devices = _list_devices_via_api(
+            resolved_api_url, resolved_api_key, resolved_ca_cert
+        )
+    except ProvisionApiError as exc:
+        print(f"NOTE: could not list devices ({exc}) - creating new.", file=sys.stderr)
         return None
+    if not devices:
+        return None
+    return _prompt_device_selection(devices, allow_create=True)
+
+
+def _resolve_provision_device_identity(
+    name, resolved_api_url, resolved_api_key, resolved_ca_cert
+):
+    """Return (resolved_name, resolved_device_id) - exactly one is set, the
+    other None. Prompts for --name (after offering to pick an existing
+    device to renew instead, see _prompt_provision_device_choice) when name
+    isn't given. Exits the CLI if there's no TTY to prompt on."""
+    if name is not None:
+        return name, None
+    if not sys.stdin.isatty():
+        print("ERROR: no TTY to prompt for: --name.", file=sys.stderr)
+        raise typer.Exit(code=1)
+    device_id = _prompt_provision_device_choice(
+        resolved_api_url, resolved_api_key, resolved_ca_cert
+    )
+    if device_id is not None:
+        return None, device_id
+    return typer.prompt("Device name"), None
+
+
+def _maybe_register_or_renew_via_api(
+    name, resolved_api_url, resolved_api_key, resolved_ca_cert
+):
+    """Register a new device, or renew an existing one's cert, with the
+    Agnes API when --api-key was given - see _resolve_provision_device_identity
+    for how the choice between the two is made. Returns
+    (mqtt_api_result, cert_bundle):
+    - mqtt_api_result is the DeviceProvisionResponse (has username/password
+      to fill MQTT credentials) when a new device was registered, else None
+      - renew-cert doesn't reissue MQTT credentials, only certs.
+    - cert_bundle is whichever response carries the fresh certs (either
+      one), or None if no API key was given at all.
+    Exits the CLI on any resolution/registration/renewal error."""
+    if not resolved_api_key:
+        return None, None
     if not resolved_api_url:
         print(
             "ERROR: --api-key given without --api-url (and none saved "
@@ -1209,19 +1645,28 @@ def _maybe_register_via_api(name, resolved_api_url, resolved_api_key, resolved_c
             file=sys.stderr,
         )
         raise typer.Exit(code=1)
-    if urlparse(resolved_api_url).scheme == "https" and not resolved_ca_cert:
-        print(
-            "ERROR: --ca-cert is required to verify a https --api-url.",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
+    _require_ca_cert_for_https(resolved_api_url, resolved_ca_cert)
 
-    resolved_name = name
-    if resolved_name is None:
-        if not sys.stdin.isatty():
-            print("ERROR: no TTY to prompt for: --name.", file=sys.stderr)
+    resolved_name, resolved_device_id = _resolve_provision_device_identity(
+        name, resolved_api_url, resolved_api_key, resolved_ca_cert
+    )
+
+    if resolved_device_id is not None:
+        print(
+            f"Renewing cert for device '{resolved_device_id}' via "
+            f"{resolved_api_url}..."
+        )
+        try:
+            cert_bundle = _renew_device_cert_via_api(
+                resolved_api_url,
+                resolved_api_key,
+                resolved_ca_cert,
+                resolved_device_id,
+            )
+        except ProvisionApiError as exc:
+            print(f"ERROR: cert renewal failed: {exc}", file=sys.stderr)
             raise typer.Exit(code=1)
-        resolved_name = typer.prompt("Device name")
+        return None, cert_bundle
 
     print(f"Registering device '{resolved_name}' with {resolved_api_url}...")
     try:
@@ -1234,7 +1679,7 @@ def _maybe_register_via_api(name, resolved_api_url, resolved_api_key, resolved_c
     print(f"Registered device_id={api_result['device_id']}")
     if api_result.get("warning"):
         print(f"NOTE: {api_result['warning']}")
-    return api_result
+    return api_result, api_result
 
 
 def _resolve_given_fields(cli_fields, api_result, resolved_api_url):
@@ -1255,39 +1700,25 @@ def _resolve_given_fields(cli_fields, api_result, resolved_api_url):
     return given
 
 
-def _push_provisioned_config(resolved_port, config_path):
-    """Push config_path to the device over raw REPL. Returns True if pushed,
-    False if written locally only because no device was reachable on
-    resolved_port. Exits the CLI on any other raw-REPL/exec failure."""
-    try:
-        with _raw_repl_session(
-            resolved_port, "provision", exit_on_missing_port=False
-        ) as transport:
-            transport.put_file(config_path, ":device_config.json")
-        return True
-    except DevicePortUnavailable:
-        print(
-            f"NOTE: serial port '{resolved_port}' could not be opened - "
-            f"{config_path.name} was written locally but not pushed to a "
-            "device. Connect the device and rerun 'tinker.py deploy' (or "
-            "provision again) to push it.",
-            file=sys.stderr,
-        )
-        return False
-    except RawReplEntryError as exc:
-        _print_raw_repl_failure(resolved_port)
-        raise typer.Exit(code=1) from exc
-    except DeviceExecError as exc:
-        print(f"ERROR: {exc.stderr}", file=sys.stderr)
-        raise typer.Exit(code=1) from exc
+def _write_provisioned_certs(certs_dir: Path, api_result: dict) -> dict[str, Path]:
+    """Save an API registration result's cert bundle to certs_dir as
+    ca.pem/client.pem/private.pem - the API only returns a device's certs
+    once, at registration time, so this is the only chance to keep a local
+    copy. Mirrors the Agnes project's own tinker.py cert-bundle layout."""
+    paths = {
+        "ca_cert": certs_dir / "ca.pem",
+        "client_cert": certs_dir / "client.pem",
+        "client_key": certs_dir / "private.pem",
+    }
+    certs_dir.mkdir(parents=True, exist_ok=True)
+    paths["ca_cert"].write_text(api_result["ca_cert"])
+    paths["client_cert"].write_text(api_result["certificate"])
+    paths["client_key"].write_text(api_result["private_key"])
+    return paths
 
 
 @app.command()
 def provision(
-    port: Optional[str] = typer.Option(
-        None, "--port", "-p", help="Serial port of device (see 'tinker.py port')"
-    ),
-    baud: Optional[int] = typer.Option(None, "--baud", "-b", help="Baud rate"),
     wifi_ssid: Optional[str] = typer.Option(None, help="WiFi SSID"),
     wifi_password: Optional[str] = typer.Option(None, help="WiFi password"),
     mqtt_broker: Optional[str] = typer.Option(None, help="MQTT broker host"),
@@ -1321,47 +1752,55 @@ def provision(
     profile: Optional[str] = typer.Option(
         None,
         "--profile",
-        help="Profile name to resolve the CA cert from "
-        "(~/.microweaver/<profile>/ca.pem, see 'fetch-ca-cert'). Ignored "
-        "if --ca-cert is also given.",
+        help="Saved profile name (see 'profile create'/'profile list') to "
+        "fill in --port/--baud/--api-url/--api-key/--ca-cert from. Defaults "
+        "to the active profile ('profile use'). Any of those flags given "
+        "explicitly wins over the profile's value.",
     ),
     name: Optional[str] = typer.Option(
-        None, "--name", help="Device name to register with the Agnes API"
+        None,
+        "--name",
+        help="Device name to register with the Agnes API. When omitted "
+        "interactively, existing devices are listed first so you can pick "
+        "one to renew instead of registering a new one.",
+    ),
+    skip_certs: bool = typer.Option(
+        False,
+        "--skip-certs",
+        help="Don't touch cert material at all: omit device_cert/device_key "
+        "from device_config.json and skip writing ./certs/, even when "
+        "registering/renewing via the API.",
     ),
 ) -> None:
-    """Prompt for WiFi/MQTT settings and push a generated device_config.json.
+    """Prompt for WiFi/MQTT settings and write device_config.json.
 
-    Bench/headless alternative to the SoftAP captive-portal setup flow: no
-    phone or laptop needs to join the device's access point, since settings
-    are entered locally and pushed over the same serial connection used by
-    deploy/backup. When --api-url/--api-key (or their .microweaver defaults)
-    are set, device details and MQTT credentials come from the Agnes API
-    (POST /devices) instead of being typed in by hand.
+    Fills in the settings a device needs to connect to WiFi/MQTT, purely on
+    the host - it doesn't touch a serial port. Run 'build' then 'deploy' (or
+    'watch') afterward to actually push it to a device; provisioning and
+    deploying are separate steps; this used to also push over serial, but
+    that duplicated 'deploy' and only added a second, provision-specific
+    raw-REPL failure mode for no benefit.
+
+    When --api-url/--api-key (or their .microweaver defaults) are set and
+    --name is omitted on a TTY, existing devices are listed (Azure-CLI-
+    picker style, see 'certs download') so you can either pick one to renew
+    its cert, or choose to register a brand new device - device details and
+    MQTT credentials then come from the Agnes API instead of being typed in
+    by hand. Either way the response's cert bundle is also saved to
+    ./certs/ca.pem, client.pem, and private.pem (mirroring the Agnes
+    project's own tinker.py cert layout) unless --skip-certs is given,
+    since the API only returns a device's certs once, at registration/
+    renewal time.
     """
     resolved = _resolve_provision_connection_args(
-        port, baud, api_url, api_key, profile, ca_cert
+        None, None, api_url, api_key, profile, ca_cert
     )
-    resolved_port = resolved["port"]
-    resolved_baud = resolved["baud"]
     resolved_api_url = resolved["api_url"]
     resolved_api_key = resolved["api_key"]
     resolved_profile = resolved["profile"]
     resolved_ca_cert = resolved["ca_cert"]
 
-    if resolved_port is None:
-        resolved_port = prompt_for_port()
-        port = resolved_port
-
-    # DeviceTransport always runs at 115200 baud; --baud is accepted for
-    # interface/config-file compatibility but has no effect on the transfer.
-    if resolved_baud != 115200:
-        print(
-            f"NOTE: provision ignores --baud (requested {resolved_baud}), "
-            "connection always runs at 115200.",
-            file=sys.stderr,
-        )
-
-    api_result = _maybe_register_via_api(
+    mqtt_api_result, cert_bundle = _maybe_register_or_renew_via_api(
         name, resolved_api_url, resolved_api_key, resolved_ca_cert
     )
 
@@ -1376,7 +1815,7 @@ def provision(
         "mqtt_username": mqtt_username,
         "mqtt_password": mqtt_password,
     }
-    given = _resolve_given_fields(cli_fields, api_result, resolved_api_url)
+    given = _resolve_given_fields(cli_fields, mqtt_api_result, resolved_api_url)
 
     missing = [key for key, value in given.items() if value is None]
     _require_tty_for_missing(missing)
@@ -1388,10 +1827,13 @@ def provision(
     config_path = ROOT / "device_config.json"
     merged = dict(defaults)
     merged.update(given)
-    if api_result is not None:
-        merged["device_id"] = api_result["device_id"]
-        merged["device_cert"] = api_result["certificate"]
-        merged["device_key"] = api_result["private_key"]
+    if cert_bundle is not None:
+        merged["device_id"] = cert_bundle["device_id"]
+        if not skip_certs:
+            merged["device_cert"] = cert_bundle["certificate"]
+            merged["device_key"] = cert_bundle["private_key"]
+            cert_paths = _write_provisioned_certs(ROOT / "certs", cert_bundle)
+            print(f"Saved cert bundle -> {cert_paths['ca_cert'].parent}")
 
     try:
         Setting(config_path=str(config_path)).save(**merged)
@@ -1399,23 +1841,172 @@ def provision(
         print(f"ERROR: {exc}", file=sys.stderr)
         raise typer.Exit(code=1)
 
-    device_pushed = _push_provisioned_config(resolved_port, config_path)
-
     save_config(
-        port=port,
-        baud=baud,
-        api_url=resolved_api_url if api_result is not None else None,
-        api_key=resolved_api_key if api_result is not None else None,
-        ca_cert=resolved_ca_cert if api_result is not None else None,
-        profile=resolved_profile if api_result is not None else None,
+        api_url=resolved_api_url if cert_bundle is not None else None,
+        api_key=resolved_api_key if cert_bundle is not None else None,
+        ca_cert=resolved_ca_cert if cert_bundle is not None else None,
+        profile=resolved_profile if cert_bundle is not None else None,
     )
-    if device_pushed:
-        print(f"\nProvisioned {resolved_port} with {config_path.name}")
-    else:
-        print(
-            f"\nWrote {config_path.name} locally "
-            f"(not pushed - no device on {resolved_port})"
+    print(
+        f"\nWrote {config_path.name}. Run 'tinker.py build && tinker.py deploy' "
+        "to push it to a device."
+    )
+
+
+def _prompt_device_selection(
+    devices: list[dict], allow_create: bool = False
+) -> Optional[str]:
+    """Print a numbered table of devices and prompt for one, Azure-CLI
+    picker style. Returns the chosen device's id, or None if allow_create
+    and the added 'create new' row (0) was picked instead."""
+    rows = [
+        (
+            index,
+            device["id"],
+            device["name"],
+            "online" if device.get("is_online") else "offline",
+            device.get("last_seen_at") or "never",
         )
+        for index, device in enumerate(devices, start=1)
+    ]
+    prompt_text = "Select a device by number"
+    low = 1
+    if allow_create:
+        rows.append(("0", "-", "Create new device", "-", "-"))
+        prompt_text += ", or 0 to create new"
+        low = 0
+    print_table(["#", "Device ID", "Name", "Status", "Last Seen"], rows)
+    choice = typer.prompt(prompt_text)
+    try:
+        index = int(choice)
+        if not low <= index <= len(devices):
+            raise ValueError
+    except ValueError:
+        print(
+            f"ERROR: '{choice}' is not a valid selection ({low}-{len(devices)}).",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    if allow_create and index == 0:
+        return None
+    return devices[index - 1]["id"]
+
+
+def _resolve_device_id(
+    device_id: Optional[str],
+    resolved_api_url: str,
+    resolved_api_key: str,
+    resolved_ca_cert: Optional[Path],
+) -> str:
+    """Return device_id as given, or list devices via the API and prompt
+    for one (see _prompt_device_selection). Exits the CLI if there's no TTY
+    to pick from, the listing fails, or there are no devices to choose."""
+    if device_id is not None:
+        return device_id
+    if not sys.stdin.isatty():
+        print("ERROR: no TTY to prompt for: --device-id.", file=sys.stderr)
+        raise typer.Exit(code=1)
+    try:
+        devices = _list_devices_via_api(
+            resolved_api_url, resolved_api_key, resolved_ca_cert
+        )
+    except ProvisionApiError as exc:
+        print(f"ERROR: could not list devices: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+    if not devices:
+        print("ERROR: no devices found for this API key.", file=sys.stderr)
+        raise typer.Exit(code=1)
+    return _prompt_device_selection(devices)
+
+
+@certs_app.command("download")
+def certs_download(
+    device_id: Optional[str] = typer.Option(
+        None,
+        "--device-id",
+        help="Existing device's ID (see 'devices list' on the Agnes side) "
+        "to renew and download certs for",
+    ),
+    api_url: Optional[str] = typer.Option(
+        None,
+        "--api-url",
+        help="Agnes API base URL (default: resolved from --profile/.microweaver)",
+    ),
+    api_key: Optional[str] = typer.Option(
+        None,
+        "--api-key",
+        help="Agnes X-API-Key with devices:write scope (default: resolved "
+        "from --profile/.microweaver)",
+    ),
+    ca_cert: Optional[Path] = typer.Option(
+        None,
+        "--ca-cert",
+        help="CA cert to verify --api-url's TLS. Required when --api-url is "
+        "https, unless --profile resolves one via 'fetch-ca-cert'.",
+    ),
+    profile: Optional[str] = typer.Option(
+        None,
+        "--profile",
+        help="Saved profile name (see 'profile create'/'profile list') to "
+        "resolve --api-url/--api-key/--ca-cert from. Defaults to the active "
+        "profile ('profile use').",
+    ),
+    out_dir: Optional[Path] = typer.Option(
+        None,
+        "--out-dir",
+        help="Directory to save ca.pem/client.pem/private.pem into "
+        "(default: ./certs)",
+    ),
+) -> None:
+    """Renew an existing device's cert and save the resulting bundle to
+    --out-dir. When --device-id is omitted and running interactively, lists
+    devices from the Agnes API and prompts for one to pick, Azure-CLI-picker
+    style.
+
+    Calls POST /devices/{device_id}/renew-cert - this issues a fresh
+    certificate for that device and revokes its previously active one, it
+    does not create a new device (see 'provision --api-url' for that). The
+    device's old certificate stops working immediately, so push the new
+    bundle to it (or re-run 'provision'/'deploy') soon after.
+    """
+    resolved = _resolve_provision_connection_args(
+        None, None, api_url, api_key, profile, ca_cert
+    )
+    resolved_api_url = resolved["api_url"]
+    resolved_api_key = resolved["api_key"]
+    resolved_ca_cert = resolved["ca_cert"]
+
+    if not resolved_api_key:
+        print(
+            "ERROR: --api-key required (none saved for this profile or in "
+            ".microweaver).",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    if not resolved_api_url:
+        print(
+            "ERROR: --api-url required (none saved for this profile or in "
+            ".microweaver).",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    _require_ca_cert_for_https(resolved_api_url, resolved_ca_cert)
+
+    resolved_device_id = _resolve_device_id(
+        device_id, resolved_api_url, resolved_api_key, resolved_ca_cert
+    )
+
+    print(f"Renewing cert for device '{resolved_device_id}' via {resolved_api_url}...")
+    try:
+        api_result = _renew_device_cert_via_api(
+            resolved_api_url, resolved_api_key, resolved_ca_cert, resolved_device_id
+        )
+    except ProvisionApiError as exc:
+        print(f"ERROR: cert renewal failed: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    cert_paths = _write_provisioned_certs(out_dir or (ROOT / "certs"), api_result)
+    print(f"Saved cert bundle -> {cert_paths['ca_cert'].parent}")
 
 
 # Mirrors main.py's publish-adapter wiring (enabled-flag attr -> topic-suffix
@@ -1992,28 +2583,12 @@ def _enter_raw_repl_with_retries(
     raise last_error
 
 
-class DevicePortUnavailable(Exception):
-    """Raised by _raw_repl_session (when exit_on_missing_port=False) instead
-    of exiting the process, so a caller can treat 'no device connected' as a
-    non-fatal, skippable condition rather than a hard failure."""
-
-
 @contextmanager
-def _raw_repl_session(
-    resolved_port: str, command_label: str, exit_on_missing_port: bool = True
-):
-    """Yield a DeviceTransport already in raw REPL; always exits+closes after.
-
-    exit_on_missing_port=False turns a closed/missing serial port into
-    DevicePortUnavailable instead of typer.Exit, for callers where talking to
-    a physical device is optional (e.g. 'provision' already did useful work -
-    API registration, local device_config.json - before reaching this step).
-    """
+def _raw_repl_session(resolved_port: str, command_label: str):
+    """Yield a DeviceTransport already in raw REPL; always exits+closes after."""
     try:
         transport = _enter_raw_repl_with_retries(resolved_port, command_label)
     except SerialException as exc:
-        if not exit_on_missing_port:
-            raise DevicePortUnavailable(str(exc)) from exc
         typer.secho(
             f"ERROR: Serial port '{resolved_port}' could not be opened.",
             fg=typer.colors.RED,

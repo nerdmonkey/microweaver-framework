@@ -1552,13 +1552,8 @@ PROVISION_FLAGS = [
 # --------------------------------------------------------------------------
 
 
-def test_provision_success_via_flags(tmp_path, mocker):
-    fake_transport = FakeDeviceTransport()
-    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
-    result = runner.invoke(
-        tinker.app,
-        ["provision", "--port", "/dev/ttyUSB0", *PROVISION_FLAGS],
-    )
+def test_provision_success_via_flags(tmp_path):
+    result = runner.invoke(tinker.app, ["provision", *PROVISION_FLAGS])
     assert result.exit_code == 0
 
     config_path = tmp_path / "device_config.json"
@@ -1567,72 +1562,106 @@ def test_provision_success_via_flags(tmp_path, mocker):
     assert written["mqtt_broker"] == "broker.local"
     assert written["mqtt_port"] == 1884
 
-    assert ("put_file", config_path, ":device_config.json") in fake_transport.calls
-    assert tinker.load_config()["port"] == "/dev/ttyUSB0"
+    assert "Run 'tinker.py build && tinker.py deploy'" in result.stdout
 
 
-def test_provision_custom_baud_warns(mocker):
-    fake_transport = FakeDeviceTransport()
-    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
-    result = runner.invoke(
-        tinker.app,
-        ["provision", "--port", "/dev/ttyUSB0", "--baud", "9600", *PROVISION_FLAGS],
-    )
-    assert result.exit_code == 0
-    assert "ignores --baud" in result.stderr
-
-
-def test_provision_prompts_for_port_when_missing(mocker):
-    fake_transport = FakeDeviceTransport()
-    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
-    mocker.patch.object(tinker, "prompt_for_port", return_value="/dev/ttyUSB9")
-    result = runner.invoke(tinker.app, ["provision", *PROVISION_FLAGS])
-    assert result.exit_code == 0
-    assert tinker.load_config()["port"] == "/dev/ttyUSB9"
-
-
-def test_provision_missing_fields_not_tty(mocker):
-    result = runner.invoke(tinker.app, ["provision", "--port", "/dev/ttyUSB0"])
+def test_provision_missing_fields_not_tty():
+    result = runner.invoke(tinker.app, ["provision"])
     assert result.exit_code == 1
     assert "no TTY to prompt for" in result.stderr
     assert "--wifi-ssid" in result.stderr
 
 
-def test_provision_raw_repl_failure(mocker):
-    mocker.patch.object(tinker.time, "sleep")
-    fake_transport = FakeDeviceTransport(
-        raise_on="enter_raw_repl",
-        error=tinker.RawReplEntryError("could not enter raw repl"),
-    )
-    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+def test_provision_api_key_without_name_not_tty_errors():
     result = runner.invoke(
         tinker.app,
-        ["provision", "--port", "/dev/ttyUSB0", *PROVISION_FLAGS],
+        [
+            "provision",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            *PROVISION_FLAGS,
+        ],
     )
     assert result.exit_code == 1
-    assert "could not enter raw REPL on /dev/ttyUSB0" in result.stderr
+    assert "no TTY to prompt for: --name" in result.stderr
 
 
-def test_provision_exec_error(mocker):
-    fake_transport = FakeDeviceTransport(
-        raise_on="put_file",
-        error=tinker.DeviceExecError("", "OSError: device busy"),
-    )
-    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+def test_provision_api_key_without_api_url_errors():
     result = runner.invoke(
         tinker.app,
-        ["provision", "--port", "/dev/ttyUSB0", *PROVISION_FLAGS],
+        [
+            "provision",
+            "--api-key",
+            "test-key",
+            "--name",
+            "test-device",
+            *PROVISION_FLAGS,
+        ],
     )
     assert result.exit_code == 1
-    assert "OSError: device busy" in result.stderr
+    assert "--api-key given without --api-url" in result.stderr
 
 
-def test_provision_invalid_config_rejected(mocker):
-    fake_transport = FakeDeviceTransport()
-    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
+def test_provision_registration_api_error(mocker):
+    mocker.patch.object(
+        tinker,
+        "_provision_device_via_api",
+        side_effect=tinker.ProvisionApiError("device already exists"),
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "provision",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--name",
+            "test-device",
+            *PROVISION_FLAGS,
+        ],
+    )
+    assert result.exit_code == 1
+    assert "device registration failed" in result.stderr
+
+
+def test_provision_interactive_picked_device_renewal_api_error(mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker, "_list_devices_via_api", return_value=_fake_agnes_device_list()
+    )
+    mocker.patch.object(tinker.typer, "prompt", return_value="1")
+    mocker.patch.object(
+        tinker,
+        "_renew_device_cert_via_api",
+        side_effect=tinker.ProvisionApiError("device not found"),
+    )
+    with pytest.raises(typer.Exit):
+        tinker.provision(
+            wifi_ssid="MySSID",
+            wifi_password="MyPass",
+            mqtt_broker="broker.local",
+            mqtt_port=1884,
+            mqtt_client_id="device-1",
+            mqtt_topic_pub="pub/topic",
+            mqtt_topic_sub="sub/topic",
+            mqtt_username="muser",
+            mqtt_password="mpass",
+            api_url="http://agnes.local",
+            api_key="test-key",
+            ca_cert=None,
+            profile=None,
+            name=None,
+            skip_certs=False,
+        )
+
+
+def test_provision_invalid_config_rejected():
     flags = list(PROVISION_FLAGS)
     flags[flags.index("1884")] = "999999"  # out of the schema's 1-65535 range
-    result = runner.invoke(tinker.app, ["provision", "--port", "/dev/ttyUSB0", *flags])
+    result = runner.invoke(tinker.app, ["provision", *flags])
     assert result.exit_code == 1
     assert "ERROR" in result.stderr
 
@@ -1645,8 +1674,6 @@ def test_provision_interactive_prompts_fill_only_missing(tmp_path, mocker):
         json.dumps({"mqtt_broker": "example-broker"})
     )
     mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
-    fake_transport = FakeDeviceTransport()
-    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     mocker.patch.object(
         tinker.typer,
         "prompt",
@@ -1663,8 +1690,6 @@ def test_provision_interactive_prompts_fill_only_missing(tmp_path, mocker):
     )
 
     tinker.provision(
-        port="/dev/ttyUSB5",
-        baud=None,
         wifi_ssid="GivenSSID",
         wifi_password=None,
         mqtt_broker=None,
@@ -1679,6 +1704,7 @@ def test_provision_interactive_prompts_fill_only_missing(tmp_path, mocker):
         ca_cert=None,
         profile=None,
         name=None,
+        skip_certs=False,
     )
 
     written = json.loads((tmp_path / "device_config.json").read_text())
@@ -1694,8 +1720,6 @@ def test_provision_masks_existing_secret_default(tmp_path, mocker):
         json.dumps({"wifi_password": "super-secret", "mqtt_broker": "localhost"})
     )
     mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
-    fake_transport = FakeDeviceTransport()
-    mocker.patch.object(tinker, "DeviceTransport", return_value=fake_transport)
     mock_prompt = mocker.patch.object(
         tinker.typer,
         "prompt",
@@ -1713,8 +1737,6 @@ def test_provision_masks_existing_secret_default(tmp_path, mocker):
     )
 
     tinker.provision(
-        port="/dev/ttyUSB5",
-        baud=None,
         wifi_ssid=None,
         wifi_password=None,
         mqtt_broker=None,
@@ -1729,6 +1751,7 @@ def test_provision_masks_existing_secret_default(tmp_path, mocker):
         ca_cert=None,
         profile=None,
         name=None,
+        skip_certs=False,
     )
 
     written = json.loads((tmp_path / "device_config.json").read_text())
@@ -1740,6 +1763,285 @@ def test_provision_masks_existing_secret_default(tmp_path, mocker):
     assert wifi_password_call.kwargs["default"] == ""
     assert wifi_password_call.kwargs["hide_input"] is True
     assert wifi_password_call.kwargs["show_default"] is False
+
+
+def test_provision_via_api_saves_cert_bundle(tmp_path, mocker):
+    # The Agnes API only returns a device's certs once, at registration
+    # time - 'provision' must save them to ./certs/ right then, since
+    # there's no later endpoint to re-fetch them from.
+    mocker.patch.object(
+        tinker,
+        "_provision_device_via_api",
+        return_value={
+            "device_id": "dev-123",
+            "username": "mqtt-user",
+            "password": "mqtt-pass",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+        },
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "provision",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--name",
+            "test-device",
+            *PROVISION_FLAGS,
+        ],
+    )
+    assert result.exit_code == 0
+    certs_dir = tmp_path / "certs"
+    assert (certs_dir / "ca.pem").read_text() == "CA-PEM"
+    assert (certs_dir / "client.pem").read_text() == "CERT-PEM"
+    assert (certs_dir / "private.pem").read_text() == "KEY-PEM"
+    assert f"Saved cert bundle -> {certs_dir}" in result.stdout
+
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["device_cert"] == "CERT-PEM"
+    assert written["device_key"] == "KEY-PEM"
+
+
+def test_provision_without_api_key_skips_cert_bundle(tmp_path):
+    result = runner.invoke(tinker.app, ["provision", *PROVISION_FLAGS])
+    assert result.exit_code == 0
+    assert not (tmp_path / "certs").exists()
+
+
+def test_provision_skip_certs_omits_cert_material(tmp_path, mocker):
+    mocker.patch.object(
+        tinker,
+        "_provision_device_via_api",
+        return_value={
+            "device_id": "dev-123",
+            "username": "mqtt-user",
+            "password": "mqtt-pass",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+        },
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "provision",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--name",
+            "test-device",
+            "--skip-certs",
+            *PROVISION_FLAGS,
+        ],
+    )
+    assert result.exit_code == 0
+    assert not (tmp_path / "certs").exists()
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["device_id"] == "dev-123"
+    assert "device_cert" not in written
+    assert "device_key" not in written
+
+
+def _fake_agnes_device_list():
+    return [
+        {
+            "id": "dev-1",
+            "name": "kitchen-sensor",
+            "is_online": True,
+            "last_seen_at": "2026-08-16T00:00:00Z",
+        },
+        {
+            "id": "dev-2",
+            "name": "garage-relay",
+            "is_online": False,
+            "last_seen_at": None,
+        },
+    ]
+
+
+def test_provision_interactive_picks_existing_device_and_renews_cert(tmp_path, mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker, "_list_devices_via_api", return_value=_fake_agnes_device_list()
+    )
+    mocker.patch.object(tinker.typer, "prompt", return_value="1")
+    mock_renew = mocker.patch.object(
+        tinker,
+        "_renew_device_cert_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+            "expires_at": "2027-01-01T00:00:00Z",
+        },
+    )
+    mock_register = mocker.patch.object(tinker, "_provision_device_via_api")
+
+    tinker.provision(
+        wifi_ssid="MySSID",
+        wifi_password="MyPass",
+        mqtt_broker="broker.local",
+        mqtt_port=1884,
+        mqtt_client_id="device-1",
+        mqtt_topic_pub="pub/topic",
+        mqtt_topic_sub="sub/topic",
+        mqtt_username="muser",
+        mqtt_password="mpass",
+        api_url="http://agnes.local",
+        api_key="test-key",
+        ca_cert=None,
+        profile=None,
+        name=None,
+        skip_certs=False,
+    )
+
+    mock_renew.assert_called_once_with("http://agnes.local", "test-key", None, "dev-1")
+    mock_register.assert_not_called()
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["device_id"] == "dev-1"
+    assert written["device_cert"] == "CERT-PEM"
+    assert written["device_key"] == "KEY-PEM"
+    assert written["mqtt_broker"] == "broker.local"  # from the CLI flag, not the API
+    certs_dir = tmp_path / "certs"
+    assert (certs_dir / "ca.pem").read_text() == "CA-PEM"
+
+
+def test_provision_interactive_create_new_from_picker(tmp_path, mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker, "_list_devices_via_api", return_value=_fake_agnes_device_list()
+    )
+    mocker.patch.object(tinker.typer, "prompt", side_effect=["0", "new-device-name"])
+    mock_register = mocker.patch.object(
+        tinker,
+        "_provision_device_via_api",
+        return_value={
+            "device_id": "dev-999",
+            "username": "mqtt-user",
+            "password": "mqtt-pass",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+        },
+    )
+    mock_renew = mocker.patch.object(tinker, "_renew_device_cert_via_api")
+
+    tinker.provision(
+        wifi_ssid="MySSID",
+        wifi_password="MyPass",
+        mqtt_broker=None,
+        mqtt_port=None,
+        mqtt_client_id=None,
+        mqtt_topic_pub="pub/topic",
+        mqtt_topic_sub="sub/topic",
+        mqtt_username=None,
+        mqtt_password=None,
+        api_url="http://agnes.local",
+        api_key="test-key",
+        ca_cert=None,
+        profile=None,
+        name=None,
+        skip_certs=False,
+    )
+
+    mock_register.assert_called_once_with(
+        "http://agnes.local", "test-key", None, "new-device-name"
+    )
+    mock_renew.assert_not_called()
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["mqtt_username"] == "mqtt-user"
+    assert written["mqtt_password"] == "mqtt-pass"
+    assert written["mqtt_client_id"] == "dev-999"
+
+
+def test_provision_device_listing_failure_falls_back_to_name_prompt(mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker,
+        "_list_devices_via_api",
+        side_effect=tinker.ProvisionApiError("unauthorized"),
+    )
+    mocker.patch.object(tinker.typer, "prompt", return_value="new-device-name")
+    mock_register = mocker.patch.object(
+        tinker,
+        "_provision_device_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "username": "u",
+            "password": "p",
+            "certificate": "C",
+            "private_key": "K",
+            "ca_cert": "CA",
+        },
+    )
+
+    tinker.provision(
+        wifi_ssid="MySSID",
+        wifi_password="MyPass",
+        mqtt_broker=None,
+        mqtt_port=None,
+        mqtt_client_id=None,
+        mqtt_topic_pub="pub/topic",
+        mqtt_topic_sub="sub/topic",
+        mqtt_username=None,
+        mqtt_password=None,
+        api_url="http://agnes.local",
+        api_key="test-key",
+        ca_cert=None,
+        profile=None,
+        name=None,
+        skip_certs=False,
+    )
+
+    mock_register.assert_called_once_with(
+        "http://agnes.local", "test-key", None, "new-device-name"
+    )
+
+
+def test_provision_no_existing_devices_falls_back_to_name_prompt(mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(tinker, "_list_devices_via_api", return_value=[])
+    mocker.patch.object(tinker.typer, "prompt", return_value="new-device-name")
+    mock_register = mocker.patch.object(
+        tinker,
+        "_provision_device_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "username": "u",
+            "password": "p",
+            "certificate": "C",
+            "private_key": "K",
+            "ca_cert": "CA",
+        },
+    )
+
+    tinker.provision(
+        wifi_ssid="MySSID",
+        wifi_password="MyPass",
+        mqtt_broker=None,
+        mqtt_port=None,
+        mqtt_client_id=None,
+        mqtt_topic_pub="pub/topic",
+        mqtt_topic_sub="sub/topic",
+        mqtt_username=None,
+        mqtt_password=None,
+        api_url="http://agnes.local",
+        api_key="test-key",
+        ca_cert=None,
+        profile=None,
+        name=None,
+        skip_certs=False,
+    )
+
+    mock_register.assert_called_once_with(
+        "http://agnes.local", "test-key", None, "new-device-name"
+    )
 
 
 def test_load_provision_defaults_prefers_existing_config(tmp_path):
@@ -1919,6 +2221,726 @@ def test_config_set_interactive_prompts(mocker):
     )
     tinker.config_set(port=None, baud=None, path=None)
     assert tinker.load_config()["port"] == "/dev/ttyUSB5"
+
+
+# --------------------------------------------------------------------------
+# profile list / show / create / edit / delete / use
+# --------------------------------------------------------------------------
+
+
+def test_profile_list_empty():
+    result = runner.invoke(tinker.app, ["profile", "list"])
+    assert result.exit_code == 0
+    assert "No profiles saved" in result.stdout
+
+
+def test_profile_create_via_flags(mocker):
+    mocker.patch.object(tinker, "_fetch_ca_cert", return_value="PEM-BEGIN CERTIFICATE")
+    result = runner.invoke(
+        tinker.app,
+        [
+            "profile",
+            "create",
+            "lab",
+            "--api-url",
+            "https://lab.local",
+            "--port",
+            "/dev/ttyUSB0",
+        ],
+    )
+    assert result.exit_code == 0
+    assert tinker.load_profile("lab") == {
+        "api_url": "https://lab.local",
+        "port": "/dev/ttyUSB0",
+    }
+    # 'create' defaults to activating the new profile.
+    assert tinker.load_config()["profile"] == "lab"
+
+
+def test_profile_create_fetches_ca_cert_when_api_url_given(mocker):
+    mocker.patch.object(tinker, "_fetch_ca_cert", return_value="PEM-BEGIN CERTIFICATE")
+    result = runner.invoke(
+        tinker.app,
+        ["profile", "create", "lab", "--api-url", "https://lab.local"],
+    )
+    assert result.exit_code == 0
+    ca_path = tinker.HOME_CONFIG_DIR / "lab" / "ca.pem"
+    assert ca_path.read_text() == "PEM-BEGIN CERTIFICATE"
+    assert "Saved CA cert" in result.stdout
+
+
+def test_profile_create_ca_cert_fetch_failure_warns_but_succeeds(mocker):
+    mocker.patch.object(
+        tinker,
+        "_fetch_ca_cert",
+        side_effect=tinker.ProvisionApiError("connection refused"),
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["profile", "create", "lab", "--api-url", "https://lab.local"],
+    )
+    # The profile is already saved by the time the CA fetch is attempted, so
+    # a fetch failure only warns instead of failing the whole command.
+    assert result.exit_code == 0
+    assert "WARNING: could not fetch CA cert: connection refused" in result.stderr
+    assert tinker.load_profile("lab")["api_url"] == "https://lab.local"
+
+
+def test_profile_create_no_activate():
+    result = runner.invoke(tinker.app, ["profile", "create", "lab", "--no-activate"])
+    assert result.exit_code == 0
+    assert tinker.load_config().get("profile") is None
+    assert "Created empty profile 'lab'" in result.stdout
+
+
+def test_profile_create_no_name_not_tty():
+    result = runner.invoke(tinker.app, ["profile", "create"])
+    assert result.exit_code == 1
+    assert "no TTY to prompt for: name" in result.stderr
+
+
+def test_profile_create_interactive_prompts_for_name(mocker):
+    mocker.patch.object(tinker, "_fetch_ca_cert", return_value="PEM-BEGIN CERTIFICATE")
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker.typer,
+        "prompt",
+        side_effect=["lab", "https://lab.local", "secret-key", "/dev/ttyUSB0"],
+    )
+    tinker.profile_create(
+        name=None, api_url=None, api_key=None, port=None, baud=None, activate=True
+    )
+    saved = tinker.load_profile("lab")
+    assert saved["api_url"] == "https://lab.local"
+    assert saved["api_key"] == "secret-key"
+    assert saved["port"] == "/dev/ttyUSB0"
+
+
+def test_profile_create_interactive_blank_name_rejected(mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(tinker.typer, "prompt", side_effect=[""])
+    with pytest.raises(typer.Exit):
+        tinker.profile_create(
+            name=None, api_url=None, api_key=None, port=None, baud=None, activate=True
+        )
+
+
+def test_profile_create_interactive_prompts(mocker):
+    # CliRunner swaps sys.stdin for its own fake stream during invoke(), so
+    # isatty must be mocked directly and the command called without the CLI
+    # runner to keep the mock in effect (mirrors test_config_set_interactive).
+    mocker.patch.object(tinker, "_fetch_ca_cert", return_value="PEM-BEGIN CERTIFICATE")
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker.typer,
+        "prompt",
+        side_effect=["https://lab.local", "secret-key", "/dev/ttyUSB0"],
+    )
+    tinker.profile_create(
+        name="lab", api_url=None, api_key=None, port=None, baud=None, activate=True
+    )
+    saved = tinker.load_profile("lab")
+    assert saved["api_url"] == "https://lab.local"
+    assert saved["api_key"] == "secret-key"
+    assert saved["port"] == "/dev/ttyUSB0"
+
+
+def test_profile_create_interactive_blank_skips_field(mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(tinker.typer, "prompt", side_effect=["", "", ""])
+    tinker.profile_create(
+        name="lab", api_url=None, api_key=None, port=None, baud=None, activate=True
+    )
+    assert tinker.load_profile("lab") == {}
+
+
+def test_profile_create_interactive_fills_only_missing(mocker):
+    mocker.patch.object(tinker, "_fetch_ca_cert", return_value="PEM-BEGIN CERTIFICATE")
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker.typer, "prompt", side_effect=["secret-key", "/dev/ttyUSB0"]
+    )
+    tinker.profile_create(
+        name="lab",
+        api_url="https://given.local",
+        api_key=None,
+        port=None,
+        baud=None,
+        activate=True,
+    )
+    saved = tinker.load_profile("lab")
+    assert saved["api_url"] == "https://given.local"
+    assert saved["api_key"] == "secret-key"
+    assert saved["port"] == "/dev/ttyUSB0"
+
+
+def test_profile_create_duplicate_rejected():
+    tinker.save_profile("lab", api_url="https://lab.local")
+    result = runner.invoke(tinker.app, ["profile", "create", "lab"])
+    assert result.exit_code == 1
+    assert "already exists" in result.stderr
+
+
+def test_profile_edit_updates_existing():
+    tinker.save_profile("lab", api_url="https://lab.local")
+    result = runner.invoke(
+        tinker.app, ["profile", "edit", "lab", "--api-key", "secret-key"]
+    )
+    assert result.exit_code == 0
+    assert tinker.load_profile("lab")["api_key"] == "secret-key"
+    assert tinker.load_profile("lab")["api_url"] == "https://lab.local"
+
+
+def test_profile_edit_missing_profile_rejected():
+    result = runner.invoke(tinker.app, ["profile", "edit", "ghost", "--port", "x"])
+    assert result.exit_code == 1
+    assert "no profile named 'ghost'" in result.stderr
+
+
+def test_profile_edit_nothing_to_set():
+    tinker.save_profile("lab", api_url="https://lab.local")
+    result = runner.invoke(tinker.app, ["profile", "edit", "lab"])
+    assert result.exit_code == 1
+    assert "Nothing to set" in result.stderr
+
+
+def test_profile_edit_no_name_not_tty():
+    result = runner.invoke(tinker.app, ["profile", "edit"])
+    assert result.exit_code == 1
+    assert "no TTY to prompt for: name" in result.stderr
+
+
+def test_profile_edit_interactive_prompts_for_name(mocker):
+    tinker.save_profile("lab", api_url="https://lab.local")
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    # typer.prompt is mocked wholesale, so click's own default-substitution
+    # never runs - "https://lab.local" here simulates what a real user
+    # pressing Enter on that field would get back (the existing value shown
+    # as the prompt's default), not a literal blank.
+    mocker.patch.object(
+        tinker.typer,
+        "prompt",
+        side_effect=["lab", "https://lab.local", "secret-key", ""],
+    )
+    tinker.profile_edit(name=None, api_url=None, api_key=None, port=None, baud=None)
+    saved = tinker.load_profile("lab")
+    assert saved["api_url"] == "https://lab.local"  # default re-affirmed, unchanged
+    assert saved["api_key"] == "secret-key"
+
+
+def test_profile_edit_interactive_blank_name_rejected(mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(tinker.typer, "prompt", side_effect=[""])
+    with pytest.raises(typer.Exit):
+        tinker.profile_edit(name=None, api_url=None, api_key=None, port=None, baud=None)
+
+
+def test_profile_edit_interactive_existing_secret_kept_when_blank(mocker):
+    tinker.save_profile("lab", api_key="old-secret")
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(tinker.typer, "prompt", side_effect=["", "", ""])
+    tinker.profile_edit(name="lab", api_url=None, api_key=None, port=None, baud=None)
+    assert tinker.load_profile("lab")["api_key"] == "old-secret"
+
+
+def test_profile_edit_interactive_existing_secret_replaced_when_typed(mocker):
+    tinker.save_profile("lab", api_key="old-secret")
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(tinker.typer, "prompt", side_effect=["", "new-secret", ""])
+    tinker.profile_edit(name="lab", api_url=None, api_key=None, port=None, baud=None)
+    assert tinker.load_profile("lab")["api_key"] == "new-secret"
+
+
+def test_profile_edit_interactive_fills_only_missing(mocker):
+    tinker.save_profile("lab", api_url="https://lab.local")
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker.typer, "prompt", side_effect=["secret-key", "/dev/ttyUSB0"]
+    )
+    tinker.profile_edit(
+        name="lab",
+        api_url="https://given.local",
+        api_key=None,
+        port=None,
+        baud=None,
+    )
+    saved = tinker.load_profile("lab")
+    assert saved["api_url"] == "https://given.local"
+    assert saved["api_key"] == "secret-key"
+    assert saved["port"] == "/dev/ttyUSB0"
+
+
+def test_profile_show_masks_api_key_by_default():
+    tinker.save_profile("lab", api_url="https://lab.local", api_key="secret-key")
+    result = runner.invoke(tinker.app, ["profile", "show", "lab"])
+    assert result.exit_code == 0
+    assert "secret-key" not in result.stdout
+    assert "********" in result.stdout
+
+
+def test_profile_show_reveal():
+    tinker.save_profile("lab", api_key="secret-key")
+    result = runner.invoke(tinker.app, ["profile", "show", "lab", "--reveal"])
+    assert result.exit_code == 0
+    assert "secret-key" in result.stdout
+
+
+def test_profile_show_missing_profile_rejected():
+    result = runner.invoke(tinker.app, ["profile", "show", "ghost"])
+    assert result.exit_code == 1
+    assert "no profile named 'ghost'" in result.stderr
+
+
+def test_profile_list_marks_active():
+    tinker.save_profile("lab", api_url="https://lab.local")
+    tinker.save_profile("field", api_url="https://field.local")
+    tinker.save_config(profile="lab")
+    result = runner.invoke(tinker.app, ["profile", "list"])
+    assert result.exit_code == 0
+    assert "* lab" in result.stdout
+    assert "field" in result.stdout and "* field" not in result.stdout
+
+
+def test_profile_delete():
+    tinker.save_profile("lab", api_url="https://lab.local")
+    result = runner.invoke(tinker.app, ["profile", "delete", "lab", "--yes"])
+    assert result.exit_code == 0
+    assert "Deleted profile 'lab'" in result.stdout
+    assert tinker.load_profile("lab") == {}
+
+
+def test_profile_delete_clears_active_pointer():
+    tinker.save_profile("lab", api_url="https://lab.local")
+    tinker.save_config(profile="lab")
+    runner.invoke(tinker.app, ["profile", "delete", "lab", "--yes"])
+    assert tinker.load_config().get("profile") is None
+
+
+def test_profile_delete_missing_profile_rejected():
+    result = runner.invoke(tinker.app, ["profile", "delete", "ghost", "--yes"])
+    assert result.exit_code == 1
+    assert "no profile named 'ghost'" in result.stderr
+
+
+def test_profile_delete_declined_confirmation(mocker):
+    tinker.save_profile("lab", api_url="https://lab.local")
+    mocker.patch.object(tinker.typer, "confirm", return_value=False)
+    result = runner.invoke(tinker.app, ["profile", "delete", "lab"])
+    assert result.exit_code == 0
+    assert tinker.load_profile("lab") != {}
+
+
+def test_profile_use():
+    tinker.save_profile("lab", api_url="https://lab.local")
+    result = runner.invoke(tinker.app, ["profile", "use", "lab"])
+    assert result.exit_code == 0
+    assert "Active profile -> lab" in result.stdout
+    assert tinker.load_config()["profile"] == "lab"
+
+
+def test_profile_use_missing_profile_rejected():
+    result = runner.invoke(tinker.app, ["profile", "use", "ghost"])
+    assert result.exit_code == 1
+    assert "no profile named 'ghost'" in result.stderr
+
+
+def test_delete_profile_missing_config_file_returns_false():
+    assert tinker.delete_profile("ghost") is False
+
+
+# --------------------------------------------------------------------------
+# _resolve_provision_connection_args precedence: CLI > profile > [default]
+# --------------------------------------------------------------------------
+
+
+def test_resolve_provision_args_prefers_cli_over_profile():
+    tinker.save_profile("lab", api_url="https://profile.local", port="/dev/ttyUSB1")
+    resolved = tinker._resolve_provision_connection_args(
+        port="/dev/ttyUSB9",
+        baud=None,
+        api_url=None,
+        api_key=None,
+        profile="lab",
+        ca_cert=None,
+    )
+    assert resolved["port"] == "/dev/ttyUSB9"
+    assert resolved["api_url"] == "https://profile.local"
+
+
+def test_resolve_provision_args_prefers_profile_over_default():
+    tinker.save_config(api_url="https://default.local", port="/dev/default")
+    tinker.save_profile("lab", api_url="https://profile.local")
+    resolved = tinker._resolve_provision_connection_args(
+        port=None, baud=None, api_url=None, api_key=None, profile="lab", ca_cert=None
+    )
+    assert resolved["api_url"] == "https://profile.local"
+    # profile has no port saved, so it falls through to [default].
+    assert resolved["port"] == "/dev/default"
+
+
+def test_resolve_provision_args_uses_active_profile_when_none_given():
+    tinker.save_profile("lab", api_url="https://profile.local")
+    tinker.save_config(profile="lab")
+    resolved = tinker._resolve_provision_connection_args(
+        port=None, baud=None, api_url=None, api_key=None, profile=None, ca_cert=None
+    )
+    assert resolved["profile"] == "lab"
+    assert resolved["api_url"] == "https://profile.local"
+
+
+def test_resolve_provision_args_profile_ca_cert_overrides_default(tmp_path):
+    profile_ca = tmp_path / "profile-ca.pem"
+    profile_ca.write_text("profile-pem")
+    default_ca = tmp_path / "default-ca.pem"
+    default_ca.write_text("default-pem")
+    tinker.save_config(ca_cert=str(default_ca))
+    tinker.save_profile("lab", ca_cert=str(profile_ca))
+    resolved = tinker._resolve_provision_connection_args(
+        port=None, baud=None, api_url=None, api_key=None, profile="lab", ca_cert=None
+    )
+    assert resolved["ca_cert"] == profile_ca
+
+
+def test_resolve_provision_args_baud_falls_back_to_default_when_no_flag():
+    resolved = tinker._resolve_provision_connection_args(
+        port=None, baud=None, api_url=None, api_key=None, profile=None, ca_cert=None
+    )
+    assert resolved["baud"] == tinker.DEFAULT_BAUD
+
+
+# --------------------------------------------------------------------------
+# fetch-ca-cert / profile integration
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def isolate_home_config_dir(tmp_path, monkeypatch):
+    """Keep 'fetch-ca-cert's ~/.microweaver/<profile>/ca.pem writes off the
+    real home directory."""
+    monkeypatch.setattr(tinker, "HOME_CONFIG_DIR", tmp_path / "home-microweaver")
+
+
+def test_fetch_ca_cert_saves_cert_and_creates_profile(mocker):
+    mocker.patch.object(tinker, "_fetch_ca_cert", return_value="PEM-BEGIN CERTIFICATE")
+    result = runner.invoke(
+        tinker.app,
+        ["fetch-ca-cert", "lab", "--api-url", "https://lab.local"],
+    )
+    assert result.exit_code == 0
+    ca_path = tinker.HOME_CONFIG_DIR / "lab" / "ca.pem"
+    assert ca_path.read_text() == "PEM-BEGIN CERTIFICATE"
+    assert tinker.load_profile("lab")["api_url"] == "https://lab.local"
+    assert tinker.load_config()["profile"] == "lab"
+
+
+def test_fetch_ca_cert_reuses_saved_profile_api_url(mocker):
+    tinker.save_profile("lab", api_url="https://lab.local")
+    mock_fetch = mocker.patch.object(
+        tinker, "_fetch_ca_cert", return_value="PEM-BEGIN CERTIFICATE"
+    )
+    result = runner.invoke(tinker.app, ["fetch-ca-cert", "lab"])
+    assert result.exit_code == 0
+    mock_fetch.assert_called_once_with("https://lab.local")
+
+
+def test_fetch_ca_cert_no_api_url_anywhere_errors():
+    result = runner.invoke(tinker.app, ["fetch-ca-cert", "lab"])
+    assert result.exit_code == 1
+    assert "--api-url required" in result.stderr
+
+
+def test_fetch_ca_cert_api_error(mocker):
+    mocker.patch.object(
+        tinker,
+        "_fetch_ca_cert",
+        side_effect=tinker.ProvisionApiError("connection refused"),
+    )
+    result = runner.invoke(
+        tinker.app, ["fetch-ca-cert", "lab", "--api-url", "https://lab.local"]
+    )
+    assert result.exit_code == 1
+    assert "connection refused" in result.stderr
+
+
+# --------------------------------------------------------------------------
+# certs download
+# --------------------------------------------------------------------------
+
+
+def _fake_renew_bundle(**overrides):
+    bundle = {
+        "device_id": "dev-123",
+        "certificate": "CERT-PEM",
+        "private_key": "KEY-PEM",
+        "ca_cert": "CA-PEM",
+        "expires_at": "2027-01-01T00:00:00Z",
+    }
+    bundle.update(overrides)
+    return bundle
+
+
+def test_certs_download_saves_bundle(tmp_path, mocker):
+    mocker.patch.object(
+        tinker, "_renew_device_cert_via_api", return_value=_fake_renew_bundle()
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "certs",
+            "download",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--device-id",
+            "dev-123",
+        ],
+    )
+    assert result.exit_code == 0
+    certs_dir = tmp_path / "certs"
+    assert (certs_dir / "ca.pem").read_text() == "CA-PEM"
+    assert (certs_dir / "client.pem").read_text() == "CERT-PEM"
+    assert (certs_dir / "private.pem").read_text() == "KEY-PEM"
+    assert f"Saved cert bundle -> {certs_dir}" in result.stdout
+
+
+def test_certs_download_does_not_register_new_device(mocker):
+    # 'certs download' must never touch the register-a-new-device endpoint -
+    # it only renews an existing device's cert.
+    provision_mock = mocker.patch.object(tinker, "_provision_device_via_api")
+    mocker.patch.object(
+        tinker, "_renew_device_cert_via_api", return_value=_fake_renew_bundle()
+    )
+    runner.invoke(
+        tinker.app,
+        [
+            "certs",
+            "download",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--device-id",
+            "dev-123",
+        ],
+    )
+    provision_mock.assert_not_called()
+
+
+def test_certs_download_custom_out_dir(tmp_path, mocker):
+    mocker.patch.object(
+        tinker, "_renew_device_cert_via_api", return_value=_fake_renew_bundle()
+    )
+    out_dir = tmp_path / "elsewhere"
+    result = runner.invoke(
+        tinker.app,
+        [
+            "certs",
+            "download",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--device-id",
+            "dev-123",
+            "--out-dir",
+            str(out_dir),
+        ],
+    )
+    assert result.exit_code == 0
+    assert (out_dir / "ca.pem").read_text() == "CA-PEM"
+
+
+def test_certs_download_uses_active_profile(tmp_path, mocker):
+    tinker.save_profile("lab", api_url="http://agnes.local", api_key="profile-key")
+    tinker.save_config(profile="lab")
+    mock_api = mocker.patch.object(
+        tinker, "_renew_device_cert_via_api", return_value=_fake_renew_bundle()
+    )
+    result = runner.invoke(tinker.app, ["certs", "download", "--device-id", "dev-123"])
+    assert result.exit_code == 0
+    mock_api.assert_called_once_with(
+        "http://agnes.local", "profile-key", None, "dev-123"
+    )
+
+
+def test_certs_download_missing_api_key_errors():
+    result = runner.invoke(
+        tinker.app,
+        ["certs", "download", "--api-url", "http://agnes.local", "--device-id", "d"],
+    )
+    assert result.exit_code == 1
+    assert "--api-key required" in result.stderr
+
+
+def test_certs_download_missing_api_url_errors():
+    result = runner.invoke(
+        tinker.app,
+        ["certs", "download", "--api-key", "test-key", "--device-id", "d"],
+    )
+    assert result.exit_code == 1
+    assert "--api-url required" in result.stderr
+
+
+def test_certs_download_https_without_ca_cert_errors():
+    result = runner.invoke(
+        tinker.app,
+        [
+            "certs",
+            "download",
+            "--api-url",
+            "https://agnes.local",
+            "--api-key",
+            "test-key",
+            "--device-id",
+            "d",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "--ca-cert is required" in result.stderr
+
+
+def test_certs_download_no_tty_missing_device_id_errors():
+    result = runner.invoke(
+        tinker.app,
+        ["certs", "download", "--api-url", "http://agnes.local", "--api-key", "k"],
+    )
+    assert result.exit_code == 1
+    assert "no TTY to prompt for: --device-id" in result.stderr
+
+
+def _fake_device_list():
+    return [
+        {
+            "id": "dev-1",
+            "name": "kitchen-sensor",
+            "is_online": True,
+            "last_seen_at": "2026-08-16T00:00:00Z",
+        },
+        {
+            "id": "dev-2",
+            "name": "garage-relay",
+            "is_online": False,
+            "last_seen_at": None,
+        },
+    ]
+
+
+def test_certs_download_interactive_lists_and_prompts_for_device(mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker, "_list_devices_via_api", return_value=_fake_device_list()
+    )
+    mocker.patch.object(tinker.typer, "prompt", return_value="2")
+    mock_renew = mocker.patch.object(
+        tinker, "_renew_device_cert_via_api", return_value=_fake_renew_bundle()
+    )
+    tinker.certs_download(
+        device_id=None,
+        api_url="http://agnes.local",
+        api_key="test-key",
+        ca_cert=None,
+        profile=None,
+        out_dir=None,
+    )
+    # Picked #2 - garage-relay/dev-2, not the first device in the list.
+    mock_renew.assert_called_once_with("http://agnes.local", "test-key", None, "dev-2")
+
+
+def test_certs_download_given_device_id_skips_listing(mocker):
+    list_mock = mocker.patch.object(tinker, "_list_devices_via_api")
+    mocker.patch.object(
+        tinker, "_renew_device_cert_via_api", return_value=_fake_renew_bundle()
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "certs",
+            "download",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--device-id",
+            "dev-1",
+        ],
+    )
+    assert result.exit_code == 0
+    list_mock.assert_not_called()
+
+
+def test_certs_download_no_devices_found_errors(mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(tinker, "_list_devices_via_api", return_value=[])
+    with pytest.raises(typer.Exit):
+        tinker.certs_download(
+            device_id=None,
+            api_url="http://agnes.local",
+            api_key="test-key",
+            ca_cert=None,
+            profile=None,
+            out_dir=None,
+        )
+
+
+def test_certs_download_list_devices_api_error(mocker, capsys):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker,
+        "_list_devices_via_api",
+        side_effect=tinker.ProvisionApiError("unauthorized"),
+    )
+    with pytest.raises(typer.Exit):
+        tinker.certs_download(
+            device_id=None,
+            api_url="http://agnes.local",
+            api_key="test-key",
+            ca_cert=None,
+            profile=None,
+            out_dir=None,
+        )
+    assert "could not list devices: unauthorized" in capsys.readouterr().err
+
+
+def test_prompt_device_selection_valid_choice(mocker):
+    mocker.patch.object(tinker.typer, "prompt", return_value="2")
+    assert tinker._prompt_device_selection(_fake_device_list()) == "dev-2"
+
+
+def test_prompt_device_selection_invalid_choice_rejected(mocker, capsys):
+    mocker.patch.object(tinker.typer, "prompt", return_value="99")
+    with pytest.raises(typer.Exit):
+        tinker._prompt_device_selection(_fake_device_list())
+    assert "not a valid selection" in capsys.readouterr().err
+
+
+def test_prompt_device_selection_non_numeric_rejected(mocker):
+    mocker.patch.object(tinker.typer, "prompt", return_value="not-a-number")
+    with pytest.raises(typer.Exit):
+        tinker._prompt_device_selection(_fake_device_list())
+
+
+def test_certs_download_renewal_api_error(mocker):
+    mocker.patch.object(
+        tinker,
+        "_renew_device_cert_via_api",
+        side_effect=tinker.ProvisionApiError("device not found"),
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "certs",
+            "download",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--device-id",
+            "dev-123",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "device not found" in result.stderr
 
 
 # --------------------------------------------------------------------------

@@ -8,6 +8,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `tinker.py profile` command group (`create`/`edit`/`delete`/`list`/`show`/
+  `use`) for managing named Agnes API connection profiles (`api_url`,
+  `api_key`, `port`, `baud`) saved in `.microweaver`, instead of `--profile`
+  only being usable as a bare name for CA-cert lookup. `provision` and
+  `fetch-ca-cert` now resolve `--api-url`/`--api-key`/`--ca-cert` from the
+  named (or active) profile when not passed explicitly, in CLI flag >
+  profile > `.microweaver` `[default]` > hardcoded default order.
+  `fetch-ca-cert` now also saves the resolved `api_url` into the
+  profile it fetches for. `profile create` also interactively prompts for
+  name/`api_url`/`api_key`/`port` when omitted on a TTY (edit shows existing
+  values as defaults), and automatically fetches and saves the CA cert for
+  any `api_url` it ends up with (a fetch failure only warns, since the
+  profile is already saved by that point - retry later with
+  `fetch-ca-cert`).
+- `tinker.py provision`, when registering via the Agnes API
+  (`--api-url`/`--api-key`), now also saves the registration response's cert
+  bundle to `./certs/ca.pem`, `client.pem`, and `private.pem` (gitignored),
+  mirroring the Agnes project's own tinker.py cert layout - the API only
+  returns a device's certs once, at registration time, so this is the only
+  chance to keep a local copy of them. When `--name` is omitted on a TTY,
+  `provision` now lists existing devices first (Azure-CLI-picker style) so
+  you can pick one to renew its cert instead of always registering a new
+  device - MQTT credentials in that case still come from CLI flags/prompts
+  as before, since renewing only reissues certs, not MQTT credentials. A new
+  `--skip-certs` flag opts out of all of this: no `./certs/` write and no
+  `device_cert`/`device_key` in `device_config.json`.
+- `tinker.py certs download` command: takes an *existing* device's
+  `--device-id`, calls `POST /devices/{device_id}/renew-cert` on the Agnes
+  API (`--api-url`/`--api-key`, or a saved `--profile`), and saves the
+  resulting cert bundle to `./certs/` (or `--out-dir`) - reissues that
+  device's certs without registering a new device or touching serial. When
+  `--device-id` is omitted on a TTY, lists devices from the API
+  (`GET /devices`) and prompts for one by number, Azure-CLI-picker style,
+  instead of requiring the ID to already be known.
 - `dht_topic_suffix`/`relay_topic_suffix`/`oled_topic_suffix`/
   `potentiometer_topic_suffix`/`rotary_angle_topic_suffix` config keys (each
   defaulting to a short device name, e.g. `dht`, `relay`) let each enabled
@@ -59,6 +93,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `read_u16()`) and report position as a 0–100 percentage.
 
 ### Changed
+- `tinker.py provision` no longer pushes `device_config.json` to a device
+  over serial (and no longer takes `--port`/`--baud`) - it now only writes
+  `device_config.json` (and, via the Agnes API, `./certs/`) on the host.
+  Provisioning and deploying were doing the same upload with a second,
+  provision-specific raw-REPL failure mode for no benefit; run `build` then
+  `deploy` (or `watch`) to push the result to a device, same as any other
+  code change.
 - `mqtt_topic_pub` now accepts one or more topics (comma-separated string or
   JSON array), matching `mqtt_topic_sub`'s existing list support, instead of
   a single fixed publish topic shared unconditionally by every sensor.
