@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import re
@@ -1655,6 +1656,8 @@ def test_provision_interactive_picked_device_renewal_api_error(mocker):
             profile=None,
             name=None,
             skip_certs=False,
+            rotate_mqtt=False,
+            device_id=None,
         )
 
 
@@ -1681,7 +1684,6 @@ def test_provision_interactive_prompts_fill_only_missing(tmp_path, mocker):
             "prompted-pass",  # wifi_password
             "example-broker",  # mqtt_broker (default echoed back)
             1884,  # mqtt_port
-            "device-1",  # mqtt_client_id
             "pub/topic",  # mqtt_topic_pub
             "sub/topic",  # mqtt_topic_sub
             "muser",  # mqtt_username
@@ -1705,6 +1707,8 @@ def test_provision_interactive_prompts_fill_only_missing(tmp_path, mocker):
         profile=None,
         name=None,
         skip_certs=False,
+        rotate_mqtt=False,
+        device_id=None,
     )
 
     written = json.loads((tmp_path / "device_config.json").read_text())
@@ -1728,7 +1732,6 @@ def test_provision_masks_existing_secret_default(tmp_path, mocker):
             "",  # wifi_password - blank keeps the existing secret
             "localhost",  # mqtt_broker
             1883,  # mqtt_port
-            "microweaver",  # mqtt_client_id
             "pub/topic",  # mqtt_topic_pub
             "sub/topic",  # mqtt_topic_sub
             "muser",  # mqtt_username
@@ -1752,6 +1755,8 @@ def test_provision_masks_existing_secret_default(tmp_path, mocker):
         profile=None,
         name=None,
         skip_certs=False,
+        rotate_mqtt=False,
+        device_id=None,
     )
 
     written = json.loads((tmp_path / "device_config.json").read_text())
@@ -1804,6 +1809,83 @@ def test_provision_via_api_saves_cert_bundle(tmp_path, mocker):
     written = json.loads((tmp_path / "device_config.json").read_text())
     assert written["device_cert"] == "CERT-PEM"
     assert written["device_key"] == "KEY-PEM"
+
+
+def test_provision_via_api_derives_topics_from_username(tmp_path, mocker):
+    # mqtt_topic_pub/sub aren't in the API response, but shouldn't fall back
+    # to the generic PROVISION_FIELDS defaults either - they should be
+    # suggested from the device's own identity, same as mqtt_client_id is.
+    mocker.patch.object(
+        tinker,
+        "_provision_device_via_api",
+        return_value={
+            "device_id": "dev-123",
+            "username": "mqtt-user",
+            "password": "mqtt-pass",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+        },
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "provision",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--name",
+            "test-device",
+            "--wifi-ssid",
+            "MySSID",
+            "--wifi-password",
+            "MyPass",
+        ],
+    )
+    assert result.exit_code == 0
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["mqtt_topic_pub"] == "devices/mqtt-user/events"
+    assert written["mqtt_topic_sub"] == "devices/mqtt-user/commands"
+
+
+def test_provision_via_api_explicit_topic_flags_win(tmp_path, mocker):
+    mocker.patch.object(
+        tinker,
+        "_provision_device_via_api",
+        return_value={
+            "device_id": "dev-123",
+            "username": "mqtt-user",
+            "password": "mqtt-pass",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+        },
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "provision",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--name",
+            "test-device",
+            "--wifi-ssid",
+            "MySSID",
+            "--wifi-password",
+            "MyPass",
+            "--mqtt-topic-pub",
+            "custom/pub",
+            "--mqtt-topic-sub",
+            "custom/sub",
+        ],
+    )
+    assert result.exit_code == 0
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["mqtt_topic_pub"] == "custom/pub"
+    assert written["mqtt_topic_sub"] == "custom/sub"
 
 
 def test_provision_without_api_key_skips_cert_bundle(tmp_path):
@@ -1899,6 +1981,8 @@ def test_provision_interactive_picks_existing_device_and_renews_cert(tmp_path, m
         profile=None,
         name=None,
         skip_certs=False,
+        rotate_mqtt=False,
+        device_id=None,
     )
 
     mock_renew.assert_called_once_with("http://agnes.local", "test-key", None, "dev-1")
@@ -1910,6 +1994,512 @@ def test_provision_interactive_picks_existing_device_and_renews_cert(tmp_path, m
     assert written["mqtt_broker"] == "broker.local"  # from the CLI flag, not the API
     certs_dir = tmp_path / "certs"
     assert (certs_dir / "ca.pem").read_text() == "CA-PEM"
+
+
+def test_provision_renew_writes_device_name_from_picker(tmp_path, mocker):
+    # The picked device's name is already known from the picker's device
+    # list (renew-cert itself doesn't return one) - it should land in
+    # device_name, not be left blank.
+    (tmp_path / "device_config.json").write_text(
+        json.dumps(
+            {
+                "wifi_ssid": "HomeWiFi",
+                "wifi_password": "wifipass",
+                "mqtt_broker": "broker.local",
+                "mqtt_port": 1883,
+                "mqtt_client_id": "device-1",
+                "mqtt_topic_pub": "devices/device-1/events",
+                "mqtt_topic_sub": "devices/device-1/commands",
+                "mqtt_username": "device-1",
+                "mqtt_password": "existing-pass",
+            }
+        )
+    )
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker, "_list_devices_via_api", return_value=_fake_agnes_device_list()
+    )
+    mocker.patch.object(tinker.typer, "prompt", return_value="2")
+    mocker.patch.object(
+        tinker,
+        "_renew_device_cert_via_api",
+        return_value={
+            "device_id": "dev-2",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+            "expires_at": "2027-01-01T00:00:00Z",
+        },
+    )
+
+    tinker.provision(
+        wifi_ssid=None,
+        wifi_password=None,
+        mqtt_broker=None,
+        mqtt_port=None,
+        mqtt_client_id=None,
+        mqtt_topic_pub=None,
+        mqtt_topic_sub=None,
+        mqtt_username=None,
+        mqtt_password=None,
+        api_url="http://agnes.local",
+        api_key="test-key",
+        ca_cert=None,
+        profile=None,
+        name=None,
+        skip_certs=False,
+        rotate_mqtt=False,
+        device_id=None,
+    )
+
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    # _fake_agnes_device_list's #2 entry is dev-2/garage-relay.
+    assert written["device_name"] == "garage-relay"
+
+
+def test_provision_via_api_register_writes_device_name(tmp_path, mocker):
+    mocker.patch.object(
+        tinker,
+        "_provision_device_via_api",
+        return_value={
+            "device_id": "dev-123",
+            "name": "test-device",
+            "username": "mqtt-user",
+            "password": "mqtt-pass",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+        },
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "provision",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--name",
+            "test-device",
+            "--wifi-ssid",
+            "MySSID",
+            "--wifi-password",
+            "MyPass",
+        ],
+    )
+    assert result.exit_code == 0
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["device_name"] == "test-device"
+
+
+def test_provision_renew_does_not_silently_reuse_blank_example_defaults(
+    tmp_path, mocker
+):
+    # No device_config.json exists yet - only the .example template, whose
+    # wifi_ssid/wifi_password/mqtt_username/mqtt_password are blank
+    # placeholders. Those must still be prompted for, not silently written
+    # as empty strings (mqtt_broker/port/topics DO have real non-blank
+    # defaults in the template, so those are legitimately reused without a
+    # prompt; mqtt_client_id was removed from the template on purpose - it
+    # always mirrors mqtt_username now).
+    (tmp_path / "device_config.json.example").write_text(
+        json.dumps(
+            {
+                "mqtt_broker": "localhost",
+                "mqtt_port": 1883,
+                "mqtt_client_id": "microweaver",
+                "mqtt_topic_pub": "data/sensor/room",
+                "mqtt_topic_sub": "command/control/room",
+                "mqtt_username": "",
+                "mqtt_password": "",
+                "wifi_ssid": "",
+                "wifi_password": "",
+            }
+        )
+    )
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker, "_list_devices_via_api", return_value=_fake_agnes_device_list()
+    )
+    prompt_mock = mocker.patch.object(
+        tinker.typer,
+        "prompt",
+        side_effect=[
+            "1",  # device picker
+            "PromptedSSID",  # wifi_ssid
+            "PromptedPass",  # wifi_password
+            "prompted-user",  # mqtt_username
+            "prompted-pass",  # mqtt_password
+        ],
+    )
+    mocker.patch.object(
+        tinker,
+        "_renew_device_cert_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+            "expires_at": "2027-01-01T00:00:00Z",
+        },
+    )
+    # mqtt_username/password are also blank/missing here, which would
+    # otherwise trigger _fill_missing_mqtt_credentials' auto-mint call -
+    # force it to fail so this test stays about the wifi/mqtt-username
+    # prompt fallback specifically, not the auto-mint happy path (see
+    # test_provision_renew_auto_generates_missing_mqtt_credentials for that).
+    mocker.patch.object(
+        tinker,
+        "_provision_mqtt_via_api",
+        side_effect=tinker.ProvisionApiError("no credential found"),
+    )
+
+    tinker.provision(
+        wifi_ssid=None,
+        wifi_password=None,
+        mqtt_broker=None,
+        mqtt_port=None,
+        mqtt_client_id=None,
+        mqtt_topic_pub=None,
+        mqtt_topic_sub=None,
+        mqtt_username=None,
+        mqtt_password=None,
+        api_url="http://agnes.local",
+        api_key="test-key",
+        ca_cert=None,
+        profile=None,
+        name=None,
+        skip_certs=False,
+        rotate_mqtt=False,
+        device_id=None,
+    )
+
+    assert prompt_mock.call_count == 5
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["wifi_ssid"] == "PromptedSSID"
+    assert written["wifi_password"] == "PromptedPass"
+    assert written["mqtt_username"] == "prompted-user"
+    assert written["mqtt_password"] == "prompted-pass"
+    # Non-blank template defaults were still legitimately reused, no prompt.
+    assert written["mqtt_broker"] == "localhost"
+    # mqtt_client_id is never prompted for on its own - it mirrors whatever
+    # mqtt_username ended up being (here, the prompted value).
+    assert written["mqtt_client_id"] == "prompted-user"
+
+
+def test_provision_renew_auto_generates_missing_mqtt_credentials(tmp_path, mocker):
+    # No device_config.json/username/password known locally at all - rather
+    # than prompting the operator to make something up, mint fresh
+    # credentials via provision-mqtt (the broker is the only source of
+    # truth for these).
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker, "_list_devices_via_api", return_value=_fake_agnes_device_list()
+    )
+    mocker.patch.object(tinker.typer, "prompt", return_value="1")
+    mocker.patch.object(
+        tinker,
+        "_renew_device_cert_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+            "expires_at": "2027-01-01T00:00:00Z",
+        },
+    )
+    provision_mqtt_mock = mocker.patch.object(
+        tinker,
+        "_provision_mqtt_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "username": "dev_234fdfe33",
+            "password": "generated-secret",
+            "mqtt_provisioned": True,
+        },
+    )
+
+    tinker.provision(
+        wifi_ssid="MySSID",
+        wifi_password="MyPass",
+        mqtt_broker="broker.local",
+        mqtt_port=1883,
+        mqtt_client_id=None,
+        mqtt_topic_pub=None,
+        mqtt_topic_sub=None,
+        mqtt_username=None,
+        mqtt_password=None,
+        api_url="http://agnes.local",
+        api_key="test-key",
+        ca_cert=None,
+        profile=None,
+        name=None,
+        skip_certs=False,
+        rotate_mqtt=False,
+        device_id=None,
+    )
+
+    provision_mqtt_mock.assert_called_once_with(
+        "http://agnes.local", "test-key", None, "dev-1"
+    )
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["mqtt_username"] == "dev_234fdfe33"
+    assert written["mqtt_password"] == "generated-secret"
+    assert written["mqtt_client_id"] == "dev_234fdfe33"
+    assert written["mqtt_topic_pub"] == "devices/dev_234fdfe33/events"
+    assert written["mqtt_topic_sub"] == "devices/dev_234fdfe33/commands"
+
+
+def test_provision_renew_known_credentials_skip_auto_generate(tmp_path, mocker):
+    # A device with already-known credentials (see _apply_renew_defaults)
+    # must never trigger a rotation - that would invalidate live creds for
+    # no reason.
+    (tmp_path / "device_config.json").write_text(
+        json.dumps(
+            {
+                "wifi_ssid": "HomeWiFi",
+                "wifi_password": "wifipass",
+                "mqtt_broker": "broker.local",
+                "mqtt_port": 1883,
+                "mqtt_client_id": "device-1",
+                "mqtt_topic_pub": "devices/device-1/events",
+                "mqtt_topic_sub": "devices/device-1/commands",
+                "mqtt_username": "device-1",
+                "mqtt_password": "existing-pass",
+            }
+        )
+    )
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker, "_list_devices_via_api", return_value=_fake_agnes_device_list()
+    )
+    mocker.patch.object(tinker.typer, "prompt", return_value="1")
+    mocker.patch.object(
+        tinker,
+        "_renew_device_cert_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+            "expires_at": "2027-01-01T00:00:00Z",
+        },
+    )
+    provision_mqtt_mock = mocker.patch.object(tinker, "_provision_mqtt_via_api")
+
+    tinker.provision(
+        wifi_ssid=None,
+        wifi_password=None,
+        mqtt_broker=None,
+        mqtt_port=None,
+        mqtt_client_id=None,
+        mqtt_topic_pub=None,
+        mqtt_topic_sub=None,
+        mqtt_username=None,
+        mqtt_password=None,
+        api_url="http://agnes.local",
+        api_key="test-key",
+        ca_cert=None,
+        profile=None,
+        name=None,
+        skip_certs=False,
+        rotate_mqtt=False,
+        device_id=None,
+    )
+
+    provision_mqtt_mock.assert_not_called()
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["mqtt_username"] == "device-1"
+    assert written["mqtt_password"] == "existing-pass"
+
+
+def test_provision_never_prompts_for_mqtt_client_id(tmp_path, mocker):
+    # mqtt_client_id has no PROVISION_FIELDS entry at all - it's always
+    # derived from mqtt_username, even when a stale value already sits in
+    # the existing device_config.json (renew reuses username, not the old
+    # client_id).
+    (tmp_path / "device_config.json").write_text(
+        json.dumps(
+            {
+                "wifi_ssid": "HomeWiFi",
+                "wifi_password": "wifipass",
+                "mqtt_broker": "broker.local",
+                "mqtt_port": 1883,
+                "mqtt_client_id": "stale-client-id",
+                "mqtt_topic_pub": "devices/device-1/events",
+                "mqtt_topic_sub": "devices/device-1/commands",
+                "mqtt_username": "device-1",
+                "mqtt_password": "existing-pass",
+            }
+        )
+    )
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker, "_list_devices_via_api", return_value=_fake_agnes_device_list()
+    )
+    prompt_mock = mocker.patch.object(tinker.typer, "prompt", return_value="1")
+    mocker.patch.object(
+        tinker,
+        "_renew_device_cert_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+            "expires_at": "2027-01-01T00:00:00Z",
+        },
+    )
+
+    tinker.provision(
+        wifi_ssid=None,
+        wifi_password=None,
+        mqtt_broker=None,
+        mqtt_port=None,
+        mqtt_client_id=None,
+        mqtt_topic_pub=None,
+        mqtt_topic_sub=None,
+        mqtt_username=None,
+        mqtt_password=None,
+        api_url="http://agnes.local",
+        api_key="test-key",
+        ca_cert=None,
+        profile=None,
+        name=None,
+        skip_certs=False,
+        rotate_mqtt=False,
+        device_id=None,
+    )
+
+    # Only the device-picker prompt fires - never one for mqtt_client_id.
+    prompt_mock.assert_called_once_with("Select a device by number, or 0 to create new")
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["mqtt_client_id"] == "device-1"
+
+
+def test_provision_renew_reuses_existing_config_without_prompting(tmp_path, mocker):
+    # Renewing only reissues certs - the API's renew-cert response has no
+    # username/password to fill in (see is_renew in provision()), so the
+    # device's already-known WiFi/MQTT identity should be reused silently
+    # from its own device_config.json rather than forcing a re-prompt.
+    (tmp_path / "device_config.json").write_text(
+        json.dumps(
+            {
+                "wifi_ssid": "HomeWiFi",
+                "wifi_password": "wifipass",
+                "mqtt_broker": "broker.local",
+                "mqtt_port": 1883,
+                "mqtt_client_id": "device-1",
+                "mqtt_topic_pub": "devices/device-1/events",
+                "mqtt_topic_sub": "devices/device-1/commands",
+                "mqtt_username": "device-1",
+                "mqtt_password": "existing-pass",
+            }
+        )
+    )
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker, "_list_devices_via_api", return_value=_fake_agnes_device_list()
+    )
+    prompt_mock = mocker.patch.object(tinker.typer, "prompt", return_value="1")
+    mocker.patch.object(
+        tinker,
+        "_renew_device_cert_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+            "expires_at": "2027-01-01T00:00:00Z",
+        },
+    )
+
+    tinker.provision(
+        wifi_ssid=None,
+        wifi_password=None,
+        mqtt_broker=None,
+        mqtt_port=None,
+        mqtt_client_id=None,
+        mqtt_topic_pub=None,
+        mqtt_topic_sub=None,
+        mqtt_username=None,
+        mqtt_password=None,
+        api_url="http://agnes.local",
+        api_key="test-key",
+        ca_cert=None,
+        profile=None,
+        name=None,
+        skip_certs=False,
+        rotate_mqtt=False,
+        device_id=None,
+    )
+
+    # Only the device-picker prompt fires - no per-field prompts, since the
+    # existing device_config.json already has every field.
+    prompt_mock.assert_called_once_with("Select a device by number, or 0 to create new")
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["wifi_ssid"] == "HomeWiFi"
+    assert written["mqtt_client_id"] == "device-1"
+    assert written["mqtt_topic_pub"] == "devices/device-1/events"
+    assert written["mqtt_username"] == "device-1"
+    assert written["mqtt_password"] == "existing-pass"
+    assert written["device_id"] == "dev-1"
+
+
+def test_provision_renew_cli_flag_overrides_existing_config(tmp_path, mocker):
+    (tmp_path / "device_config.json").write_text(
+        json.dumps(
+            {
+                "wifi_ssid": "HomeWiFi",
+                "wifi_password": "wifipass",
+                "mqtt_broker": "broker.local",
+                "mqtt_port": 1883,
+                "mqtt_client_id": "device-1",
+                "mqtt_topic_pub": "devices/device-1/events",
+                "mqtt_topic_sub": "devices/device-1/commands",
+                "mqtt_username": "old-user",
+                "mqtt_password": "old-pass",
+            }
+        )
+    )
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker, "_list_devices_via_api", return_value=_fake_agnes_device_list()
+    )
+    mocker.patch.object(tinker.typer, "prompt", return_value="1")
+    mocker.patch.object(
+        tinker,
+        "_renew_device_cert_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+            "expires_at": "2027-01-01T00:00:00Z",
+        },
+    )
+
+    tinker.provision(
+        wifi_ssid=None,
+        wifi_password=None,
+        mqtt_broker=None,
+        mqtt_port=None,
+        mqtt_client_id=None,
+        mqtt_topic_pub=None,
+        mqtt_topic_sub=None,
+        mqtt_username="explicit-user",
+        mqtt_password=None,
+        api_url="http://agnes.local",
+        api_key="test-key",
+        ca_cert=None,
+        profile=None,
+        name=None,
+        skip_certs=False,
+        rotate_mqtt=False,
+        device_id=None,
+    )
+
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["mqtt_username"] == "explicit-user"
 
 
 def test_provision_interactive_create_new_from_picker(tmp_path, mocker):
@@ -1948,6 +2538,8 @@ def test_provision_interactive_create_new_from_picker(tmp_path, mocker):
         profile=None,
         name=None,
         skip_certs=False,
+        rotate_mqtt=False,
+        device_id=None,
     )
 
     mock_register.assert_called_once_with(
@@ -1957,7 +2549,8 @@ def test_provision_interactive_create_new_from_picker(tmp_path, mocker):
     written = json.loads((tmp_path / "device_config.json").read_text())
     assert written["mqtt_username"] == "mqtt-user"
     assert written["mqtt_password"] == "mqtt-pass"
-    assert written["mqtt_client_id"] == "dev-999"
+    # mqtt_client_id and mqtt_username are the same value for now.
+    assert written["mqtt_client_id"] == "mqtt-user"
 
 
 def test_provision_device_listing_failure_falls_back_to_name_prompt(mocker):
@@ -1997,6 +2590,8 @@ def test_provision_device_listing_failure_falls_back_to_name_prompt(mocker):
         profile=None,
         name=None,
         skip_certs=False,
+        rotate_mqtt=False,
+        device_id=None,
     )
 
     mock_register.assert_called_once_with(
@@ -2037,11 +2632,167 @@ def test_provision_no_existing_devices_falls_back_to_name_prompt(mocker):
         profile=None,
         name=None,
         skip_certs=False,
+        rotate_mqtt=False,
+        device_id=None,
     )
 
     mock_register.assert_called_once_with(
         "http://agnes.local", "test-key", None, "new-device-name"
     )
+
+
+def test_provision_rotate_mqtt_writes_config(tmp_path, mocker):
+    mocker.patch.object(
+        tinker,
+        "_provision_mqtt_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "username": "dev-1",
+            "password": "new-pass",
+            "mqtt_provisioned": True,
+        },
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "provision",
+            "--rotate-mqtt",
+            "--device-id",
+            "dev-1",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+        ],
+    )
+    assert result.exit_code == 0
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["mqtt_username"] == "dev-1"
+    assert written["mqtt_password"] == "new-pass"
+
+
+def test_provision_rotate_mqtt_skips_field_prompts(mocker):
+    mocker.patch.object(
+        tinker,
+        "_provision_mqtt_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "username": "dev-1",
+            "password": "new-pass",
+            "mqtt_provisioned": True,
+        },
+    )
+    register_or_renew_mock = mocker.patch.object(
+        tinker, "_maybe_register_or_renew_via_api"
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "provision",
+            "--rotate-mqtt",
+            "--device-id",
+            "dev-1",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+        ],
+    )
+    assert result.exit_code == 0
+    register_or_renew_mock.assert_not_called()
+
+
+def test_provision_rotate_mqtt_no_device_id_not_tty_errors():
+    result = runner.invoke(
+        tinker.app,
+        [
+            "provision",
+            "--rotate-mqtt",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "no TTY to prompt for: --device-id" in result.stderr
+
+
+def test_provision_rotate_mqtt_api_error(mocker):
+    mocker.patch.object(
+        tinker,
+        "_provision_mqtt_via_api",
+        side_effect=tinker.ProvisionApiError("no credential found"),
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "provision",
+            "--rotate-mqtt",
+            "--device-id",
+            "dev-1",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "no credential found" in result.stderr
+
+
+def test_provision_claim_writes_config_and_certs(tmp_path, mocker):
+    mocker.patch.object(
+        tinker, "_exchange_claim_via_api", return_value=_fake_claim_exchange()
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["provision", "claim", "agnc_abc123", "--api-url", "http://agnes.local"],
+    )
+    assert result.exit_code == 0
+    certs_dir = tmp_path / "certs"
+    assert (certs_dir / "ca.der").read_bytes() == b"CA-DER"
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["device_id"] == "dev-1"
+    assert written["mqtt_client_id"] == "dev-1"
+    assert written["mqtt_password"] == "runtime-pass"
+    assert written["mqtt_topic_pub"] == "devices/dev-1/events"
+    assert written["mqtt_topic_sub"] == "devices/dev-1/commands"
+
+
+def test_provision_claim_does_not_run_default_provisioning_body(mocker):
+    mocker.patch.object(
+        tinker, "_exchange_claim_via_api", return_value=_fake_claim_exchange()
+    )
+    register_or_renew_mock = mocker.patch.object(
+        tinker, "_maybe_register_or_renew_via_api"
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["provision", "claim", "agnc_abc123", "--api-url", "http://agnes.local"],
+    )
+    assert result.exit_code == 0
+    register_or_renew_mock.assert_not_called()
+
+
+def test_provision_claim_missing_api_url_errors():
+    result = runner.invoke(tinker.app, ["provision", "claim", "agnc_abc123"])
+    assert result.exit_code == 1
+    assert "--api-url required" in result.stderr
+
+
+def test_provision_claim_api_error(mocker):
+    mocker.patch.object(
+        tinker,
+        "_exchange_claim_via_api",
+        side_effect=tinker.ProvisionApiError("invalid or expired claim code"),
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["provision", "claim", "bad-code", "--api-url", "http://agnes.local"],
+    )
+    assert result.exit_code == 1
+    assert "invalid or expired claim code" in result.stderr
 
 
 def test_load_provision_defaults_prefers_existing_config(tmp_path):
@@ -3955,3 +4706,926 @@ def test_device_config_rejects_invalid_json(tmp_path):
     result = runner.invoke(tinker.app, ["device", "config"])
     assert result.exit_code == 1
     assert "ERROR" in result.stderr
+
+
+# --------------------------------------------------------------------------
+# devices list / get / delete / expiring-certs / provision-mqtt / claim-code
+# / exchange-claim
+# --------------------------------------------------------------------------
+
+
+def _fake_agnes_device():
+    return {
+        "id": "dev-1",
+        "name": "kitchen-sensor",
+        "is_online": True,
+        "last_seen_at": "2026-08-16T00:00:00Z",
+        "capabilities": {},
+    }
+
+
+def test_devices_list_prints_table(mocker):
+    mocker.patch.object(
+        tinker, "_list_devices_via_api", return_value=_fake_device_list()
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["devices", "list", "--api-url", "http://agnes.local", "--api-key", "k"],
+    )
+    assert result.exit_code == 0
+    assert "kitchen-sensor" in result.stdout
+    assert "garage-relay" in result.stdout
+
+
+def test_devices_list_empty(mocker):
+    mocker.patch.object(tinker, "_list_devices_via_api", return_value=[])
+    result = runner.invoke(
+        tinker.app,
+        ["devices", "list", "--api-url", "http://agnes.local", "--api-key", "k"],
+    )
+    assert result.exit_code == 0
+    assert "No devices found." in result.stdout
+
+
+def test_devices_list_missing_api_key_errors():
+    result = runner.invoke(
+        tinker.app, ["devices", "list", "--api-url", "http://agnes.local"]
+    )
+    assert result.exit_code == 1
+    assert "--api-key required" in result.stderr
+
+
+def test_devices_list_missing_api_url_errors():
+    result = runner.invoke(tinker.app, ["devices", "list", "--api-key", "k"])
+    assert result.exit_code == 1
+    assert "--api-url required" in result.stderr
+
+
+def test_devices_list_https_without_ca_cert_errors():
+    result = runner.invoke(
+        tinker.app,
+        ["devices", "list", "--api-url", "https://agnes.local", "--api-key", "k"],
+    )
+    assert result.exit_code == 1
+    assert "--ca-cert is required" in result.stderr
+
+
+def test_devices_list_api_error(mocker):
+    mocker.patch.object(
+        tinker,
+        "_list_devices_via_api",
+        side_effect=tinker.ProvisionApiError("unauthorized"),
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["devices", "list", "--api-url", "http://agnes.local", "--api-key", "k"],
+    )
+    assert result.exit_code == 1
+    assert "unauthorized" in result.stderr
+
+
+def test_devices_get_prints_device(mocker):
+    mocker.patch.object(
+        tinker, "_get_device_via_api", return_value=_fake_agnes_device()
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "get",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+            "--device-id",
+            "dev-1",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "kitchen-sensor" in result.stdout
+
+
+def test_devices_get_api_error(mocker):
+    mocker.patch.object(
+        tinker,
+        "_get_device_via_api",
+        side_effect=tinker.ProvisionApiError("not found"),
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "get",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+            "--device-id",
+            "dev-1",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "not found" in result.stderr
+
+
+def test_devices_delete_confirmed(mocker):
+    mocker.patch.object(tinker.typer, "confirm", return_value=True)
+    delete_mock = mocker.patch.object(tinker, "_delete_device_via_api")
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "delete",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+            "--device-id",
+            "dev-1",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Deleted device 'dev-1'." in result.stdout
+    delete_mock.assert_called_once_with("http://agnes.local", "k", None, "dev-1")
+
+
+def test_devices_delete_declined(mocker):
+    mocker.patch.object(tinker.typer, "confirm", return_value=False)
+    delete_mock = mocker.patch.object(tinker, "_delete_device_via_api")
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "delete",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+            "--device-id",
+            "dev-1",
+        ],
+    )
+    assert result.exit_code == 0
+    delete_mock.assert_not_called()
+
+
+def test_devices_delete_yes_skips_confirm(mocker):
+    confirm_mock = mocker.patch.object(tinker.typer, "confirm")
+    mocker.patch.object(tinker, "_delete_device_via_api")
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "delete",
+            "--yes",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+            "--device-id",
+            "dev-1",
+        ],
+    )
+    assert result.exit_code == 0
+    confirm_mock.assert_not_called()
+
+
+def test_devices_delete_api_error(mocker):
+    mocker.patch.object(tinker.typer, "confirm", return_value=True)
+    mocker.patch.object(
+        tinker,
+        "_delete_device_via_api",
+        side_effect=tinker.ProvisionApiError("device not found"),
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "delete",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+            "--device-id",
+            "dev-1",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "device not found" in result.stderr
+
+
+def _fake_expiring_certs():
+    return [
+        {
+            "device_id": "dev-1",
+            "device_name": "kitchen-sensor",
+            "days_remaining": 5,
+            "expires_at": "2026-08-22T00:00:00Z",
+            "fingerprint": "AA:BB:CC",
+        }
+    ]
+
+
+def test_devices_expiring_certs_prints_table(mocker):
+    mocker.patch.object(
+        tinker, "_list_expiring_certs_via_api", return_value=_fake_expiring_certs()
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "expiring-certs",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "kitchen-sensor" in result.stdout
+
+
+def test_devices_expiring_certs_empty(mocker):
+    mocker.patch.object(tinker, "_list_expiring_certs_via_api", return_value=[])
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "expiring-certs",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "No certs expiring within 30 day(s)." in result.stdout
+
+
+def test_devices_expiring_certs_api_error(mocker):
+    mocker.patch.object(
+        tinker,
+        "_list_expiring_certs_via_api",
+        side_effect=tinker.ProvisionApiError("unauthorized"),
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "expiring-certs",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "unauthorized" in result.stderr
+
+
+def test_devices_provision_mqtt_prints_credentials(mocker):
+    mocker.patch.object(
+        tinker,
+        "_provision_mqtt_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "username": "dev-1",
+            "password": "new-pass",
+            "mqtt_provisioned": True,
+        },
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "provision-mqtt",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+            "--device-id",
+            "dev-1",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "new-pass" in result.stdout
+    assert "Wrote device_config.json's mqtt_username/mqtt_password" in result.stdout
+
+
+def test_devices_provision_mqtt_writes_config(tmp_path, mocker):
+    mocker.patch.object(
+        tinker,
+        "_provision_mqtt_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "username": "dev-1",
+            "password": "new-pass",
+            "mqtt_provisioned": True,
+        },
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "provision-mqtt",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+            "--device-id",
+            "dev-1",
+        ],
+    )
+    assert result.exit_code == 0
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["mqtt_username"] == "dev-1"
+    assert written["mqtt_password"] == "new-pass"
+
+
+def test_devices_provision_mqtt_preserves_existing_config_fields(tmp_path, mocker):
+    (tmp_path / "device_config.json").write_text(
+        json.dumps({"wifi_ssid": "home-wifi", "mqtt_broker": "broker.local"})
+    )
+    mocker.patch.object(
+        tinker,
+        "_provision_mqtt_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "username": "dev-1",
+            "password": "new-pass",
+            "mqtt_provisioned": True,
+        },
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "provision-mqtt",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+            "--device-id",
+            "dev-1",
+        ],
+    )
+    assert result.exit_code == 0
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["wifi_ssid"] == "home-wifi"
+    assert written["mqtt_broker"] == "broker.local"
+    assert written["mqtt_password"] == "new-pass"
+
+
+def test_devices_provision_mqtt_invalid_config_rejected(tmp_path, mocker):
+    (tmp_path / "device_config.json").write_text(
+        json.dumps({"mqtt_port": 70000})  # out of schema range
+    )
+    mocker.patch.object(
+        tinker,
+        "_provision_mqtt_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "username": "dev-1",
+            "password": "new-pass",
+            "mqtt_provisioned": True,
+        },
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "provision-mqtt",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+            "--device-id",
+            "dev-1",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "ERROR" in result.stderr
+
+
+def test_devices_provision_mqtt_api_error(mocker):
+    mocker.patch.object(
+        tinker,
+        "_provision_mqtt_via_api",
+        side_effect=tinker.ProvisionApiError("no credential found"),
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "provision-mqtt",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+            "--device-id",
+            "dev-1",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "no credential found" in result.stderr
+
+
+def test_devices_claim_code_prints_result(mocker):
+    mocker.patch.object(
+        tinker,
+        "_create_claim_code_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "claim_code": "agnc_abc123",
+            "expires_at": "2026-08-17T00:10:00Z",
+        },
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "claim-code",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+            "--device-id",
+            "dev-1",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "agnc_abc123" in result.stdout
+
+
+def test_devices_claim_code_passes_bootstrap_device_id(mocker):
+    create_mock = mocker.patch.object(
+        tinker,
+        "_create_claim_code_via_api",
+        return_value={"device_id": "dev-1", "claim_code": "c", "expires_at": "x"},
+    )
+    runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "claim-code",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+            "--device-id",
+            "dev-1",
+            "--bootstrap-device-id",
+            "boot-1",
+        ],
+    )
+    create_mock.assert_called_once_with(
+        "http://agnes.local", "k", None, "dev-1", "boot-1"
+    )
+
+
+def test_devices_claim_code_api_error(mocker):
+    mocker.patch.object(
+        tinker,
+        "_create_claim_code_via_api",
+        side_effect=tinker.ProvisionApiError("device not found"),
+    )
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "claim-code",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "k",
+            "--device-id",
+            "dev-1",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "device not found" in result.stderr
+
+
+def _fake_claim_exchange(**overrides):
+    result = {
+        "device_id": "dev-1",
+        "topic_namespace": "dev-1",
+        "mqtt_username": "dev-1",
+        "mqtt_password": "runtime-pass",
+        "certificate_der_b64": base64.b64encode(b"CERT-DER").decode(),
+        "private_key_der_b64": base64.b64encode(b"KEY-DER").decode(),
+        "ca_cert_der_b64": base64.b64encode(b"CA-DER").decode(),
+        "mqtt_broker": "broker.local",
+        "mqtt_port": 1883,
+        "tls_server_hostname": "broker.local",
+        "lwt_topic": "devices/dev-1/status",
+        "lwt_payload": '{"status":"offline"}',
+    }
+    result.update(overrides)
+    return result
+
+
+def test_write_der_cert_bundle(tmp_path):
+    paths = tinker._write_der_cert_bundle(tmp_path / "certs", _fake_claim_exchange())
+    assert paths["ca_cert"].read_bytes() == b"CA-DER"
+    assert paths["client_cert"].read_bytes() == b"CERT-DER"
+    assert paths["client_key"].read_bytes() == b"KEY-DER"
+
+
+def test_devices_exchange_claim_saves_der_bundle(tmp_path, mocker):
+    mocker.patch.object(
+        tinker, "_exchange_claim_via_api", return_value=_fake_claim_exchange()
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["devices", "exchange-claim", "agnc_abc123", "--api-url", "http://agnes.local"],
+    )
+    assert result.exit_code == 0
+    certs_dir = tmp_path / "certs"
+    assert (certs_dir / "ca.der").read_bytes() == b"CA-DER"
+    assert (certs_dir / "client.der").read_bytes() == b"CERT-DER"
+    assert (certs_dir / "private.der").read_bytes() == b"KEY-DER"
+    assert "runtime-pass" in result.stdout
+
+
+def test_devices_exchange_claim_writes_config(tmp_path, mocker):
+    mocker.patch.object(
+        tinker, "_exchange_claim_via_api", return_value=_fake_claim_exchange()
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["devices", "exchange-claim", "agnc_abc123", "--api-url", "http://agnes.local"],
+    )
+    assert result.exit_code == 0
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["device_id"] == "dev-1"
+    assert written["mqtt_client_id"] == "dev-1"
+    assert written["mqtt_broker"] == "broker.local"
+    assert written["mqtt_port"] == 1883
+    assert written["mqtt_username"] == "dev-1"
+    assert written["mqtt_password"] == "runtime-pass"
+    assert written["mqtt_topic_pub"] == "devices/dev-1/events"
+    assert written["mqtt_topic_sub"] == "devices/dev-1/commands"
+    assert written["mqtt_lwt_topic"] == "devices/dev-1/status"
+    assert written["mqtt_lwt_message"] == '{"status":"offline"}'
+
+
+def test_devices_exchange_claim_client_id_follows_username_not_topic_namespace(
+    tmp_path, mocker
+):
+    # mqtt_client_id and mqtt_username are the same value for now - proven
+    # here with a response where topic_namespace differs from mqtt_username,
+    # since the two happen to coincide in _fake_claim_exchange()'s defaults.
+    mocker.patch.object(
+        tinker,
+        "_exchange_claim_via_api",
+        return_value=_fake_claim_exchange(
+            topic_namespace="ns-different", mqtt_username="dev-1"
+        ),
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["devices", "exchange-claim", "agnc_abc123", "--api-url", "http://agnes.local"],
+    )
+    assert result.exit_code == 0
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["mqtt_username"] == "dev-1"
+    assert written["mqtt_client_id"] == "dev-1"
+    assert "mqtt_ssl" not in written
+    assert "mqtt_ssl_cert_path" not in written
+
+
+def test_devices_exchange_claim_preserves_existing_config_fields(tmp_path, mocker):
+    (tmp_path / "device_config.json").write_text(json.dumps({"wifi_ssid": "home-wifi"}))
+    mocker.patch.object(
+        tinker, "_exchange_claim_via_api", return_value=_fake_claim_exchange()
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["devices", "exchange-claim", "agnc_abc123", "--api-url", "http://agnes.local"],
+    )
+    assert result.exit_code == 0
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["wifi_ssid"] == "home-wifi"
+    assert written["mqtt_password"] == "runtime-pass"
+
+
+def test_devices_exchange_claim_invalid_config_rejected(tmp_path, mocker):
+    (tmp_path / "device_config.json").write_text(
+        json.dumps({"mqtt_port": 70000})  # out of schema range
+    )
+    mocker.patch.object(
+        tinker, "_exchange_claim_via_api", return_value=_fake_claim_exchange()
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["devices", "exchange-claim", "agnc_abc123", "--api-url", "http://agnes.local"],
+    )
+    assert result.exit_code == 1
+    assert "ERROR" in result.stderr
+
+
+def test_devices_exchange_claim_no_api_key_needed(mocker):
+    exchange_mock = mocker.patch.object(
+        tinker, "_exchange_claim_via_api", return_value=_fake_claim_exchange()
+    )
+    runner.invoke(
+        tinker.app,
+        ["devices", "exchange-claim", "agnc_abc123", "--api-url", "http://agnes.local"],
+    )
+    exchange_mock.assert_called_once_with(
+        "http://agnes.local", None, "agnc_abc123", None
+    )
+
+
+def test_devices_exchange_claim_missing_api_url_errors():
+    result = runner.invoke(tinker.app, ["devices", "exchange-claim", "agnc_abc123"])
+    assert result.exit_code == 1
+    assert "--api-url required" in result.stderr
+
+
+def test_devices_exchange_claim_https_without_ca_cert_errors():
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "exchange-claim",
+            "agnc_abc123",
+            "--api-url",
+            "https://agnes.local",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "--ca-cert is required" in result.stderr
+
+
+def test_devices_exchange_claim_custom_out_dir(tmp_path, mocker):
+    mocker.patch.object(
+        tinker, "_exchange_claim_via_api", return_value=_fake_claim_exchange()
+    )
+    out_dir = tmp_path / "elsewhere"
+    result = runner.invoke(
+        tinker.app,
+        [
+            "devices",
+            "exchange-claim",
+            "agnc_abc123",
+            "--api-url",
+            "http://agnes.local",
+            "--out-dir",
+            str(out_dir),
+        ],
+    )
+    assert result.exit_code == 0
+    assert (out_dir / "ca.der").read_bytes() == b"CA-DER"
+
+
+def test_devices_exchange_claim_api_error(mocker):
+    mocker.patch.object(
+        tinker,
+        "_exchange_claim_via_api",
+        side_effect=tinker.ProvisionApiError("invalid or expired claim code"),
+    )
+    result = runner.invoke(
+        tinker.app,
+        ["devices", "exchange-claim", "bad-code", "--api-url", "http://agnes.local"],
+    )
+    assert result.exit_code == 1
+    assert "invalid or expired claim code" in result.stderr
+
+
+# --------------------------------------------------------------------------
+# device mqtt-test
+# --------------------------------------------------------------------------
+
+
+def _write_mqtt_test_config(tmp_path, **overrides):
+    config = {
+        "mqtt_broker": "broker.local",
+        "mqtt_port": 1883,
+        "mqtt_client_id": "dev-1",
+        "mqtt_topic_pub": "devices/dev-1/events",
+        "mqtt_username": "dev-1",
+        "mqtt_password": "secret",
+        "mqtt_ssl": False,
+    }
+    config.update(overrides)
+    (tmp_path / "device_config.json").write_text(json.dumps(config))
+
+
+class _FakeMqttClient:
+    """Synchronous stand-in for paho.mqtt.client.Client: connect()/subscribe()/
+    publish() invoke the registered callbacks immediately (instead of via a
+    background network loop thread), so device_mqtt_test's threading.Event.wait()
+    calls resolve without a real broker or real waiting. `overrides["pub"|"sub"]`
+    lets a test configure the next-created client's connect/publish/subscribe
+    outcome (role is inferred from the client_id device_mqtt_test builds,
+    "...-test-<role>-<suffix>")."""
+
+    def __init__(self, overrides, subscribers, created, client_id=None, protocol=None):
+        role = "sub" if "-sub-" in (client_id or "") else "pub"
+        cfg = overrides[role]
+        self.client_id = client_id
+        self.role = role
+        self.on_connect = None
+        self.on_publish = None
+        self.on_subscribe = None
+        self.on_message = None
+        self.username = None
+        self.password = None
+        self.tls_kwargs = None
+        self.connect_rc = cfg.get("connect_rc", 0)
+        self.publish_rc = cfg.get("publish_rc", 0)
+        self.subscribe_granted = cfg.get("subscribe_granted", [1])
+        self.deliver = cfg.get("deliver", True)
+        self.disconnected = False
+        self._subscribers = subscribers
+        created.append(self)
+
+    def username_pw_set(self, username, password):
+        self.username = username
+        self.password = password
+
+    def tls_set(self, **kwargs):
+        self.tls_kwargs = kwargs
+
+    def connect(self, host, port, keepalive=30):
+        self.connect_args = (host, port, keepalive)
+
+    def subscribe(self, topic, qos=1):
+        self._subscribers.setdefault(topic, []).append(self)
+        if self.on_subscribe:
+            self.on_subscribe(self, None, 1, self.subscribe_granted)
+
+    def publish(self, topic, payload, qos=1):
+        info = MagicMock()
+        info.rc = self.publish_rc
+        if self.publish_rc == 0:
+            self._deliver(topic, payload)
+            if self.on_publish:
+                self.on_publish(self, None, 1)
+        return info
+
+    def _deliver(self, topic, payload):
+        if not self.deliver:
+            return
+        body = payload.encode() if isinstance(payload, str) else payload
+        for sub in self._subscribers.get(topic, []):
+            if sub.on_message:
+                msg = MagicMock()
+                msg.topic = topic
+                msg.payload = body
+                sub.on_message(sub, None, msg)
+
+    def loop_start(self):
+        if self.on_connect:
+            self.on_connect(self, None, None, self.connect_rc)
+
+    def loop_stop(self):
+        pass
+
+    def disconnect(self):
+        self.disconnected = True
+
+
+@pytest.fixture
+def fake_mqtt(mocker):
+    """Patch tinker.mqtt.Client with _FakeMqttClient - see its docstring."""
+    created = []
+    overrides = {"pub": {}, "sub": {}}
+    subscribers = {}
+
+    def factory(client_id=None, protocol=None):
+        return _FakeMqttClient(overrides, subscribers, created, client_id, protocol)
+
+    mocker.patch.object(tinker.mqtt, "Client", side_effect=factory)
+    return created, overrides
+
+
+def test_device_mqtt_test_both_modes_success(tmp_path, fake_mqtt):
+    _write_mqtt_test_config(tmp_path)
+    result = runner.invoke(tinker.app, ["device", "mqtt-test"])
+    assert result.exit_code == 0
+    assert "OK: MQTT connection test passed." in result.stdout
+
+
+def test_device_mqtt_test_publish_only(tmp_path, fake_mqtt):
+    _write_mqtt_test_config(tmp_path)
+    result = runner.invoke(tinker.app, ["device", "mqtt-test", "--mode", "publish"])
+    assert result.exit_code == 0
+    created, _ = fake_mqtt
+    assert [client.role for client in created] == ["pub"]
+
+
+def test_device_mqtt_test_subscribe_only(tmp_path, fake_mqtt):
+    _write_mqtt_test_config(tmp_path)
+    result = runner.invoke(tinker.app, ["device", "mqtt-test", "--mode", "subscribe"])
+    assert result.exit_code == 0
+    created, _ = fake_mqtt
+    assert [client.role for client in created] == ["sub"]
+
+
+def test_device_mqtt_test_invalid_mode_errors(tmp_path):
+    _write_mqtt_test_config(tmp_path)
+    result = runner.invoke(tinker.app, ["device", "mqtt-test", "--mode", "bogus"])
+    assert result.exit_code == 1
+    assert "--mode must be one of" in result.stderr
+
+
+def test_device_mqtt_test_missing_config_errors(tmp_path):
+    result = runner.invoke(tinker.app, ["device", "mqtt-test"])
+    assert result.exit_code == 1
+    assert "config file not found" in result.stderr
+
+
+def test_device_mqtt_test_publisher_connect_failure(tmp_path, fake_mqtt):
+    _write_mqtt_test_config(tmp_path)
+    _, overrides = fake_mqtt
+    overrides["pub"]["connect_rc"] = 5
+    result = runner.invoke(tinker.app, ["device", "mqtt-test", "--timeout", "0"])
+    assert result.exit_code == 1
+    assert "Publisher connect failed: rc=5" in result.stderr
+
+
+def test_device_mqtt_test_subscriber_connect_failure(tmp_path, fake_mqtt):
+    _write_mqtt_test_config(tmp_path)
+    _, overrides = fake_mqtt
+    overrides["sub"]["connect_rc"] = 5
+    result = runner.invoke(tinker.app, ["device", "mqtt-test", "--timeout", "0"])
+    assert result.exit_code == 1
+    assert "Subscriber connect failed: rc=5" in result.stderr
+
+
+def test_device_mqtt_test_publish_failure(tmp_path, fake_mqtt):
+    _write_mqtt_test_config(tmp_path)
+    _, overrides = fake_mqtt
+    overrides["pub"]["publish_rc"] = 1
+    result = runner.invoke(tinker.app, ["device", "mqtt-test", "--timeout", "0"])
+    assert result.exit_code == 1
+    assert "Publish failed with rc=1" in result.stderr
+
+
+def test_device_mqtt_test_subscription_rejected(tmp_path, fake_mqtt):
+    _write_mqtt_test_config(tmp_path)
+    _, overrides = fake_mqtt
+    overrides["sub"]["subscribe_granted"] = [128]
+    result = runner.invoke(tinker.app, ["device", "mqtt-test"])
+    assert result.exit_code == 1
+    assert "Subscription rejected" in result.stderr
+
+
+def test_device_mqtt_test_message_not_received(tmp_path, fake_mqtt):
+    _write_mqtt_test_config(tmp_path)
+    _, overrides = fake_mqtt
+    overrides["pub"]["deliver"] = False
+    result = runner.invoke(tinker.app, ["device", "mqtt-test", "--timeout", "0"])
+    assert result.exit_code == 1
+    assert "Timed out waiting to receive the published probe message." in result.stderr
+
+
+def test_device_mqtt_test_tls_without_ca_cert_disables_verification(
+    tmp_path, fake_mqtt
+):
+    _write_mqtt_test_config(
+        tmp_path,
+        mqtt_ssl=True,
+        mqtt_ssl_cert_path="certs/client.pem",
+        mqtt_ssl_key_path="certs/private.pem",
+    )
+    result = runner.invoke(tinker.app, ["device", "mqtt-test"])
+    assert result.exit_code == 0
+    created, _ = fake_mqtt
+    for client in created:
+        assert client.tls_kwargs["certfile"] == "certs/client.pem"
+        assert client.tls_kwargs["keyfile"] == "certs/private.pem"
+        assert client.tls_kwargs["cert_reqs"] == tinker.ssl.CERT_NONE
+        assert "ca_certs" not in client.tls_kwargs
+
+
+def test_device_mqtt_test_tls_with_ca_cert_verifies(tmp_path, fake_mqtt):
+    _write_mqtt_test_config(tmp_path, mqtt_ssl=True)
+    result = runner.invoke(tinker.app, ["device", "mqtt-test", "--ca-cert", "ca.pem"])
+    assert result.exit_code == 0
+    created, _ = fake_mqtt
+    for client in created:
+        assert client.tls_kwargs["ca_certs"] == "ca.pem"
+        assert "cert_reqs" not in client.tls_kwargs
+
+
+def test_device_mqtt_test_custom_config_path(tmp_path, fake_mqtt):
+    custom_path = tmp_path / "other_config.json"
+    custom_path.write_text(
+        json.dumps(
+            {
+                "mqtt_broker": "other-broker.local",
+                "mqtt_port": 1883,
+                "mqtt_client_id": "dev-2",
+                "mqtt_topic_pub": "devices/dev-2/events",
+            }
+        )
+    )
+    result = runner.invoke(
+        tinker.app, ["device", "mqtt-test", "--config", str(custom_path)]
+    )
+    assert result.exit_code == 0
+    assert "other-broker.local" in result.stdout

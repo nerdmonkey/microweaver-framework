@@ -533,3 +533,38 @@ def test_save_returns_only_the_updated_keys(tmp_path):
     saved = setting.save(wifi_ssid="ssid_a", wifi_password="password_a")
 
     assert saved == {"wifi_ssid": "ssid_a", "wifi_password": "password_a"}
+
+
+def test_save_writes_pretty_printed_json(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    setting = Setting(config_path=str(config_path))
+
+    setting.save(wifi_ssid="fresh_ssid")
+
+    raw = config_path.read_text()
+    assert "\n" in raw
+    assert json.loads(raw)["wifi_ssid"] == "fresh_ssid"
+
+
+def test_save_falls_back_to_compact_write_when_indent_unsupported(tmp_path, mocker):
+    # Mirrors MicroPython's ujson.dump, which doesn't accept an indent
+    # kwarg and raises TypeError - config/app.py runs on-device too.
+    config_path = tmp_path / "device_config.json"
+    setting = Setting(config_path=str(config_path))
+
+    real_dump = json.dump
+    calls = []
+
+    def fake_dump(obj, fp, **kwargs):
+        calls.append(kwargs)
+        if "indent" in kwargs:
+            raise TypeError("dump() got an unexpected keyword argument 'indent'")
+        return real_dump(obj, fp)
+
+    mocker.patch("config.app.json.dump", side_effect=fake_dump)
+
+    setting.save(wifi_ssid="fresh_ssid")
+
+    assert calls == [{"indent": 2}, {}]
+    on_disk = json.loads(config_path.read_text())
+    assert on_disk["wifi_ssid"] == "fresh_ssid"

@@ -305,7 +305,14 @@ class Setting:
         self._validate(merged)
 
         with open(self._config_path, "w") as config_file:
-            json.dump(merged, config_file)
+            try:
+                # Pretty-print for human readability - stdlib json supports
+                # indent, but MicroPython's ujson (used on-device) doesn't
+                # accept the kwarg at all and raises TypeError, so fall back
+                # to its default compact write there.
+                json.dump(merged, config_file, indent=2)
+            except TypeError:
+                json.dump(merged, config_file)
 
         self._config = merged
         self._apply_config()

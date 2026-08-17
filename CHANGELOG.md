@@ -8,6 +8,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `tinker.py devices` command group (`list`/`get`/`delete`/`expiring-certs`/
+  `provision-mqtt`/`claim-code`/`exchange-claim`) covering the rest of the
+  Agnes API's device-lifecycle surface that only `provision`/`certs download`
+  partially exposed before: `list`/`get` inspect devices without needing a
+  `provision` run, `delete` deactivates a device, `expiring-certs` reports
+  certs nearing expiry across all devices, `provision-mqtt` rotates a
+  device's MQTT username/password without reissuing its cert, and
+  `claim-code`/`exchange-claim` add a self-service onboarding flow (a
+  short-lived code a field device can redeem for runtime MQTT credentials +
+  a DER cert bundle via `POST /devices/claims/exchange`, without needing an
+  `--api-key` of its own). `get`/`delete`/`provision-mqtt`/`claim-code`
+  reuse the same `--device-id`-omitted picker as `certs download`.
+  `provision-mqtt` writes the rotated `mqtt_username`/`mqtt_password` into
+  `device_config.json`; `exchange-claim` writes `device_id`,
+  `mqtt_client_id`, `mqtt_broker`/`port`, `mqtt_username`/`password`, and
+  `mqtt_lwt_topic`/`message` (but not `mqtt_ssl`/cert paths, since `deploy`
+  doesn't upload `./certs/` to the device yet - wire those up by hand once
+  the `.der` files are actually on the device).
+- `tinker.py provision` now also reaches `devices provision-mqtt` and
+  `devices exchange-claim`, so both are available from the main
+  provisioning entrypoint, not just standalone under `devices`: a new
+  `provision --rotate-mqtt --device-id <id>` mode rotates an existing
+  device's MQTT credentials only (no cert changes, no field prompts,
+  `--name`/`--skip-certs` ignored), and `provision` is now a command group
+  with a new `provision claim <code>` subcommand that provisions via a
+  claim code instead of an API key (identical behavior to `devices
+  exchange-claim`, reachable from `provision` too). Bare `tinker.py
+  provision <options>` (no subcommand) is unchanged.
+- `provision`, when the interactive device picker is used to renew an
+  existing device's cert (rather than register a new one), no longer
+  re-prompts for that device's WiFi/MQTT fields - `renew-cert` doesn't
+  return credentials at all (cert fields only), so previously every field
+  without an explicit CLI flag was re-prompted even though the device's
+  identity was already sitting in its own `device_config.json`. Those
+  values are now reused silently instead; an explicit CLI flag still
+  overrides, and a field genuinely missing from both still prompts. A blank
+  placeholder from `device_config.json.example` (e.g. unset `wifi_ssid`)
+  doesn't count as a known value either - it's still prompted for, rather
+  than silently written as an empty string. When a renewed device's
+  `mqtt_username`/`mqtt_password` still aren't known after that (e.g.
+  recovering a lost `device_config.json`), `provision` now mints fresh
+  ones via `provision-mqtt` automatically instead of prompting for them -
+  the broker is the only source of truth for these, they can't be typed
+  in correctly by hand. `mqtt_client_id`/`mqtt_topic_pub`/`mqtt_topic_sub`
+  are suggested from the newly-generated username the same way as the
+  registration path. A device whose credentials are already known locally
+  is never rotated by this.
+- `provision` now writes `device_name` when registering or renewing via
+  the Agnes API - the register response already carried `name`, and a
+  renewed device's name (not returned by `renew-cert`) is now carried
+  through from the device the operator picked in the interactive list.
+- `provision --api-key`/`provision claim`/`devices exchange-claim` now also
+  suggest `mqtt_topic_pub`/`mqtt_topic_sub` as `devices/<identity>/events`
+  and `devices/<identity>/commands` (mirroring the Agnes project's own
+  `topic_data`/`topic_command` convention) instead of leaving them to the
+  generic hardcoded prompt defaults (`--api-key`) or not setting them at all
+  (`claim`/`exchange-claim`) - an explicit `--mqtt-topic-pub`/
+  `--mqtt-topic-sub` still wins over the suggestion.
+- `provision --api-key`'s registration path now derives `mqtt_client_id`
+  from the same `mqtt_username` the API returned, instead of the device's
+  `device_id` - and `provision claim`/`devices exchange-claim` derive it
+  from `mqtt_username` instead of `topic_namespace`. `mqtt_client_id` and
+  `mqtt_username` are the same value for now across every API-driven path.
+- `provision`'s interactive prompt no longer asks for MQTT client id on its
+  own - `mqtt_client_id` was removed from `PROVISION_FIELDS` and is instead
+  always derived from `mqtt_username` (whatever that ends up being, from
+  any source: API, existing config reuse, auto-generated, or a fresh
+  prompt answer), applied once as a final step. An explicit
+  `--mqtt-client-id` still overrides for the rare case a different value is
+  actually needed.
+- `tinker.py device mqtt-test` command: connects to the broker using
+  `device_config.json`'s own `mqtt_broker`/`mqtt_port`/`mqtt_username`/
+  `mqtt_password`/`mqtt_ssl` settings (a distinct client id, so it doesn't
+  kick the live device off the broker) and confirms a publish/subscribe
+  round-trip on its configured topic within `--timeout` - a smoke test that
+  provisioned credentials actually work end to end, without touching the
+  device itself.
+
+### Fixed
+- `Setting.save()` (`config/app.py`) now pretty-prints `device_config.json`
+  (2-space indent) instead of writing it as a single unreadable line. Falls
+  back to a plain compact write if the underlying `json` module doesn't
+  accept an `indent` kwarg (MicroPython's on-device `ujson` doesn't), so
+  on-device callers (`app/services/registration.py`,
+  `factory_reset.py`, `provisioning.py`, `ota.py`) are unaffected.
+
+### Added
 - `tinker.py profile` command group (`create`/`edit`/`delete`/`list`/`show`/
   `use`) for managing named Agnes API connection profiles (`api_url`,
   `api_key`, `port`, `baud`) saved in `.microweaver`, instead of `--profile`

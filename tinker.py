@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build, deploy, and manage microweaver firmware."""
 
+import base64
 import configparser
 import hashlib
 import json
@@ -9,15 +10,18 @@ import shutil
 import ssl
 import subprocess  # nosec B404
 import sys
+import threading
 import time
 import tomllib
 import urllib.error
 import urllib.request
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional, cast
 from urllib.parse import urlparse
 
+import paho.mqtt.client as mqtt
 import typer
 from esptool.cmds import _get_flash_info as get_flash_info
 from esptool.cmds import attach_flash, detect_chip, reset_chip
@@ -78,6 +82,14 @@ certs_app = typer.Typer(
     no_args_is_help=True, help="Fetch a device's cert bundle from the Agnes API."
 )
 app.add_typer(certs_app, name="certs")
+devices_app = typer.Typer(
+    no_args_is_help=True, help="List, inspect, and manage devices on the Agnes API."
+)
+app.add_typer(devices_app, name="devices")
+provision_app = typer.Typer(
+    help="Prompt for WiFi/MQTT settings and write device_config.json."
+)
+app.add_typer(provision_app, name="provision")
 fleet_app = typer.Typer(no_args_is_help=True, help="Push a build to multiple devices.")
 app.add_typer(fleet_app, name="fleet")
 ota_app = typer.Typer(
@@ -1079,7 +1091,8 @@ def _agnes_api_request(
         with urllib.request.urlopen(  # nosec B310
             request, context=context, timeout=30
         ) as resp:
-            return json.load(resp)
+            body = resp.read()
+            return json.loads(body) if body else {}
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")
         try:
@@ -1110,6 +1123,15 @@ def _get_agnes_api(url: str, api_key: str, ca_cert: Optional[Path]) -> dict:
     response."""
     request = urllib.request.Request(
         url, method="GET", headers={API_KEY_HEADER: api_key}
+    )
+    return _agnes_api_request(request, ca_cert)
+
+
+def _delete_agnes_api(url: str, api_key: str, ca_cert: Optional[Path]) -> dict:
+    """DELETE url with the Agnes X-API-Key header and return the decoded
+    JSON response (or {} for a 204 with no body)."""
+    request = urllib.request.Request(
+        url, method="DELETE", headers={API_KEY_HEADER: api_key}
     )
     return _agnes_api_request(request, ca_cert)
 
@@ -1148,6 +1170,104 @@ def _renew_device_cert_via_api(
         ca_cert,
         {"validity_days": 365},
     )
+
+
+def _get_device_via_api(
+    api_url: str, api_key: str, ca_cert: Optional[Path], device_id: str
+) -> dict:
+    """GET {api_url}/devices/{device_id} and return the device's details
+    (DeviceResponse: id, name, is_online, last_seen_at, capabilities, ...)."""
+    return _get_agnes_api(
+        f"{api_url.rstrip('/')}/devices/{device_id}", api_key, ca_cert
+    )
+
+
+def _delete_device_via_api(
+    api_url: str, api_key: str, ca_cert: Optional[Path], device_id: str
+) -> dict:
+    """DELETE {api_url}/devices/{device_id}. Permanently deactivates the
+    device on the Agnes side - its credentials/certs stop working
+    immediately."""
+    return _delete_agnes_api(
+        f"{api_url.rstrip('/')}/devices/{device_id}", api_key, ca_cert
+    )
+
+
+def _list_expiring_certs_via_api(
+    api_url: str,
+    api_key: str,
+    ca_cert: Optional[Path],
+    days: int = 30,
+    limit: int = 100,
+) -> list[dict]:
+    """GET {api_url}/devices/expiring-certs?days=...&limit=... and return
+    its items (each an ExpiringCertResponse: device_id, device_name,
+    fingerprint, expires_at, days_remaining)."""
+    url = f"{api_url.rstrip('/')}/devices/expiring-certs?days={days}&limit={limit}"
+    return _get_agnes_api(url, api_key, ca_cert)["items"]
+
+
+def _provision_mqtt_via_api(
+    api_url: str, api_key: str, ca_cert: Optional[Path], device_id: str
+) -> dict:
+    """POST {api_url}/devices/{device_id}/provision-mqtt to rotate a
+    device's MQTT username/password without touching its certificate.
+    Returns {device_id, username, password, mqtt_provisioned}."""
+    return _post_agnes_api(
+        f"{api_url.rstrip('/')}/devices/{device_id}/provision-mqtt",
+        api_key,
+        ca_cert,
+        {},
+    )
+
+
+def _create_claim_code_via_api(
+    api_url: str,
+    api_key: str,
+    ca_cert: Optional[Path],
+    device_id: str,
+    bootstrap_device_id: Optional[str] = None,
+) -> dict:
+    """POST {api_url}/devices/{device_id}/claim-code to generate a
+    short-lived claim code a field device can exchange (see
+    _exchange_claim_via_api) for runtime MQTT credentials + DER certs
+    without needing an API key of its own. Returns {device_id, claim_code,
+    expires_at}."""
+    body = {}
+    if bootstrap_device_id is not None:
+        body["bootstrap_device_id"] = bootstrap_device_id
+    return _post_agnes_api(
+        f"{api_url.rstrip('/')}/devices/{device_id}/claim-code",
+        api_key,
+        ca_cert,
+        body,
+    )
+
+
+def _exchange_claim_via_api(
+    api_url: str,
+    ca_cert: Optional[Path],
+    claim_code: str,
+    bootstrap_device_id: Optional[str] = None,
+) -> dict:
+    """POST {api_url}/devices/claims/exchange to redeem a claim code (see
+    _create_claim_code_via_api) for runtime MQTT credentials + DER cert
+    material. Unauthenticated by design - this is the device-side half of
+    the claim flow, so no api_key is sent. Returns a
+    DeviceClaimExchangeResponse: device_id, topic_namespace, mqtt_username,
+    mqtt_password, certificate_der_b64, private_key_der_b64,
+    ca_cert_der_b64, mqtt_broker, mqtt_port, tls_server_hostname,
+    lwt_topic, lwt_payload."""
+    body = {"claim_code": claim_code}
+    if bootstrap_device_id is not None:
+        body["bootstrap_device_id"] = bootstrap_device_id
+    request = urllib.request.Request(
+        f"{api_url.rstrip('/')}/devices/claims/exchange",
+        data=json.dumps(body).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    return _agnes_api_request(request, ca_cert)
 
 
 HOME_CONFIG_DIR = Path.home() / ".microweaver"
@@ -1480,11 +1600,12 @@ def profile_use(
 
 PROVISION_FIELDS = [
     # (json key, prompt label, default, is_secret)
+    # mqtt_client_id isn't listed here - it's never prompted for on its own,
+    # it always mirrors mqtt_username (see provision()'s final assignment).
     ("wifi_ssid", "WiFi SSID", "", False),
     ("wifi_password", "WiFi password", "", True),
     ("mqtt_broker", "MQTT broker", "localhost", False),
     ("mqtt_port", "MQTT port", 1883, False),
-    ("mqtt_client_id", "MQTT client id", "microweaver", False),
     ("mqtt_topic_pub", "MQTT publish topic", "command/control/room/light", False),
     ("mqtt_topic_sub", "MQTT subscribe topic", "data/sensor/room/temperature", False),
     ("mqtt_username", "MQTT username", "", False),
@@ -1582,45 +1703,78 @@ def _require_ca_cert_for_https(api_url: str, ca_cert: Optional[Path]) -> None:
         raise typer.Exit(code=1)
 
 
+def _require_api_connection(
+    resolved_api_url, resolved_api_key, resolved_ca_cert
+) -> None:
+    """Exit with an ERROR if --api-key/--api-url weren't resolvable (from
+    flags, profile, or .microweaver), and require --ca-cert for a https
+    --api-url. Shared by every 'devices'/'certs' command that always needs
+    an authenticated Agnes API call (unlike 'provision', where an API key
+    is optional)."""
+    if not resolved_api_key:
+        print(
+            "ERROR: --api-key required (none saved for this profile or in "
+            ".microweaver).",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    if not resolved_api_url:
+        print(
+            "ERROR: --api-url required (none saved for this profile or in "
+            ".microweaver).",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    _require_ca_cert_for_https(resolved_api_url, resolved_ca_cert)
+
+
 def _prompt_provision_device_choice(
     resolved_api_url: str, resolved_api_key: str, resolved_ca_cert: Optional[Path]
-) -> Optional[str]:
+) -> tuple[Optional[str], Optional[str]]:
     """List devices via the API and let the operator pick an existing one
-    (to renew its cert) or create a new one instead. Returns the chosen
-    device's id, or None to create new - also None, with a warning, if the
-    listing itself fails or there are no devices yet, since 'create new' is
-    always a safe fallback here (unlike certs_download, which has no
-    fallback path without a device id already in hand)."""
+    (to renew its cert) or create a new one instead. Returns
+    (device_id, device_name) of the picked device, or (None, None) to
+    create new - also (None, None), with a warning, if the listing itself
+    fails or there are no devices yet, since 'create new' is always a safe
+    fallback here (unlike certs_download, which has no fallback path
+    without a device id already in hand)."""
     try:
         devices = _list_devices_via_api(
             resolved_api_url, resolved_api_key, resolved_ca_cert
         )
     except ProvisionApiError as exc:
         print(f"NOTE: could not list devices ({exc}) - creating new.", file=sys.stderr)
-        return None
+        return None, None
     if not devices:
-        return None
-    return _prompt_device_selection(devices, allow_create=True)
+        return None, None
+    device_id = _prompt_device_selection(devices, allow_create=True)
+    if device_id is None:
+        return None, None
+    device_name = next(d["name"] for d in devices if d["id"] == device_id)
+    return device_id, device_name
 
 
 def _resolve_provision_device_identity(
     name, resolved_api_url, resolved_api_key, resolved_ca_cert
 ):
-    """Return (resolved_name, resolved_device_id) - exactly one is set, the
-    other None. Prompts for --name (after offering to pick an existing
-    device to renew instead, see _prompt_provision_device_choice) when name
-    isn't given. Exits the CLI if there's no TTY to prompt on."""
+    """Return (resolved_name, resolved_device_id, picked_device_name).
+    resolved_name is set only when registering a new device (typed or
+    given via --name); resolved_device_id/picked_device_name are set only
+    when an existing device was picked to renew. Prompts for --name (after
+    offering to pick an existing device to renew instead, see
+    _prompt_provision_device_choice) when name isn't given. Exits the CLI
+    if there's no TTY to prompt on."""
     if name is not None:
-        return name, None
+        return name, None, None
     if not sys.stdin.isatty():
         print("ERROR: no TTY to prompt for: --name.", file=sys.stderr)
         raise typer.Exit(code=1)
-    device_id = _prompt_provision_device_choice(
+    device_id, device_name = _prompt_provision_device_choice(
         resolved_api_url, resolved_api_key, resolved_ca_cert
     )
     if device_id is not None:
-        return None, device_id
-    return typer.prompt("Device name"), None
+        return None, device_id, device_name
+    return typer.prompt("Device name"), None, None
 
 
 def _maybe_register_or_renew_via_api(
@@ -1634,7 +1788,10 @@ def _maybe_register_or_renew_via_api(
       to fill MQTT credentials) when a new device was registered, else None
       - renew-cert doesn't reissue MQTT credentials, only certs.
     - cert_bundle is whichever response carries the fresh certs (either
-      one), or None if no API key was given at all.
+      one), or None if no API key was given at all. Always has a "name" key
+      when not None - from the API response for a new registration, or
+      from the device the operator picked for a renewal (renew-cert itself
+      doesn't return one) - so the caller can fill device_name.
     Exits the CLI on any resolution/registration/renewal error."""
     if not resolved_api_key:
         return None, None
@@ -1647,7 +1804,11 @@ def _maybe_register_or_renew_via_api(
         raise typer.Exit(code=1)
     _require_ca_cert_for_https(resolved_api_url, resolved_ca_cert)
 
-    resolved_name, resolved_device_id = _resolve_provision_device_identity(
+    (
+        resolved_name,
+        resolved_device_id,
+        picked_device_name,
+    ) = _resolve_provision_device_identity(
         name, resolved_api_url, resolved_api_key, resolved_ca_cert
     )
 
@@ -1666,6 +1827,7 @@ def _maybe_register_or_renew_via_api(
         except ProvisionApiError as exc:
             print(f"ERROR: cert renewal failed: {exc}", file=sys.stderr)
             raise typer.Exit(code=1)
+        cert_bundle["name"] = picked_device_name
         return None, cert_bundle
 
     print(f"Registering device '{resolved_name}' with {resolved_api_url}...")
@@ -1694,9 +1856,18 @@ def _resolve_given_fields(cli_fields, api_result, resolved_api_url):
     # dynsec username/password auth these credentials are for.
     given["mqtt_broker"] = given["mqtt_broker"] or urlparse(resolved_api_url).hostname
     given["mqtt_port"] = given["mqtt_port"] or 1883
-    given["mqtt_client_id"] = given["mqtt_client_id"] or api_result["device_id"]
     given["mqtt_username"] = given["mqtt_username"] or api_result["username"]
     given["mqtt_password"] = given["mqtt_password"] or api_result["password"]
+    # Also suggest topics scoped to this device's own identity (mirrors the
+    # Agnes project's own tinker.py topic_command/topic_data convention)
+    # instead of leaving these to the generic hardcoded PROVISION_FIELDS
+    # prompt defaults, which aren't specific to the device being provisioned.
+    given["mqtt_topic_pub"] = (
+        given["mqtt_topic_pub"] or f"devices/{api_result['username']}/events"
+    )
+    given["mqtt_topic_sub"] = (
+        given["mqtt_topic_sub"] or f"devices/{api_result['username']}/commands"
+    )
     return given
 
 
@@ -1717,13 +1888,97 @@ def _write_provisioned_certs(certs_dir: Path, api_result: dict) -> dict[str, Pat
     return paths
 
 
-@app.command()
+def _write_der_cert_bundle(certs_dir: Path, api_result: dict) -> dict[str, Path]:
+    """Save a claim-exchange result's base64-encoded DER cert bundle to
+    certs_dir as ca.der/client.der/private.der. Unlike
+    _write_provisioned_certs (PEM, from registration/renewal), the claim
+    exchange endpoint returns DER for embedded/device MQTT clients - see
+    DeviceClaimExchangeResponse in the Agnes API."""
+    paths = {
+        "ca_cert": certs_dir / "ca.der",
+        "client_cert": certs_dir / "client.der",
+        "client_key": certs_dir / "private.der",
+    }
+    certs_dir.mkdir(parents=True, exist_ok=True)
+    paths["ca_cert"].write_bytes(base64.b64decode(api_result["ca_cert_der_b64"]))
+    paths["client_cert"].write_bytes(
+        base64.b64decode(api_result["certificate_der_b64"])
+    )
+    paths["client_key"].write_bytes(base64.b64decode(api_result["private_key_der_b64"]))
+    return paths
+
+
+def _apply_renew_defaults(given: dict, defaults: dict) -> None:
+    """Fill any still-missing `given` field from `defaults` (in place) -
+    but only a real, non-empty existing value counts; a blank placeholder
+    (e.g. device_config.json.example's unset "") doesn't, and is left
+    missing so it still falls through to the prompt. Used when renewing an
+    already-provisioned device's cert, whose WiFi/MQTT identity is already
+    known from its own device_config.json - see provision()'s is_renew."""
+    for key, value in given.items():
+        if value is not None:
+            continue
+        default_value = defaults.get(key)
+        if default_value not in (None, ""):
+            given[key] = default_value
+
+
+def _fill_missing_mqtt_credentials(
+    given: dict,
+    resolved_api_url: str,
+    resolved_api_key: str,
+    resolved_ca_cert: Optional[Path],
+    device_id: str,
+) -> None:
+    """When renewing a device whose MQTT username/password aren't known
+    locally at all (e.g. recovering a lost device_config.json - a device
+    with known credentials never reaches here, see _apply_renew_defaults),
+    mint fresh ones via provision-mqtt instead of asking the operator to
+    make something up: the broker is the only source of truth for these,
+    they can't be derived client-side. Also fills topics from the new
+    username when those are still unset too, matching
+    _resolve_given_fields' devices/<identity>/... convention (mqtt_client_id
+    isn't touched here - it always mirrors mqtt_username, handled once in
+    provision() itself).
+
+    Mutates `given` in place. On API failure, only warns and leaves the
+    fields missing so they still fall through to the interactive prompt."""
+    if given["mqtt_username"] is not None and given["mqtt_password"] is not None:
+        return
+    try:
+        result = _provision_mqtt_via_api(
+            resolved_api_url, resolved_api_key, resolved_ca_cert, device_id
+        )
+    except ProvisionApiError as exc:
+        print(
+            f"NOTE: could not auto-generate MQTT credentials ({exc}) - "
+            "falling back to prompting.",
+            file=sys.stderr,
+        )
+        return
+    print(f"Generated MQTT credentials for device '{device_id}' via provision-mqtt.")
+    given["mqtt_username"] = given["mqtt_username"] or result["username"]
+    given["mqtt_password"] = given["mqtt_password"] or result["password"]
+    given["mqtt_topic_pub"] = (
+        given["mqtt_topic_pub"] or f"devices/{result['username']}/events"
+    )
+    given["mqtt_topic_sub"] = (
+        given["mqtt_topic_sub"] or f"devices/{result['username']}/commands"
+    )
+
+
+@provision_app.callback(invoke_without_command=True)
 def provision(
+    ctx: typer.Context = None,
     wifi_ssid: Optional[str] = typer.Option(None, help="WiFi SSID"),
     wifi_password: Optional[str] = typer.Option(None, help="WiFi password"),
     mqtt_broker: Optional[str] = typer.Option(None, help="MQTT broker host"),
     mqtt_port: Optional[int] = typer.Option(None, help="MQTT broker port"),
-    mqtt_client_id: Optional[str] = typer.Option(None, help="MQTT client id"),
+    mqtt_client_id: Optional[str] = typer.Option(
+        None,
+        help="MQTT client id. Defaults to mqtt_username (the same value for "
+        "now) - only set this to use a different one.",
+    ),
     mqtt_topic_pub: Optional[str] = typer.Option(None, help="MQTT publish topic"),
     mqtt_topic_sub: Optional[str] = typer.Option(None, help="MQTT subscribe topic"),
     mqtt_username: Optional[str] = typer.Option(None, help="MQTT username"),
@@ -1734,8 +1989,10 @@ def provision(
         help="Agnes API base URL (e.g. https://192.168.1.38/backend). When "
         "given (or saved in .microweaver), the device is first registered "
         "with Agnes and mqtt_broker/mqtt_client_id/mqtt_username/"
-        "mqtt_password/device_id/device_cert/device_key are filled in from "
-        "the API response instead of being prompted for.",
+        "mqtt_password/mqtt_topic_pub/mqtt_topic_sub/device_id/device_cert/"
+        "device_key are filled in from the API response (topics suggested "
+        "as devices/<username>/events and .../commands) instead of being "
+        "prompted for.",
     ),
     api_key: Optional[str] = typer.Option(
         None,
@@ -1771,6 +2028,20 @@ def provision(
         "from device_config.json and skip writing ./certs/, even when "
         "registering/renewing via the API.",
     ),
+    rotate_mqtt: bool = typer.Option(
+        False,
+        "--rotate-mqtt",
+        help="Rotate an existing device's MQTT username/password only (no "
+        "cert changes, no WiFi/MQTT-topic prompts) and write the result "
+        "into device_config.json - see 'devices provision-mqtt'. Use with "
+        "--device-id; --name/--skip-certs are ignored in this mode.",
+    ),
+    device_id: Optional[str] = typer.Option(
+        None,
+        "--device-id",
+        help="Existing device's ID to rotate MQTT credentials for (used "
+        "with --rotate-mqtt only). Omit on a TTY to pick from a list.",
+    ),
 ) -> None:
     """Prompt for WiFi/MQTT settings and write device_config.json.
 
@@ -1791,7 +2062,20 @@ def provision(
     project's own tinker.py cert layout) unless --skip-certs is given,
     since the API only returns a device's certs once, at registration/
     renewal time.
+
+    --rotate-mqtt switches to a different, narrower mode entirely: rotating
+    MQTT credentials for an already-provisioned device (see 'devices
+    provision-mqtt'), skipping every field prompt above.
+
+    See also 'provision claim <code>' to provision via a claim code instead
+    of an API key (see 'devices exchange-claim').
     """
+    if ctx is not None and ctx.invoked_subcommand is not None:
+        return
+    if rotate_mqtt:
+        _run_provision_mqtt_rotation(api_url, api_key, ca_cert, profile, device_id)
+        return
+
     resolved = _resolve_provision_connection_args(
         None, None, api_url, api_key, profile, ca_cert
     )
@@ -1803,13 +2087,15 @@ def provision(
     mqtt_api_result, cert_bundle = _maybe_register_or_renew_via_api(
         name, resolved_api_url, resolved_api_key, resolved_ca_cert
     )
+    # renew-cert only reissues certs, so mqtt_api_result stays None even
+    # though a cert_bundle came back - see _maybe_register_or_renew_via_api.
+    is_renew = mqtt_api_result is None and cert_bundle is not None
 
     cli_fields = {
         "wifi_ssid": wifi_ssid,
         "wifi_password": wifi_password,
         "mqtt_broker": mqtt_broker,
         "mqtt_port": mqtt_port,
-        "mqtt_client_id": mqtt_client_id,
         "mqtt_topic_pub": mqtt_topic_pub,
         "mqtt_topic_sub": mqtt_topic_sub,
         "mqtt_username": mqtt_username,
@@ -1817,18 +2103,35 @@ def provision(
     }
     given = _resolve_given_fields(cli_fields, mqtt_api_result, resolved_api_url)
 
+    defaults = _load_provision_defaults()
+    if is_renew:
+        _apply_renew_defaults(given, defaults)
+        _fill_missing_mqtt_credentials(
+            given,
+            resolved_api_url,
+            resolved_api_key,
+            resolved_ca_cert,
+            cert_bundle["device_id"],
+        )
+
     missing = [key for key, value in given.items() if value is None]
     _require_tty_for_missing(missing)
 
-    defaults = _load_provision_defaults()
     if missing:
         _prompt_missing_fields(given, defaults)
+
+    # mqtt_client_id is never its own prompt/API field - it's the same
+    # value as mqtt_username for now (an explicit --mqtt-client-id still
+    # overrides, for the rare case that's actually needed).
+    given["mqtt_client_id"] = mqtt_client_id or given["mqtt_username"]
 
     config_path = ROOT / "device_config.json"
     merged = dict(defaults)
     merged.update(given)
     if cert_bundle is not None:
         merged["device_id"] = cert_bundle["device_id"]
+        if cert_bundle.get("name"):
+            merged["device_name"] = cert_bundle["name"]
         if not skip_certs:
             merged["device_cert"] = cert_bundle["certificate"]
             merged["device_key"] = cert_bundle["private_key"]
@@ -1850,6 +2153,50 @@ def provision(
     print(
         f"\nWrote {config_path.name}. Run 'tinker.py build && tinker.py deploy' "
         "to push it to a device."
+    )
+
+
+@provision_app.command("claim")
+def provision_claim(
+    claim_code: str = typer.Argument(..., help="Claim code from 'devices claim-code'"),
+    bootstrap_device_id: Optional[str] = typer.Option(
+        None,
+        "--bootstrap-device-id",
+        help="Bootstrap device id to present, if the claim code expects one",
+    ),
+    api_url: Optional[str] = typer.Option(
+        None,
+        "--api-url",
+        help="Agnes API base URL (default: resolved from --profile/.microweaver)",
+    ),
+    ca_cert: Optional[Path] = typer.Option(
+        None,
+        "--ca-cert",
+        help="CA cert to verify --api-url's TLS. Required when --api-url is "
+        "https, unless --profile resolves one via 'fetch-ca-cert'.",
+    ),
+    profile: Optional[str] = typer.Option(
+        None,
+        "--profile",
+        help="Saved profile name (see 'profile create'/'profile list') to "
+        "resolve --api-url/--ca-cert from. Defaults to the active profile "
+        "('profile use').",
+    ),
+    out_dir: Optional[Path] = typer.Option(
+        None,
+        "--out-dir",
+        help="Directory to save ca.der/client.der/private.der into "
+        "(default: ./certs)",
+    ),
+) -> None:
+    """Provision this device via a claim code instead of an API key -
+    unauthenticated, no --api-key needed (see 'devices claim-code' to
+    generate one, and 'devices exchange-claim' for the standalone
+    equivalent of this command). Redeems the code for runtime MQTT
+    credentials + a DER cert bundle and writes device_config.json.
+    """
+    _run_exchange_claim(
+        claim_code, bootstrap_device_id, api_url, ca_cert, profile, out_dir
     )
 
 
@@ -1976,21 +2323,7 @@ def certs_download(
     resolved_api_key = resolved["api_key"]
     resolved_ca_cert = resolved["ca_cert"]
 
-    if not resolved_api_key:
-        print(
-            "ERROR: --api-key required (none saved for this profile or in "
-            ".microweaver).",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-    if not resolved_api_url:
-        print(
-            "ERROR: --api-url required (none saved for this profile or in "
-            ".microweaver).",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-    _require_ca_cert_for_https(resolved_api_url, resolved_ca_cert)
+    _require_api_connection(resolved_api_url, resolved_api_key, resolved_ca_cert)
 
     resolved_device_id = _resolve_device_id(
         device_id, resolved_api_url, resolved_api_key, resolved_ca_cert
@@ -2007,6 +2340,400 @@ def certs_download(
 
     cert_paths = _write_provisioned_certs(out_dir or (ROOT / "certs"), api_result)
     print(f"Saved cert bundle -> {cert_paths['ca_cert'].parent}")
+
+
+_API_URL_OPTION = typer.Option(
+    None,
+    "--api-url",
+    help="Agnes API base URL (default: resolved from --profile/.microweaver)",
+)
+_API_KEY_OPTION = typer.Option(
+    None,
+    "--api-key",
+    help="Agnes X-API-Key with devices:write scope (default: resolved "
+    "from --profile/.microweaver)",
+)
+_CA_CERT_OPTION = typer.Option(
+    None,
+    "--ca-cert",
+    help="CA cert to verify --api-url's TLS. Required when --api-url is "
+    "https, unless --profile resolves one via 'fetch-ca-cert'.",
+)
+_PROFILE_OPTION = typer.Option(
+    None,
+    "--profile",
+    help="Saved profile name (see 'profile create'/'profile list') to "
+    "resolve --api-url/--api-key/--ca-cert from. Defaults to the active "
+    "profile ('profile use').",
+)
+_DEVICE_ID_OPTION = typer.Option(
+    None,
+    "--device-id",
+    help="Existing device's ID. Omit while running interactively to pick "
+    "from a list.",
+)
+
+
+@devices_app.command("list")
+def devices_list(
+    limit: int = typer.Option(100, "--limit", help="Max devices to fetch"),
+    api_url: Optional[str] = _API_URL_OPTION,
+    api_key: Optional[str] = _API_KEY_OPTION,
+    ca_cert: Optional[Path] = _CA_CERT_OPTION,
+    profile: Optional[str] = _PROFILE_OPTION,
+) -> None:
+    """List devices registered with the Agnes API."""
+    resolved = _resolve_provision_connection_args(
+        None, None, api_url, api_key, profile, ca_cert
+    )
+    _require_api_connection(
+        resolved["api_url"], resolved["api_key"], resolved["ca_cert"]
+    )
+    try:
+        devices = _list_devices_via_api(
+            resolved["api_url"], resolved["api_key"], resolved["ca_cert"], limit
+        )
+    except ProvisionApiError as exc:
+        print(f"ERROR: could not list devices: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+    if not devices:
+        print("No devices found.")
+        raise typer.Exit(code=0)
+    rows = [
+        (
+            device["id"],
+            device["name"],
+            "online" if device.get("is_online") else "offline",
+            device.get("last_seen_at") or "never",
+        )
+        for device in devices
+    ]
+    print_table(["Device ID", "Name", "Status", "Last Seen"], rows)
+
+
+@devices_app.command("get")
+def devices_get(
+    device_id: Optional[str] = _DEVICE_ID_OPTION,
+    api_url: Optional[str] = _API_URL_OPTION,
+    api_key: Optional[str] = _API_KEY_OPTION,
+    ca_cert: Optional[Path] = _CA_CERT_OPTION,
+    profile: Optional[str] = _PROFILE_OPTION,
+) -> None:
+    """Show a single device's details."""
+    resolved = _resolve_provision_connection_args(
+        None, None, api_url, api_key, profile, ca_cert
+    )
+    resolved_api_url = resolved["api_url"]
+    resolved_api_key = resolved["api_key"]
+    resolved_ca_cert = resolved["ca_cert"]
+    _require_api_connection(resolved_api_url, resolved_api_key, resolved_ca_cert)
+
+    resolved_device_id = _resolve_device_id(
+        device_id, resolved_api_url, resolved_api_key, resolved_ca_cert
+    )
+    try:
+        device = _get_device_via_api(
+            resolved_api_url, resolved_api_key, resolved_ca_cert, resolved_device_id
+        )
+    except ProvisionApiError as exc:
+        print(f"ERROR: could not fetch device: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+    print_table(["Field", "Value"], list(device.items()))
+
+
+@devices_app.command("delete")
+def devices_delete(
+    device_id: Optional[str] = _DEVICE_ID_OPTION,
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
+    api_url: Optional[str] = _API_URL_OPTION,
+    api_key: Optional[str] = _API_KEY_OPTION,
+    ca_cert: Optional[Path] = _CA_CERT_OPTION,
+    profile: Optional[str] = _PROFILE_OPTION,
+) -> None:
+    """Permanently delete a device from the Agnes API. Its credentials and
+    certs stop working immediately - this doesn't touch anything on the
+    device itself."""
+    resolved = _resolve_provision_connection_args(
+        None, None, api_url, api_key, profile, ca_cert
+    )
+    resolved_api_url = resolved["api_url"]
+    resolved_api_key = resolved["api_key"]
+    resolved_ca_cert = resolved["ca_cert"]
+    _require_api_connection(resolved_api_url, resolved_api_key, resolved_ca_cert)
+
+    resolved_device_id = _resolve_device_id(
+        device_id, resolved_api_url, resolved_api_key, resolved_ca_cert
+    )
+    if not yes and not typer.confirm(f"Delete device '{resolved_device_id}'?"):
+        raise typer.Exit(code=0)
+    try:
+        _delete_device_via_api(
+            resolved_api_url, resolved_api_key, resolved_ca_cert, resolved_device_id
+        )
+    except ProvisionApiError as exc:
+        print(f"ERROR: could not delete device: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+    print(f"Deleted device '{resolved_device_id}'.")
+
+
+@devices_app.command("expiring-certs")
+def devices_expiring_certs(
+    days: int = typer.Option(30, "--days", help="Look-ahead window in days"),
+    limit: int = typer.Option(100, "--limit", help="Max records to fetch"),
+    api_url: Optional[str] = _API_URL_OPTION,
+    api_key: Optional[str] = _API_KEY_OPTION,
+    ca_cert: Optional[Path] = _CA_CERT_OPTION,
+    profile: Optional[str] = _PROFILE_OPTION,
+) -> None:
+    """List devices whose active certificate expires within --days."""
+    resolved = _resolve_provision_connection_args(
+        None, None, api_url, api_key, profile, ca_cert
+    )
+    _require_api_connection(
+        resolved["api_url"], resolved["api_key"], resolved["ca_cert"]
+    )
+    try:
+        certs = _list_expiring_certs_via_api(
+            resolved["api_url"],
+            resolved["api_key"],
+            resolved["ca_cert"],
+            days,
+            limit,
+        )
+    except ProvisionApiError as exc:
+        print(f"ERROR: could not list expiring certs: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+    if not certs:
+        print(f"No certs expiring within {days} day(s).")
+        raise typer.Exit(code=0)
+    rows = [
+        (
+            cert["device_id"],
+            cert["device_name"],
+            cert["days_remaining"],
+            cert["expires_at"],
+            cert["fingerprint"],
+        )
+        for cert in certs
+    ]
+    print_table(
+        ["Device ID", "Device Name", "Days Left", "Expires At", "Fingerprint"], rows
+    )
+
+
+def _run_provision_mqtt_rotation(
+    api_url: Optional[str],
+    api_key: Optional[str],
+    ca_cert: Optional[Path],
+    profile: Optional[str],
+    device_id: Optional[str],
+) -> None:
+    """Shared body for 'devices provision-mqtt' and 'provision --rotate-mqtt':
+    rotate an existing device's MQTT username/password (no cert changes)
+    and write the result into device_config.json."""
+    resolved = _resolve_provision_connection_args(
+        None, None, api_url, api_key, profile, ca_cert
+    )
+    resolved_api_url = resolved["api_url"]
+    resolved_api_key = resolved["api_key"]
+    resolved_ca_cert = resolved["ca_cert"]
+    _require_api_connection(resolved_api_url, resolved_api_key, resolved_ca_cert)
+
+    resolved_device_id = _resolve_device_id(
+        device_id, resolved_api_url, resolved_api_key, resolved_ca_cert
+    )
+    try:
+        result = _provision_mqtt_via_api(
+            resolved_api_url, resolved_api_key, resolved_ca_cert, resolved_device_id
+        )
+    except ProvisionApiError as exc:
+        print(f"ERROR: could not provision MQTT credentials: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+    print_table(["Field", "Value"], list(result.items()))
+
+    config_path = ROOT / "device_config.json"
+    try:
+        Setting(config_path=str(config_path)).save(
+            mqtt_username=result["username"], mqtt_password=result["password"]
+        )
+    except ConfigError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+    print(
+        f"\nWrote {config_path.name}'s mqtt_username/mqtt_password. Run "
+        "'tinker.py build && tinker.py deploy' to push it to the device."
+    )
+
+
+@devices_app.command("provision-mqtt")
+def devices_provision_mqtt(
+    device_id: Optional[str] = _DEVICE_ID_OPTION,
+    api_url: Optional[str] = _API_URL_OPTION,
+    api_key: Optional[str] = _API_KEY_OPTION,
+    ca_cert: Optional[Path] = _CA_CERT_OPTION,
+    profile: Optional[str] = _PROFILE_OPTION,
+) -> None:
+    """Rotate a device's MQTT username/password without touching its
+    certificate, and write the new credentials into device_config.json.
+    'deploy' (or re-run 'provision') pushes them to the device. Same as
+    'provision --rotate-mqtt --device-id <id>'."""
+    _run_provision_mqtt_rotation(api_url, api_key, ca_cert, profile, device_id)
+
+
+@devices_app.command("claim-code")
+def devices_claim_code(
+    device_id: Optional[str] = _DEVICE_ID_OPTION,
+    bootstrap_device_id: Optional[str] = typer.Option(
+        None,
+        "--bootstrap-device-id",
+        help="Expected bootstrap device id the claiming device must present",
+    ),
+    api_url: Optional[str] = _API_URL_OPTION,
+    api_key: Optional[str] = _API_KEY_OPTION,
+    ca_cert: Optional[Path] = _CA_CERT_OPTION,
+    profile: Optional[str] = _PROFILE_OPTION,
+) -> None:
+    """Generate a short-lived claim code a field device can redeem (see
+    'devices exchange-claim') for runtime MQTT credentials + certs, without
+    needing an API key of its own."""
+    resolved = _resolve_provision_connection_args(
+        None, None, api_url, api_key, profile, ca_cert
+    )
+    resolved_api_url = resolved["api_url"]
+    resolved_api_key = resolved["api_key"]
+    resolved_ca_cert = resolved["ca_cert"]
+    _require_api_connection(resolved_api_url, resolved_api_key, resolved_ca_cert)
+
+    resolved_device_id = _resolve_device_id(
+        device_id, resolved_api_url, resolved_api_key, resolved_ca_cert
+    )
+    try:
+        result = _create_claim_code_via_api(
+            resolved_api_url,
+            resolved_api_key,
+            resolved_ca_cert,
+            resolved_device_id,
+            bootstrap_device_id,
+        )
+    except ProvisionApiError as exc:
+        print(f"ERROR: could not create claim code: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+    print_table(["Field", "Value"], list(result.items()))
+
+
+def _run_exchange_claim(
+    claim_code: str,
+    bootstrap_device_id: Optional[str],
+    api_url: Optional[str],
+    ca_cert: Optional[Path],
+    profile: Optional[str],
+    out_dir: Optional[Path],
+) -> None:
+    """Shared body for 'devices exchange-claim' and 'provision claim':
+    redeem a claim code for runtime MQTT credentials + a DER cert bundle,
+    save the certs, and write the connection identity (including topics
+    derived from topic_namespace, see _resolve_given_fields for the same
+    convention on the --api-key path) into device_config.json.
+    Unauthenticated by design - no --api-key needed, this is the
+    device-side half of the claim flow.
+
+    Does NOT set mqtt_ssl or mqtt_ssl_cert_path/key_path - 'deploy' doesn't
+    currently upload ./certs/ to the device, so wiring up cert-based TLS
+    here would write a config pointing at a file that isn't actually on the
+    device yet.
+    """
+    resolved = _resolve_provision_connection_args(
+        None, None, api_url, None, profile, ca_cert
+    )
+    resolved_api_url = resolved["api_url"]
+    resolved_ca_cert = resolved["ca_cert"]
+    if not resolved_api_url:
+        print(
+            "ERROR: --api-url required (none saved for this profile or in "
+            ".microweaver).",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    _require_ca_cert_for_https(resolved_api_url, resolved_ca_cert)
+
+    try:
+        result = _exchange_claim_via_api(
+            resolved_api_url, resolved_ca_cert, claim_code, bootstrap_device_id
+        )
+    except ProvisionApiError as exc:
+        print(f"ERROR: could not exchange claim code: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    cert_paths = _write_der_cert_bundle(out_dir or (ROOT / "certs"), result)
+    print(f"Saved DER cert bundle -> {cert_paths['ca_cert'].parent}")
+    summary_fields = [
+        "device_id",
+        "topic_namespace",
+        "mqtt_username",
+        "mqtt_password",
+        "mqtt_broker",
+        "mqtt_port",
+        "tls_server_hostname",
+        "lwt_topic",
+        "lwt_payload",
+    ]
+    print_table(
+        ["Field", "Value"], [(field, result[field]) for field in summary_fields]
+    )
+
+    config_path = ROOT / "device_config.json"
+    try:
+        Setting(config_path=str(config_path)).save(
+            device_id=result["device_id"],
+            # mqtt_client_id and mqtt_username are the same value for now.
+            mqtt_client_id=result["mqtt_username"],
+            mqtt_broker=result["mqtt_broker"],
+            mqtt_port=result["mqtt_port"],
+            mqtt_username=result["mqtt_username"],
+            mqtt_password=result["mqtt_password"],
+            # Same devices/{identity}/... convention as _resolve_given_fields
+            # uses for the --api-key registration/renewal path.
+            mqtt_topic_pub=f"devices/{result['topic_namespace']}/events",
+            mqtt_topic_sub=f"devices/{result['topic_namespace']}/commands",
+            mqtt_lwt_topic=result["lwt_topic"],
+            mqtt_lwt_message=result["lwt_payload"],
+        )
+    except ConfigError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+    print(
+        f"\nWrote {config_path.name}. mqtt_ssl/mqtt_ssl_cert_path/"
+        "mqtt_ssl_key_path are NOT set - point them at the .der files above "
+        "yourself once you've also gotten ./certs/ onto the device (deploy "
+        "doesn't upload it). Run 'tinker.py build && tinker.py deploy' to "
+        "push the rest."
+    )
+
+
+@devices_app.command("exchange-claim")
+def devices_exchange_claim(
+    claim_code: str = typer.Argument(..., help="Claim code from 'devices claim-code'"),
+    bootstrap_device_id: Optional[str] = typer.Option(
+        None,
+        "--bootstrap-device-id",
+        help="Bootstrap device id to present, if the claim code expects one",
+    ),
+    api_url: Optional[str] = _API_URL_OPTION,
+    ca_cert: Optional[Path] = _CA_CERT_OPTION,
+    profile: Optional[str] = _PROFILE_OPTION,
+    out_dir: Optional[Path] = typer.Option(
+        None,
+        "--out-dir",
+        help="Directory to save ca.der/client.der/private.der into "
+        "(default: ./certs)",
+    ),
+) -> None:
+    """Redeem a claim code (see 'devices claim-code') for runtime MQTT
+    credentials + a DER cert bundle and write device_config.json. Same as
+    'provision claim <code>'. See _run_exchange_claim for full behavior."""
+    _run_exchange_claim(
+        claim_code, bootstrap_device_id, api_url, ca_cert, profile, out_dir
+    )
 
 
 # Mirrors main.py's publish-adapter wiring (enabled-flag attr -> topic-suffix
@@ -2318,6 +3045,221 @@ def device_config(
         (key, _format_config_value(key, value, reveal)) for key, value in raw.items()
     ]
     print_table(["Key", "Value"], rows)
+
+
+MQTT_TEST_MODES = ("publish", "subscribe", "both")
+
+
+def _build_mqtt_test_client(
+    setting, role: str, suffix: str, ca_cert: Optional[Path]
+) -> mqtt.Client:
+    client = mqtt.Client(
+        client_id=f"{setting.MQTT_CLIENT_ID}-test-{role}-{suffix}",
+        protocol=mqtt.MQTTv311,
+    )
+    if setting.MQTT_USERNAME:
+        client.username_pw_set(
+            username=setting.MQTT_USERNAME, password=setting.MQTT_PASSWORD
+        )
+    if setting.MQTT_SSL:
+        tls_kwargs = {}
+        if setting.MQTT_SSL_CERT_PATH:
+            tls_kwargs["certfile"] = setting.MQTT_SSL_CERT_PATH
+        if setting.MQTT_SSL_KEY_PATH:
+            tls_kwargs["keyfile"] = setting.MQTT_SSL_KEY_PATH
+        if ca_cert:
+            tls_kwargs["ca_certs"] = str(ca_cert)
+        else:
+            # Mirrors the device's own connection (app/services/publish.py
+            # only ever passes cert/key to umqtt.simple, never a CA), which
+            # doesn't verify the broker's cert either.
+            tls_kwargs["cert_reqs"] = ssl.CERT_NONE
+        client.tls_set(**tls_kwargs)
+    return client
+
+
+def _start_mqtt_test_subscriber(
+    setting, topic, suffix, ca_cert, failures, subscribe_confirmed, message_received
+):
+    subscriber = _build_mqtt_test_client(setting, "sub", suffix, ca_cert)
+
+    def on_connect(client, _userdata, _flags, rc):
+        if rc != 0:
+            failures.append(f"Subscriber connect failed: rc={rc}")
+            subscribe_confirmed.set()
+            return
+        client.subscribe(topic, qos=1)
+
+    def on_subscribe(_client, _userdata, _mid, granted_qos):
+        if not granted_qos or granted_qos[0] >= 128:
+            failures.append(f"Subscription rejected: {granted_qos}")
+        subscribe_confirmed.set()
+
+    def on_message(_client, _userdata, _message):
+        message_received.set()
+
+    subscriber.on_connect = on_connect
+    subscriber.on_subscribe = on_subscribe
+    subscriber.on_message = on_message
+    subscriber.connect(setting.MQTT_BROKER, setting.MQTT_PORT, keepalive=30)
+    subscriber.loop_start()
+    return subscriber
+
+
+def _start_mqtt_test_publisher(
+    setting, topic, probe_payload, suffix, ca_cert, failures, publish_confirmed
+):
+    publisher = _build_mqtt_test_client(setting, "pub", suffix, ca_cert)
+
+    def on_connect(client, _userdata, _flags, rc):
+        if rc != 0:
+            failures.append(f"Publisher connect failed: rc={rc}")
+            publish_confirmed.set()
+            return
+        info = client.publish(topic, probe_payload, qos=1)
+        if info.rc != mqtt.MQTT_ERR_SUCCESS:
+            failures.append(f"Publish failed with rc={info.rc}")
+            publish_confirmed.set()
+
+    def on_publish(_client, _userdata, _mid):
+        publish_confirmed.set()
+
+    publisher.on_connect = on_connect
+    publisher.on_publish = on_publish
+    publisher.connect(setting.MQTT_BROKER, setting.MQTT_PORT, keepalive=30)
+    publisher.loop_start()
+    return publisher
+
+
+def _wait_for_mqtt_test_results(
+    subscriber,
+    publisher,
+    timeout,
+    subscribe_confirmed,
+    publish_confirmed,
+    message_received,
+) -> list:
+    failures = []
+    if subscriber is not None and not subscribe_confirmed.wait(timeout):
+        failures.append("Timed out waiting for subscription acknowledgement.")
+    if publisher is not None and not publish_confirmed.wait(timeout):
+        failures.append("Timed out waiting for publish acknowledgement.")
+    if (
+        subscriber is not None
+        and publisher is not None
+        and not message_received.wait(timeout)
+    ):
+        failures.append("Timed out waiting to receive the published probe message.")
+    return failures
+
+
+def _stop_mqtt_test_clients(subscriber, publisher) -> None:
+    if publisher is not None:
+        publisher.loop_stop()
+        publisher.disconnect()
+    if subscriber is not None:
+        subscriber.loop_stop()
+        subscriber.disconnect()
+
+
+@device_app.command("mqtt-test")
+def device_mqtt_test(
+    config_path: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        help="Path to device_config.json (default: repo's own, "
+        "falling back to device_config.json.example if not provisioned yet)",
+    ),
+    mode: str = typer.Option("both", "--mode", help="One of: publish, subscribe, both"),
+    timeout: float = typer.Option(
+        10.0, "--timeout", help="Seconds to wait for each connect/ack/message"
+    ),
+    ca_cert: Optional[Path] = typer.Option(
+        None,
+        "--ca-cert",
+        help="CA cert to verify the broker's TLS cert when mqtt_ssl is on "
+        "(default: don't verify, matching the device's own connection)",
+    ),
+) -> None:
+    """Connect to the broker using device_config.json's own MQTT settings
+    and confirm publish/subscribe round-trips - a smoke test that the
+    provisioned credentials/certs actually work, without touching the
+    device itself.
+
+    Uses a client id distinct from the device's own (a random suffix is
+    appended) so this doesn't kick the live device off the broker. Exits
+    with code 1 and prints each failure reason if anything times out or
+    is rejected.
+    """
+    if mode not in MQTT_TEST_MODES:
+        print(
+            f"ERROR: --mode must be one of {', '.join(MQTT_TEST_MODES)}, "
+            f"got '{mode}'.",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    if config_path is None:
+        real = ROOT / "device_config.json"
+        config_path = real if real.exists() else ROOT / "device_config.json.example"
+    if not config_path.exists():
+        print(f"ERROR: config file not found: {config_path}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    setting = Setting(config_path=str(config_path)).get_settings()
+    topic = setting.MQTT_TOPIC_PUB[0]
+
+    suffix = uuid.uuid4().hex[:6]
+    probe_payload = json.dumps(
+        {
+            "kind": "tinker_mqtt_test",
+            "mode": mode,
+            "request_id": f"tinker-{suffix}",
+            "timestamp": int(time.time()),
+        }
+    )
+
+    failures: list = []
+    publish_confirmed = threading.Event()
+    subscribe_confirmed = threading.Event()
+    message_received = threading.Event()
+
+    subscriber = None
+    if mode in ("subscribe", "both"):
+        subscriber = _start_mqtt_test_subscriber(
+            setting,
+            topic,
+            suffix,
+            ca_cert,
+            failures,
+            subscribe_confirmed,
+            message_received,
+        )
+
+    publisher = None
+    if mode in ("publish", "both"):
+        publisher = _start_mqtt_test_publisher(
+            setting, topic, probe_payload, suffix, ca_cert, failures, publish_confirmed
+        )
+
+    failures.extend(
+        _wait_for_mqtt_test_results(
+            subscriber,
+            publisher,
+            timeout,
+            subscribe_confirmed,
+            publish_confirmed,
+            message_received,
+        )
+    )
+    _stop_mqtt_test_clients(subscriber, publisher)
+
+    print(f"Broker: {setting.MQTT_BROKER}:{setting.MQTT_PORT}  Topic: {topic}")
+    if failures:
+        for failure in failures:
+            print(f"FAIL: {failure}", file=sys.stderr)
+        raise typer.Exit(code=1)
+    print("OK: MQTT connection test passed.")
 
 
 # Device name -> device_config.json enable flag. Mirrors SUBSCRIBE_ADAPTER_FLAGS
