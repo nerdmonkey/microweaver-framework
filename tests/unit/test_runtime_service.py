@@ -303,6 +303,39 @@ def test_watchdog_started_and_registered_when_enabled(mocker):
     assert service.watchdog_service is mock_watchdog
 
 
+# --------------------------------------------------------------------------
+# ntp
+# --------------------------------------------------------------------------
+
+
+def test_ntp_service_built_and_passed_to_mqtt_connection_when_enabled(mocker):
+    mocker.patch("app.services.runtime.setting.NTP_ENABLED", True)
+    mocker.patch("app.services.runtime.setting.NTP_HOST", "time.example.org")
+    mocker.patch("app.services.runtime.setting.NTP_SYNC_ATTEMPTS", 5)
+    mocker.patch("app.services.runtime.setting.NTP_RETRY_DELAY_SECONDS", 2)
+    mock_ntp_cls = mocker.patch("app.services.runtime.NtpService")
+    mock_ntp = mock_ntp_cls.return_value
+    mock_connection_cls = mocker.patch("app.services.runtime.MqttConnection")
+
+    service = RuntimeService()
+
+    mock_ntp_cls.assert_called_once_with("time.example.org", 5, 2)
+    assert service.ntp_service is mock_ntp
+    assert mock_connection_cls.call_args.args[-1] is mock_ntp
+
+
+def test_ntp_service_not_built_when_disabled(mocker):
+    mocker.patch("app.services.runtime.setting.NTP_ENABLED", False)
+    mock_ntp_cls = mocker.patch("app.services.runtime.NtpService")
+    mock_connection_cls = mocker.patch("app.services.runtime.MqttConnection")
+
+    service = RuntimeService()
+
+    mock_ntp_cls.assert_not_called()
+    assert service.ntp_service is None
+    assert mock_connection_cls.call_args.args[-1] is None
+
+
 def test_run_feeds_watchdog_each_tick(mocker):
     mocker.patch("app.services.runtime.setting.MQTT_ENABLED", False)
     mock_connection_cls = mocker.patch("app.services.runtime.MqttConnection")

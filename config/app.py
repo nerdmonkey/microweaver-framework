@@ -32,6 +32,10 @@ _SCHEMA = {
     "mqtt_ssl": {"type": bool},
     "mqtt_ssl_cert_path": {"type": str},
     "mqtt_ssl_key_path": {"type": str},
+    "ntp_enabled": {"type": bool},
+    "ntp_host": {"type": str},
+    "ntp_sync_attempts": {"type": "int", "min": 1},
+    "ntp_retry_delay_seconds": {"type": "int", "min": 0},
     "mqtt_lwt_topic": {"type": str},
     "mqtt_lwt_message": {"type": str},
     "mqtt_lwt_retain": {"type": bool},
@@ -164,6 +168,10 @@ class Setting:
         self.MQTT_SSL = self._bool("mqtt_ssl", False)
         self.MQTT_SSL_CERT_PATH = self._value("mqtt_ssl_cert_path", "")
         self.MQTT_SSL_KEY_PATH = self._value("mqtt_ssl_key_path", "")
+        self.NTP_ENABLED = self._bool("ntp_enabled", True)
+        self.NTP_HOST = self._value("ntp_host", "pool.ntp.org")
+        self.NTP_SYNC_ATTEMPTS = self._int("ntp_sync_attempts", 3)
+        self.NTP_RETRY_DELAY_SECONDS = self._int("ntp_retry_delay_seconds", 1)
         self.MQTT_LWT_TOPIC = self._value("mqtt_lwt_topic", "")
         self.MQTT_LWT_MESSAGE = self._value("mqtt_lwt_message", "")
         self.MQTT_LWT_RETAIN = self._bool("mqtt_lwt_retain", False)

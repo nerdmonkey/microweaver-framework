@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `NtpService` (`app/services/ntp.py`) syncs device clock via NTP before the
+  TLS handshake when `mqtt_ssl` is enabled, fixing repeated
+  `MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE`/`ECONNRESET` connect failures caused
+  by the ESP32's unset RTC failing certificate validity checks. Enabled by
+  default (`ntp_enabled`), configurable via `ntp_host`, `ntp_sync_attempts`,
+  `ntp_retry_delay_seconds`.
 - `tinker.py profile` command group (`create`/`edit`/`delete`/`list`/`show`/
   `use`) for managing named Agnes API connection profiles (`api_url`,
   `api_key`, `port`, `baud`) saved in `.microweaver`, instead of `--profile`

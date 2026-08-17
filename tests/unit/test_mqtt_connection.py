@@ -200,6 +200,41 @@ def test_connect_omits_ssl_when_disabled(mocker):
     mock_client_cls.assert_called_once_with("client", "broker", 1883, keepalive=300)
 
 
+def test_connect_syncs_ntp_before_tls_handshake_when_ssl_enabled(mocker):
+    mocker.patch("app.services.mqtt.MQTTClient")
+    wifi = make_wifi_service(connected=True)
+    ntp_service = MagicMock()
+
+    connection = MqttConnection(
+        "client", "broker", 1883, wifi, ssl=True, ntp_service=ntp_service
+    )
+    connection.connect()
+
+    ntp_service.sync.assert_called_once_with()
+
+
+def test_connect_skips_ntp_sync_when_ssl_disabled(mocker):
+    mocker.patch("app.services.mqtt.MQTTClient")
+    wifi = make_wifi_service(connected=True)
+    ntp_service = MagicMock()
+
+    connection = MqttConnection(
+        "client", "broker", 1883, wifi, ssl=False, ntp_service=ntp_service
+    )
+    connection.connect()
+
+    ntp_service.sync.assert_not_called()
+
+
+def test_connect_skips_ntp_sync_when_no_ntp_service_configured(mocker):
+    mocker.patch("app.services.mqtt.MQTTClient")
+    wifi = make_wifi_service(connected=True)
+
+    connection = MqttConnection("client", "broker", 1883, wifi, ssl=True)
+
+    connection.connect()  # should not raise despite ntp_service being None
+
+
 def test_connect_sets_last_will_when_configured(mocker):
     mock_client_cls = mocker.patch("app.services.mqtt.MQTTClient")
     mock_client = mock_client_cls.return_value

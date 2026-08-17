@@ -8,6 +8,7 @@ for _name in (
     "esp32",
     "dht",
     "urequests",
+    "ntptime",
 ):
     sys.modules.setdefault(_name, MagicMock())
 

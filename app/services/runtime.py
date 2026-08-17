@@ -17,6 +17,7 @@ from app.services.logger import LogService
 from app.services.memory_monitor import MemoryMonitorService
 from app.services.metrics import MetricsService
 from app.services.mqtt import MqttConnection
+from app.services.ntp import NtpService
 from app.services.ota import OtaService
 from app.services.poll_scheduler import PollScheduler
 from app.services.registry import ServiceRegistry
@@ -140,6 +141,7 @@ class RuntimeService:
             ssl_params["cert"] = setting.MQTT_SSL_CERT_PATH
         if setting.MQTT_SSL_KEY_PATH:
             ssl_params["key"] = setting.MQTT_SSL_KEY_PATH
+        self._init_ntp_service()
         self.connection = MqttConnection(
             setting.MQTT_CLIENT_ID,
             setting.MQTT_BROKER,
@@ -157,6 +159,7 @@ class RuntimeService:
             setting.MQTT_LWT_MESSAGE or None,
             setting.MQTT_LWT_RETAIN,
             setting.MQTT_LWT_QOS,
+            self.ntp_service,
         )
         self.client = None
         self._reconnect_delay_seconds = setting.MQTT_RECONNECT_DELAY_SECONDS
@@ -172,6 +175,15 @@ class RuntimeService:
     def _register_command_handlers(self):
         for topic in self.topics:
             self.message_handlers[topic] = self._handle_command_message
+
+    def _init_ntp_service(self):
+        self.ntp_service = None
+        if setting.NTP_ENABLED:
+            self.ntp_service = NtpService(
+                setting.NTP_HOST,
+                setting.NTP_SYNC_ATTEMPTS,
+                setting.NTP_RETRY_DELAY_SECONDS,
+            )
 
     def _init_log_level_override(self):
         if setting.LOG_LEVEL_OVERRIDE_ENABLED and setting.LOG_LEVEL_TOPIC:
