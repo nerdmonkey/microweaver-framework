@@ -30,6 +30,7 @@ docker
 
 .venv
 device_config.json
+*.pem
 .pytest_cache
 .vscode/
 

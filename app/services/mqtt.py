@@ -45,6 +45,9 @@ class MqttConnection:
         lwt_retain=False,
         lwt_qos=0,
         ntp_service=None,
+        device_cert_service=None,
+        device_cert=None,
+        device_key=None,
     ):
         self.client_id = client_id
         self.broker = broker
@@ -63,6 +66,9 @@ class MqttConnection:
         self.lwt_retain = lwt_retain
         self.lwt_qos = lwt_qos
         self.ntp_service = ntp_service
+        self.device_cert_service = device_cert_service
+        self.device_cert = device_cert
+        self.device_key = device_key
         self.client = None
 
     def _client_kwargs(self):
@@ -98,6 +104,14 @@ class MqttConnection:
 
         if self.ssl and self.ntp_service:
             self.ntp_service.sync()
+
+        if self.ssl and not self.ssl_params and self.device_cert_service:
+            self.ssl_params = (
+                self.device_cert_service.resolve(
+                    None, None, self.device_cert, self.device_key
+                )
+                or None
+            )
 
         delay = self.reconnect_delay_seconds
         while True:

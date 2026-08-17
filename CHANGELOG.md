@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `DeviceCertService` (`app/services/device_cert.py`) falls back to the
+  claimed `device_cert`/`device_key` (from the registration/claim flow) as
+  the MQTT client's mTLS certificate when `mqtt_ssl_cert_path`/
+  `mqtt_ssl_key_path` are unset, writing the PEM content to disk
+  (`device_cert_path`/`device_key_path`) since `umqtt.simple`'s `ssl_params`
+  expects file paths. Resolved lazily inside `MqttConnection.connect()` (only
+  when `mqtt_ssl` is on and no explicit cert path is set), so constructing
+  the runtime never touches disk on its own. Fixes
+  `MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE`/`ECONNRESET` connect failures against
+  brokers that enforce client certificates for claimed devices, where the
+  claimed cert was saved to config but never wired into the MQTT TLS
+  handshake.
 - `NtpService` (`app/services/ntp.py`) syncs device clock via NTP before the
   TLS handshake when `mqtt_ssl` is enabled, fixing repeated
   `MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE`/`ECONNRESET` connect failures caused

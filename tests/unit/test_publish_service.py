@@ -270,6 +270,29 @@ def test_watchdog_started_when_enabled(mocker):
     assert service.watchdog_service is mock_watchdog
 
 
+def test_ssl_params_include_configured_cert_and_key_paths(mocker):
+    mocker.patch("app.services.publish.setting.MQTT_SSL_CERT_PATH", "/certs/client.crt")
+    mocker.patch("app.services.publish.setting.MQTT_SSL_KEY_PATH", "/certs/client.key")
+    mock_connection_cls = mocker.patch("app.services.publish.MqttConnection")
+
+    PublishService()
+
+    assert mock_connection_cls.call_args.args[11] == {
+        "cert": "/certs/client.crt",
+        "key": "/certs/client.key",
+    }
+
+
+def test_ssl_params_omitted_when_no_cert_or_key_path_configured(mocker):
+    mocker.patch("app.services.publish.setting.MQTT_SSL_CERT_PATH", "")
+    mocker.patch("app.services.publish.setting.MQTT_SSL_KEY_PATH", "")
+    mock_connection_cls = mocker.patch("app.services.publish.MqttConnection")
+
+    PublishService()
+
+    assert mock_connection_cls.call_args.args[11] is None
+
+
 def test_wifi_service_built_without_static_ip_by_default(mocker):
     mock_wifi_cls = mocker.patch("app.services.publish.WiFiService")
 

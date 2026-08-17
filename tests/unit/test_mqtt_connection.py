@@ -188,6 +188,82 @@ def test_connect_passes_ssl_params_when_provided(mocker):
     )
 
 
+def test_connect_falls_back_to_device_cert_service_when_no_ssl_params(mocker):
+    mock_client_cls = mocker.patch("app.services.mqtt.MQTTClient")
+    wifi = make_wifi_service(connected=True)
+    device_cert_service = MagicMock()
+    device_cert_service.resolve.return_value = {
+        "cert": "device_cert.pem",
+        "key": "device_key.pem",
+    }
+
+    connection = MqttConnection(
+        "client",
+        "broker",
+        1883,
+        wifi,
+        ssl=True,
+        device_cert_service=device_cert_service,
+        device_cert="cert-pem",
+        device_key="key-pem",
+    )
+    connection.connect()
+
+    device_cert_service.resolve.assert_called_once_with(
+        None, None, "cert-pem", "key-pem"
+    )
+    mock_client_cls.assert_called_once_with(
+        "client",
+        "broker",
+        1883,
+        keepalive=300,
+        ssl=True,
+        ssl_params={"cert": "device_cert.pem", "key": "device_key.pem"},
+    )
+
+
+def test_connect_skips_device_cert_service_when_ssl_params_already_provided(mocker):
+    mocker.patch("app.services.mqtt.MQTTClient")
+    wifi = make_wifi_service(connected=True)
+    device_cert_service = MagicMock()
+    ssl_params = {"cert": "/certs/client.crt", "key": "/certs/client.key"}
+
+    connection = MqttConnection(
+        "client",
+        "broker",
+        1883,
+        wifi,
+        ssl=True,
+        ssl_params=ssl_params,
+        device_cert_service=device_cert_service,
+        device_cert="cert-pem",
+        device_key="key-pem",
+    )
+    connection.connect()
+
+    device_cert_service.resolve.assert_not_called()
+
+
+def test_connect_skips_device_cert_service_when_ssl_disabled(mocker):
+    mocker.patch("app.services.mqtt.MQTTClient")
+    wifi = make_wifi_service(connected=True)
+    device_cert_service = MagicMock()
+
+    connection = MqttConnection(
+        "client",
+        "broker",
+        1883,
+        wifi,
+        ssl=False,
+        device_cert_service=device_cert_service,
+        device_cert="cert-pem",
+        device_key="key-pem",
+    )
+    connection.connect()
+
+    device_cert_service.resolve.assert_not_called()
+
+
 def test_connect_omits_ssl_when_disabled(mocker):
     mock_client_cls = mocker.patch("app.services.mqtt.MQTTClient")
     wifi = make_wifi_service(connected=True)

@@ -7,6 +7,7 @@ except ImportError:
 
 from app.services.bootloop import BootLoopGuard
 from app.services.crash_log import CrashLogService
+from app.services.device_cert import DeviceCertService
 from app.services.error_handler import ErrorHandlerService, format_exception
 from app.services.health import HealthCheckService
 from app.services.logger import LogService
@@ -105,6 +106,9 @@ class PublishService:
             ssl_params["cert"] = setting.MQTT_SSL_CERT_PATH
         if setting.MQTT_SSL_KEY_PATH:
             ssl_params["key"] = setting.MQTT_SSL_KEY_PATH
+        self.device_cert_service = DeviceCertService(
+            setting.DEVICE_CERT_PATH, setting.DEVICE_KEY_PATH
+        )
         self.connection = MqttConnection(
             setting.MQTT_CLIENT_ID,
             setting.MQTT_BROKER,
@@ -122,6 +126,9 @@ class PublishService:
             setting.MQTT_LWT_MESSAGE or None,
             setting.MQTT_LWT_RETAIN,
             setting.MQTT_LWT_QOS,
+            device_cert_service=self.device_cert_service,
+            device_cert=setting.DEVICE_CERT,
+            device_key=setting.DEVICE_KEY,
         )
         self.client = None
         self.registry.start_all()

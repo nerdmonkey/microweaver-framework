@@ -98,6 +98,8 @@
     "device_id": "",
     "device_cert": "",
     "device_key": "",
+    "device_cert_path": "device_cert.pem",
+    "device_key_path": "device_key.pem",
     "ota_enabled": false,
     "ota_manifest_url": "",
     "ota_state_path": "ota_state.json",

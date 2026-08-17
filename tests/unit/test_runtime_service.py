@@ -321,7 +321,7 @@ def test_ntp_service_built_and_passed_to_mqtt_connection_when_enabled(mocker):
 
     mock_ntp_cls.assert_called_once_with("time.example.org", 5, 2)
     assert service.ntp_service is mock_ntp
-    assert mock_connection_cls.call_args.args[-1] is mock_ntp
+    assert mock_connection_cls.call_args.args[-4] is mock_ntp
 
 
 def test_ntp_service_not_built_when_disabled(mocker):
@@ -333,7 +333,54 @@ def test_ntp_service_not_built_when_disabled(mocker):
 
     mock_ntp_cls.assert_not_called()
     assert service.ntp_service is None
-    assert mock_connection_cls.call_args.args[-1] is None
+    assert mock_connection_cls.call_args.args[-4] is None
+
+
+# --------------------------------------------------------------------------
+# device cert
+# --------------------------------------------------------------------------
+
+
+def test_device_cert_service_built_and_passed_to_mqtt_connection(mocker):
+    mocker.patch("app.services.runtime.setting.DEVICE_CERT_PATH", "device_cert.pem")
+    mocker.patch("app.services.runtime.setting.DEVICE_KEY_PATH", "device_key.pem")
+    mocker.patch("app.services.runtime.setting.DEVICE_CERT", "cert-pem")
+    mocker.patch("app.services.runtime.setting.DEVICE_KEY", "key-pem")
+    mock_cert_cls = mocker.patch("app.services.runtime.DeviceCertService")
+    mock_cert_service = mock_cert_cls.return_value
+    mock_connection_cls = mocker.patch("app.services.runtime.MqttConnection")
+
+    service = RuntimeService()
+
+    mock_cert_cls.assert_called_once_with("device_cert.pem", "device_key.pem")
+    assert service.device_cert_service is mock_cert_service
+    call_args = mock_connection_cls.call_args.args
+    assert call_args[-3] is mock_cert_service
+    assert call_args[-2] == "cert-pem"
+    assert call_args[-1] == "key-pem"
+
+
+def test_ssl_params_include_configured_cert_and_key_paths(mocker):
+    mocker.patch("app.services.runtime.setting.MQTT_SSL_CERT_PATH", "/certs/client.crt")
+    mocker.patch("app.services.runtime.setting.MQTT_SSL_KEY_PATH", "/certs/client.key")
+    mock_connection_cls = mocker.patch("app.services.runtime.MqttConnection")
+
+    RuntimeService()
+
+    assert mock_connection_cls.call_args.args[11] == {
+        "cert": "/certs/client.crt",
+        "key": "/certs/client.key",
+    }
+
+
+def test_ssl_params_omitted_when_no_cert_or_key_path_configured(mocker):
+    mocker.patch("app.services.runtime.setting.MQTT_SSL_CERT_PATH", "")
+    mocker.patch("app.services.runtime.setting.MQTT_SSL_KEY_PATH", "")
+    mock_connection_cls = mocker.patch("app.services.runtime.MqttConnection")
+
+    RuntimeService()
+
+    assert mock_connection_cls.call_args.args[11] is None
 
 
 def test_run_feeds_watchdog_each_tick(mocker):

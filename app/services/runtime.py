@@ -11,6 +11,7 @@ from umqtt.simple import MQTTException
 from app.adapters.payload import format_local_timestamp, to_payload
 from app.services.bootloop import BootLoopGuard
 from app.services.crash_log import CrashLogService
+from app.services.device_cert import DeviceCertService
 from app.services.error_handler import ErrorHandlerService, format_exception
 from app.services.health import HealthCheckService
 from app.services.logger import LogService
@@ -141,6 +142,9 @@ class RuntimeService:
             ssl_params["cert"] = setting.MQTT_SSL_CERT_PATH
         if setting.MQTT_SSL_KEY_PATH:
             ssl_params["key"] = setting.MQTT_SSL_KEY_PATH
+        self.device_cert_service = DeviceCertService(
+            setting.DEVICE_CERT_PATH, setting.DEVICE_KEY_PATH
+        )
         self._init_ntp_service()
         self.connection = MqttConnection(
             setting.MQTT_CLIENT_ID,
@@ -160,6 +164,9 @@ class RuntimeService:
             setting.MQTT_LWT_RETAIN,
             setting.MQTT_LWT_QOS,
             self.ntp_service,
+            self.device_cert_service,
+            setting.DEVICE_CERT,
+            setting.DEVICE_KEY,
         )
         self.client = None
         self._reconnect_delay_seconds = setting.MQTT_RECONNECT_DELAY_SECONDS
