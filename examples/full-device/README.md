@@ -78,5 +78,5 @@ runtime.run()
    `claim_enabled`, etc. Everything defaults off except MQTT/autostart, so
    you can turn features on incrementally.
 4. Deploy as usual (`python tinker.py deploy`, see the root
-   [README](../../README.md#building-for-deployment)) -- `boot.py`/`_boot.py`
+   [README](../../README.md#building-and-deploying)) -- `boot.py`/`_boot.py`
    don't need to change for anything in this example.
