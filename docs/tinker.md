@@ -22,6 +22,8 @@
   - [`device ls`](#device-ls)
   - [`device tree`](#device-tree)
   - [`device test-adapter`](#device-test-adapter)
+  - [`topic list`](#topic-list)
+  - [`topic tree`](#topic-tree)
 - [Common workflows](#common-workflows)
 - [Troubleshooting](#troubleshooting)
 
@@ -439,6 +441,92 @@ python tinker.py device test-adapter app.adapters.sensors.dht22.DHT22Adapter
 python tinker.py device test-adapter --port /dev/tty.usbserial-0001 app.adapters.actuators.relay.RelayAdapter
 ```
 
+---
+
+### `topic list`
+
+List the MQTT topics `device_config.json` composes: direction (PUB/SUB/STATUS), full topic, device id, component, purpose, and QoS. Reads local config only — no device connection required.
+
+```shell
+python tinker.py topic list [OPTIONS]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--config` | repo's `device_config.json`, falling back to `.example` | Path to config file |
+| `--pub` | off | Show only PUB rows (mutually exclusive with `--sub`) |
+| `--sub` | off | Show only SUB rows |
+| `--device` | none | Filter by device id (matches `mqtt_client_id`) |
+| `--component` | none | Filter by component, e.g. `relay`, `dht-temperature`, `rotary-angle` |
+| `--purpose` | none | Filter by purpose: `telemetry`, `command`, or `state` |
+
+STATUS rows only appear for actuators that report an `is_on()` state back (relay, RGB — not OLED). QoS is the global `mqtt_publish_qos` for PUB/STATUS rows and `n/a` for SUB rows, since `subscribe()` never sends a QoS.
+
+Examples:
+
+```shell
+# List every configured topic
+python tinker.py topic list
+
+# Only what the device publishes
+python tinker.py topic list --pub
+
+# Only relay-related topics
+python tinker.py topic list --component relay
+```
+
+Example output:
+
+```
+Config source: device_config.json
+
+Direction  Topic                               Device  Component        Purpose    QoS
+---------  ----------------------------------  ------  ---------------  ---------  ---
+PUB        devices/dev-42/sensors/temperature  dev-42  dht-temperature  telemetry  1
+PUB        devices/dev-42/sensors/humidity     dev-42  dht-humidity     telemetry  1
+SUB        devices/dev-42/commands/relay       dev-42  relay            command    n/a
+STATUS     devices/dev-42/status/relay         dev-42  relay            state      1
+```
+
+With zero adapters enabled for a given direction, a single explanatory row is shown instead (e.g. `(no publish adapters enabled)`) rather than an empty table.
+
+---
+
+### `topic tree`
+
+Show the same topic set as [`topic list`](#topic-list), grouped hierarchically by path segment — the MQTT equivalent of [`device tree`](#device-tree), but reading local config instead of the device filesystem.
+
+```shell
+python tinker.py topic tree [OPTIONS]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--config` | repo's `device_config.json`, falling back to `.example` | Path to config file |
+
+Example:
+
+```shell
+python tinker.py topic tree
+```
+
+Example output:
+
+```
+Config source: device_config.json
+
+dev-42
+└── devices
+    └── dev-42
+        ├── commands
+        │   └── relay  [SUB relay (command)]
+        ├── sensors
+        │   ├── humidity  [PUB dht-humidity (telemetry)]
+        │   └── temperature  [PUB dht-temperature (telemetry)]
+        └── status
+            └── relay  [STATUS relay (state)]
+```
+
 ## Common workflows
 
 **First-time setup on a new device:**
@@ -468,6 +556,14 @@ python tinker.py watch --reset
 python tinker.py port
 python tinker.py device info --port /dev/tty.usbserial-0001
 python tinker.py device tree --port /dev/tty.usbserial-0001 --human
+```
+
+**Debugging MQTT routing before a device is even connected:**
+
+```shell
+python tinker.py topic tree                      # see the full pub/sub/status layout
+python tinker.py topic list --sub                 # confirm exactly what commands route where
+python tinker.py topic list --component relay     # check one component's topics in isolation
 ```
 
 **Backing up before a risky change:**
