@@ -164,6 +164,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reissues them and Agnes has no way to return the original password (only
   a hash is stored). Skipped when local credentials are already known, to
   avoid needlessly invalidating a password already in use.
+- `tinker.py topic list` gained `--output`/`-o` to export the filtered
+  topic rows as an MQTT ACL policy JSON file (`version`, `exported_at`,
+  `device_id`, `device_name`, `policy_count`, `policies[]` with
+  `topic`/`action`/`enabled`) instead of printing the table - rejects a
+  destination that doesn't end in `.json`. `action` is `publish` for
+  PUB/STATUS rows and `subscribe` for SUB rows; `enabled` is `false` only
+  for the no-adapters-configured placeholder rows.
 
 ### Changed
 - DHT temperature/humidity now publish as two separate messages on two

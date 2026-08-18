@@ -4536,6 +4536,129 @@ def test_topic_list_device_filter_matches_configured_client_id(tmp_path):
     assert len(non_matching.stdout.splitlines()) == 4
 
 
+def test_topic_list_output_writes_json_policy_export(tmp_path, mocker):
+    mocker.patch(
+        "tinker.datetime",
+        **{"now.return_value.strftime.return_value": "2026-08-18T12:34:56.000000"},
+    )
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "relay_enabled": True,
+                "dht_enabled": False,
+                "device_id": "dev_7a7e32aa",
+                "device_name": "Living Room Sensor",
+                "mqtt_topic_pub": "data/sensor/room",
+                "mqtt_topic_sub": "command/control/room",
+            }
+        )
+    )
+    out_path = tmp_path / "export.json"
+    result = runner.invoke(tinker.app, ["topic", "list", "--output", str(out_path)])
+    assert result.exit_code == 0
+    assert "Config source:" not in result.stdout
+    assert "Wrote" in result.stdout and str(out_path) in result.stdout
+
+    payload = json.loads(out_path.read_text())
+    assert payload["version"] == "1"
+    assert payload["exported_at"] == "2026-08-18T12:34:56.000Z"
+    assert payload["device_id"] == "dev_7a7e32aa"
+    assert payload["device_name"] == "Living Room Sensor"
+    assert payload["policy_count"] == len(payload["policies"])
+
+    by_topic = {p["topic"]: p for p in payload["policies"]}
+    assert by_topic["command/control/room/relay"] == {
+        "topic": "command/control/room/relay",
+        "action": "subscribe",
+        "enabled": True,
+    }
+    # dht disabled -> no publish adapters enabled -> fallback PUB row using
+    # the configured base topic verbatim, marked disabled.
+    assert by_topic["data/sensor/room"] == {
+        "topic": "data/sensor/room",
+        "action": "publish",
+        "enabled": False,
+    }
+
+
+def test_topic_list_output_marks_placeholder_rows_disabled(tmp_path, mocker):
+    mocker.patch(
+        "tinker.datetime",
+        **{"now.return_value.strftime.return_value": "2026-08-18T00:00:00.000000"},
+    )
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"dht_enabled": False, "relay_enabled": False}))
+    out_path = tmp_path / "export.json"
+    result = runner.invoke(tinker.app, ["topic", "list", "-o", str(out_path)])
+    assert result.exit_code == 0
+
+    payload = json.loads(out_path.read_text())
+    assert all(p["enabled"] is False for p in payload["policies"])
+    assert {p["action"] for p in payload["policies"]} == {"publish", "subscribe"}
+
+
+def test_topic_list_output_singular_policy_message(tmp_path, mocker):
+    mocker.patch(
+        "tinker.datetime",
+        **{"now.return_value.strftime.return_value": "2026-08-18T00:00:00.000000"},
+    )
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "relay_enabled": False,
+                "oled_enabled": False,
+                "dht_enabled": False,
+                "mqtt_topic_pub": "data/sensor/room",
+            }
+        )
+    )
+    out_path = tmp_path / "export.json"
+    result = runner.invoke(
+        tinker.app, ["topic", "list", "--pub", "--output", str(out_path)]
+    )
+    assert result.exit_code == 0
+    assert "Wrote 1 policy to" in result.stdout
+    payload = json.loads(out_path.read_text())
+    assert payload["policy_count"] == 1
+
+
+def test_topic_list_output_rejects_non_json_extension(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({}))
+    out_path = tmp_path / "export.txt"
+    result = runner.invoke(tinker.app, ["topic", "list", "--output", str(out_path)])
+    assert result.exit_code == 1
+    assert "--output file must end in .json" in result.stderr
+    assert not out_path.exists()
+
+
+def test_topic_list_output_respects_filters(tmp_path, mocker):
+    mocker.patch(
+        "tinker.datetime",
+        **{"now.return_value.strftime.return_value": "2026-08-18T00:00:00.000000"},
+    )
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "relay_enabled": True,
+                "dht_enabled": True,
+                "mqtt_topic_pub": "data/sensor/room",
+                "mqtt_topic_sub": "command/control/room",
+            }
+        )
+    )
+    out_path = tmp_path / "export.json"
+    result = runner.invoke(
+        tinker.app, ["topic", "list", "--sub", "--output", str(out_path)]
+    )
+    assert result.exit_code == 0
+    payload = json.loads(out_path.read_text())
+    assert all(p["action"] == "subscribe" for p in payload["policies"])
+
+
 def test_topic_tree_config_not_found_errors(tmp_path):
     result = runner.invoke(tinker.app, ["topic", "tree"])
     assert result.exit_code == 1
