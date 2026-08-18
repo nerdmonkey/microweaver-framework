@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `tinker.py provision` gained a `--device-name` flag (and matching
+  `device_name` prompt) to fill in `device_config.json`'s `device_name`
+  key - previously always blank unless hand-edited after provisioning,
+  even though `RuntimeService._envelope()` already put it in every publish
+  payload's `device` field. Defaults to `--name` (the Agnes registration
+  name) when registering a new device via the API and `--device-name`
+  isn't given.
 - `RGBAdapter` (`app/adapters/actuators/rgb.py`) drives a 3-channel PWM RGB
   LED (`machine.PWM`, 0-1023 duty) with the same `on()`/`off()`/`toggle()`/
   `is_on()` surface as `RelayAdapter`, wired into `main.py` behind
@@ -197,6 +204,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `app/services/publish.py`) now take the target topic explicitly rather
   than reading a fixed `self.topic`; `tinker.py topics` reports the
   resulting per-adapter pub routing the same way it already does for sub.
+- `tinker.py topics` is replaced by a `tinker.py topic` command group
+  (`topic list`, `topic tree`) - `topic list` now renders one unified
+  PUB/SUB/STATUS table (Direction, Topic, Device, Component, Purpose, QoS)
+  instead of three separate tables, with `--pub`/`--sub`/`--device`/
+  `--component`/`--purpose` filters; `topic tree` renders the same topic
+  set as a hierarchical tree grouped by path segment, matching `device
+  tree`'s rendering style. No backward-compatible `topics` alias.
 
 ### Fixed
 - `boot.py` now claims the `network.WLAN(network.STA_IF)` singleton as its

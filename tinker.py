@@ -84,6 +84,10 @@ ota_app = typer.Typer(
     no_args_is_help=True, help="Build, validate, and compare OTA update manifests."
 )
 app.add_typer(ota_app, name="ota")
+topic_app = typer.Typer(
+    no_args_is_help=True, help="List and inspect configured MQTT topics."
+)
+app.add_typer(topic_app, name="topic")
 
 
 def _version_callback(value: bool) -> None:
@@ -1498,6 +1502,7 @@ def profile_use(
 
 PROVISION_FIELDS = [
     # (json key, prompt label, default, is_secret)
+    ("device_name", "Device name", "", False),
     ("wifi_ssid", "WiFi SSID", "", False),
     ("wifi_password", "WiFi password", "", True),
     ("mqtt_broker", "MQTT broker", "localhost", False),
@@ -1815,6 +1820,13 @@ def _write_provisioned_certs(certs_dir: Path, api_result: dict) -> dict[str, Pat
 
 @app.command()
 def provision(
+    device_name: Optional[str] = typer.Option(
+        None,
+        "--device-name",
+        help="Device name written to device_config.json's device_name "
+        '(used in every publish envelope\'s "device" field). Defaults to '
+        "--name when registering a new device via the API.",
+    ),
     wifi_ssid: Optional[str] = typer.Option(None, help="WiFi SSID"),
     wifi_password: Optional[str] = typer.Option(None, help="WiFi password"),
     mqtt_broker: Optional[str] = typer.Option(None, help="MQTT broker host"),
@@ -1906,6 +1918,7 @@ def provision(
     resolved_ca_cert = resolved["ca_cert"]
 
     cli_fields = {
+        "device_name": device_name or name,
         "wifi_ssid": wifi_ssid,
         "wifi_password": wifi_password,
         "mqtt_broker": mqtt_broker,
@@ -2140,32 +2153,40 @@ def certs_download(
     print(f"Saved cert bundle -> {cert_paths['ca_cert'].parent}")
 
 
-# Mirrors main.py's publish-adapter wiring (enabled-flag attr -> topic-suffix
-# attr). Kept in sync by hand, same as PROVISION_FIELDS above -- update this
-# list whenever main.py gains/removes a publish adapter.
-PUBLISH_ADAPTER_FLAGS = [
-    ("DHT_ENABLED", "DHT_TEMPERATURE_TOPIC_SUFFIX"),
-    ("DHT_ENABLED", "DHT_HUMIDITY_TOPIC_SUFFIX"),
-    ("POTENTIOMETER_ENABLED", "POTENTIOMETER_TOPIC_SUFFIX"),
-    ("ROTARY_ANGLE_ENABLED", "ROTARY_ANGLE_TOPIC_SUFFIX"),
+# Mirrors main.py's publish-adapter wiring (enabled-flag attr, topic-suffix
+# attr, display component, purpose). Kept in sync by hand, same as
+# PROVISION_FIELDS above -- update this list whenever main.py gains/removes a
+# publish adapter.
+PUBLISH_TOPIC_SPECS = [
+    ("DHT_ENABLED", "DHT_TEMPERATURE_TOPIC_SUFFIX", "dht-temperature", "telemetry"),
+    ("DHT_ENABLED", "DHT_HUMIDITY_TOPIC_SUFFIX", "dht-humidity", "telemetry"),
+    (
+        "POTENTIOMETER_ENABLED",
+        "POTENTIOMETER_TOPIC_SUFFIX",
+        "potentiometer",
+        "telemetry",
+    ),
+    ("ROTARY_ANGLE_ENABLED", "ROTARY_ANGLE_TOPIC_SUFFIX", "rotary-angle", "telemetry"),
 ]
 
 
-# Mirrors main.py's subscribe-adapter wiring (enabled-flag attr -> topic-suffix
-# attr).
-SUBSCRIBE_ADAPTER_FLAGS = [
-    ("RELAY_ENABLED", "RELAY_TOPIC_SUFFIX"),
-    ("RGB_ENABLED", "RGB_TOPIC_SUFFIX"),
-    ("OLED_ENABLED", "OLED_TOPIC_SUFFIX"),
+# Mirrors main.py's subscribe-adapter wiring (enabled-flag attr, topic-suffix
+# attr, display component, purpose).
+SUBSCRIBE_TOPIC_SPECS = [
+    ("RELAY_ENABLED", "RELAY_TOPIC_SUFFIX", "relay", "command"),
+    ("RGB_ENABLED", "RGB_TOPIC_SUFFIX", "rgb", "command"),
+    ("OLED_ENABLED", "OLED_TOPIC_SUFFIX", "oled", "command"),
 ]
 
 
 # Mirrors main.py's status-topic wiring: only actuators with an is_on() state
-# to report get one (not OLED), a subset of SUBSCRIBE_ADAPTER_FLAGS.
-STATUS_ADAPTER_FLAGS = [
-    ("RELAY_ENABLED", "RELAY_TOPIC_SUFFIX"),
-    ("RGB_ENABLED", "RGB_TOPIC_SUFFIX"),
+# to report get one (not OLED), a subset of SUBSCRIBE_TOPIC_SPECS.
+STATUS_TOPIC_SPECS = [
+    ("RELAY_ENABLED", "RELAY_TOPIC_SUFFIX", "relay", "state"),
+    ("RGB_ENABLED", "RGB_TOPIC_SUFFIX", "rgb", "state"),
 ]
+
+VALID_TOPIC_PURPOSES = {"telemetry", "command", "state"}
 
 
 def _topic(base_topics: list, suffix: str) -> str:
@@ -2175,72 +2196,152 @@ def _topic(base_topics: list, suffix: str) -> str:
     return f"{base}/{suffix}" if base else suffix
 
 
-def _build_pub_rows(setting) -> list:
+def _build_topic_rows(setting) -> list:
+    """Unified PUB+SUB+STATUS row list: (direction, topic, device, component,
+    purpose, qos). QoS is a global setting (mqtt_publish_qos) for PUB/STATUS
+    rows -- there's no per-topic override in the schema -- and "n/a" for SUB
+    rows, since subscribe() never sends a QoS."""
+    device = setting.MQTT_CLIENT_ID
+    qos = str(setting.MQTT_PUBLISH_QOS)
     pub_base = list(setting.MQTT_TOPIC_PUB)
-    rows = [
+    sub_base = list(setting.MQTT_TOPIC_SUB)
+    status_base = list(setting.MQTT_TOPIC_STATUS)
+
+    rows = []
+
+    pub_rows = [
         (
             "PUB",
             _topic(pub_base, getattr(setting, suffix_attr)),
-            getattr(setting, suffix_attr),
+            device,
+            component,
+            purpose,
+            qos,
         )
-        for enabled_attr, suffix_attr in PUBLISH_ADAPTER_FLAGS
+        for enabled_attr, suffix_attr, component, purpose in PUBLISH_TOPIC_SPECS
         if getattr(setting, enabled_attr)
     ]
-    return rows or [
-        ("PUB", topic, "(no publish adapters enabled)") for topic in pub_base
-    ]
+    rows.extend(
+        pub_rows
+        or [
+            ("PUB", topic, device, "(no publish adapters enabled)", "-", qos)
+            for topic in pub_base
+        ]
+    )
 
-
-def _build_sub_rows(setting) -> list:
-    sub_base = list(setting.MQTT_TOPIC_SUB)
-    rows = [
+    sub_rows = [
         (
             "SUB",
             _topic(sub_base, getattr(setting, suffix_attr)),
-            getattr(setting, suffix_attr),
+            device,
+            component,
+            purpose,
+            "n/a",
         )
-        for enabled_attr, suffix_attr in SUBSCRIBE_ADAPTER_FLAGS
+        for enabled_attr, suffix_attr, component, purpose in SUBSCRIBE_TOPIC_SPECS
         if getattr(setting, enabled_attr)
     ]
-    if rows:
-        return rows
     # Matches main.py: topics = subscribe_topics if subscribe_adapters else []
     # -- with zero subscribe adapters enabled, RuntimeService is handed
     # topics=[] and never subscribes to anything, regardless of mqtt_topic_sub.
-    return [
-        (
-            "SUB",
-            "(none - no subscribe adapters enabled)",
-            "main.py overrides mqtt_topic_sub to [] when none enabled",
-        )
-    ]
+    rows.extend(
+        sub_rows
+        or [
+            (
+                "SUB",
+                "(none - no subscribe adapters enabled)",
+                device,
+                "main.py overrides mqtt_topic_sub to [] when none enabled",
+                "-",
+                "n/a",
+            )
+        ]
+    )
 
-
-def _build_status_rows(setting) -> list:
-    status_base = list(setting.MQTT_TOPIC_STATUS)
-    rows = [
+    status_rows = [
         (
             "STATUS",
             _topic(status_base, getattr(setting, suffix_attr)),
-            getattr(setting, suffix_attr),
+            device,
+            component,
+            purpose,
+            qos,
         )
-        for enabled_attr, suffix_attr in STATUS_ADAPTER_FLAGS
+        for enabled_attr, suffix_attr, component, purpose in STATUS_TOPIC_SPECS
         if getattr(setting, enabled_attr)
     ]
-    return rows or [("STATUS", "(none - no status-reporting adapters enabled)", "n/a")]
+    rows.extend(
+        status_rows
+        or [
+            (
+                "STATUS",
+                "(none - no status-reporting adapters enabled)",
+                device,
+                "n/a",
+                "-",
+                "n/a",
+            )
+        ]
+    )
+
+    return rows
 
 
-@app.command()
-def topics(
-    config_path: Optional[Path] = typer.Option(
-        None,
-        "--config",
-        help="Path to device_config.json (default: repo's own, "
-        "falling back to device_config.json.example if not provisioned yet)",
-    ),
-) -> None:
-    """List configured MQTT pub/sub/status topics and which adapter(s) each
-    drives."""
+def _filter_topic_rows(
+    rows: list,
+    *,
+    pub: bool = False,
+    sub: bool = False,
+    device: Optional[str] = None,
+    component: Optional[str] = None,
+    purpose: Optional[str] = None,
+) -> list:
+    if pub:
+        rows = [r for r in rows if r[0] == "PUB"]
+    if sub:
+        rows = [r for r in rows if r[0] == "SUB"]
+    if device:
+        rows = [r for r in rows if r[2] == device]
+    if component:
+        rows = [r for r in rows if r[3].lower() == component.lower()]
+    if purpose:
+        rows = [r for r in rows if r[4].lower() == purpose.lower()]
+    return rows
+
+
+def _build_topic_tree(rows: list) -> dict:
+    root: dict = {}
+    for direction, topic, _device, component, purpose, _qos in rows:
+        segments = [s for s in topic.split("/") if s]
+        node = root
+        for seg in segments:
+            node = node.setdefault(seg, {})
+        node.setdefault("_leaves", []).append((direction, component, purpose))
+    return root
+
+
+def _print_topic_tree(node: dict, prefix: str = "") -> None:
+    entries = sorted(k for k in node if k != "_leaves")
+    for i, key in enumerate(entries):
+        connector = "└── " if i == len(entries) - 1 else "├── "
+        child = node[key]
+        annotation = ""
+        if "_leaves" in child:
+            labels = ", ".join(
+                f"{direction} {component}"
+                if purpose == "-"
+                else f"{direction} {component} ({purpose})"
+                for direction, component, purpose in child["_leaves"]
+            )
+            annotation = f"  [{labels}]"
+        print(f"{prefix}{connector}{key}{annotation}")
+        grandchildren = {k: v for k, v in child.items() if k != "_leaves"}
+        if grandchildren:
+            next_prefix = prefix + ("    " if i == len(entries) - 1 else "│   ")
+            _print_topic_tree(grandchildren, next_prefix)
+
+
+def _load_topics_setting(config_path: Optional[Path]) -> tuple:
     if config_path is None:
         real = ROOT / "device_config.json"
         config_path = real if real.exists() else ROOT / "device_config.json.example"
@@ -2258,13 +2359,69 @@ def topics(
         source = config_path.relative_to(ROOT)
     except ValueError:
         source = config_path
+    return setting, source
+
+
+@topic_app.command("list")
+def topic_list(
+    config_path: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        help="Path to device_config.json (default: repo's own, "
+        "falling back to device_config.json.example if not provisioned yet)",
+    ),
+    pub: bool = typer.Option(False, "--pub", help="Show only PUB rows"),
+    sub: bool = typer.Option(False, "--sub", help="Show only SUB rows"),
+    device: Optional[str] = typer.Option(
+        None, "--device", help="Filter by device id (matches mqtt_client_id)"
+    ),
+    component: Optional[str] = typer.Option(
+        None,
+        "--component",
+        help="Filter by component, e.g. relay, dht-temperature, rotary-angle",
+    ),
+    purpose: Optional[str] = typer.Option(
+        None, "--purpose", help="Filter by purpose: telemetry, command, or state"
+    ),
+) -> None:
+    """List configured MQTT topics: direction, topic, device, component,
+    purpose, and QoS."""
+    if pub and sub:
+        print("ERROR: cannot combine --pub and --sub", file=sys.stderr)
+        raise typer.Exit(code=1)
+    if purpose and purpose.lower() not in VALID_TOPIC_PURPOSES:
+        valid = ", ".join(sorted(VALID_TOPIC_PURPOSES))
+        print(f"ERROR: unknown purpose '{purpose}' (valid: {valid})", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    setting, source = _load_topics_setting(config_path)
     print(f"Config source: {source}\n")
 
-    print_table(["Direction", "Topic", "Driven by"], _build_pub_rows(setting))
-    print()
-    print_table(["Direction", "Topic", "Routed to"], _build_sub_rows(setting))
-    print()
-    print_table(["Direction", "Topic", "Reported by"], _build_status_rows(setting))
+    rows = _filter_topic_rows(
+        _build_topic_rows(setting),
+        pub=pub,
+        sub=sub,
+        device=device,
+        component=component,
+        purpose=purpose,
+    )
+    print_table(["Direction", "Topic", "Device", "Component", "Purpose", "QoS"], rows)
+
+
+@topic_app.command("tree")
+def topic_tree(
+    config_path: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        help="Path to device_config.json (default: repo's own, "
+        "falling back to device_config.json.example if not provisioned yet)",
+    ),
+) -> None:
+    """Show a hierarchical tree view of configured MQTT topics."""
+    setting, source = _load_topics_setting(config_path)
+    print(f"Config source: {source}\n")
+    print(setting.MQTT_CLIENT_ID or "(unclaimed device)")
+    _print_topic_tree(_build_topic_tree(_build_topic_rows(setting)))
 
 
 def _watched_files() -> list:

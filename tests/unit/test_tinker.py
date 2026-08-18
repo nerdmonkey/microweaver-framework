@@ -1526,6 +1526,8 @@ def test_restore_exec_error(tmp_path, mocker):
 
 
 PROVISION_FLAGS = [
+    "--device-name",
+    "test-device",
     "--wifi-ssid",
     "MySSID",
     "--wifi-password",
@@ -1642,6 +1644,7 @@ def test_provision_interactive_picked_device_renewal_api_error(mocker):
     )
     with pytest.raises(typer.Exit):
         tinker.provision(
+            device_name=None,
             wifi_ssid="MySSID",
             wifi_password="MyPass",
             mqtt_broker="broker.local",
@@ -1681,6 +1684,7 @@ def test_provision_interactive_prompts_fill_only_missing(tmp_path, mocker):
         tinker.typer,
         "prompt",
         side_effect=[
+            "Test Device",  # device_name
             "prompted-pass",  # wifi_password
             "example-broker",  # mqtt_broker (default echoed back)
             1884,  # mqtt_port
@@ -1694,6 +1698,7 @@ def test_provision_interactive_prompts_fill_only_missing(tmp_path, mocker):
     )
 
     tinker.provision(
+        device_name=None,
         wifi_ssid="GivenSSID",
         wifi_password=None,
         mqtt_broker=None,
@@ -1729,6 +1734,7 @@ def test_provision_masks_existing_secret_default(tmp_path, mocker):
         tinker.typer,
         "prompt",
         side_effect=[
+            "Test Device",  # device_name
             "GivenSSID",  # wifi_ssid
             "",  # wifi_password - blank keeps the existing secret
             "localhost",  # mqtt_broker
@@ -1743,6 +1749,7 @@ def test_provision_masks_existing_secret_default(tmp_path, mocker):
     )
 
     tinker.provision(
+        device_name=None,
         wifi_ssid=None,
         wifi_password=None,
         mqtt_broker=None,
@@ -1765,7 +1772,7 @@ def test_provision_masks_existing_secret_default(tmp_path, mocker):
     assert written["wifi_password"] == "super-secret"
     assert written["mqtt_password"] == "new-mqtt-pass"
 
-    wifi_password_call = mock_prompt.call_args_list[1]
+    wifi_password_call = mock_prompt.call_args_list[2]
     assert wifi_password_call.args[0] == "WiFi password [unchanged]"
     assert wifi_password_call.kwargs["default"] == ""
     assert wifi_password_call.kwargs["hide_input"] is True
@@ -1891,6 +1898,7 @@ def test_provision_interactive_picks_existing_device_and_renews_cert(tmp_path, m
     mock_register = mocker.patch.object(tinker, "_provision_device_via_api")
 
     tinker.provision(
+        device_name=None,
         wifi_ssid="MySSID",
         wifi_password="MyPass",
         mqtt_broker="broker.local",
@@ -1931,6 +1939,7 @@ def test_provision_writes_resolved_mqtt_username_into_default_topics(tmp_path, m
     )
 
     tinker.provision(
+        device_name=None,
         wifi_ssid="MySSID",
         wifi_password="MyPass",
         mqtt_broker="broker.local",
@@ -1954,10 +1963,77 @@ def test_provision_writes_resolved_mqtt_username_into_default_topics(tmp_path, m
     assert written["mqtt_topic_sub"] == "devices/dev-42/commands"
 
 
+def test_provision_writes_explicit_device_name(tmp_path, mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+
+    tinker.provision(
+        device_name="Kitchen Sensor",
+        wifi_ssid="MySSID",
+        wifi_password="MyPass",
+        mqtt_broker="broker.local",
+        mqtt_port=1884,
+        mqtt_client_id="device-1",
+        mqtt_topic_pub="pub/topic",
+        mqtt_topic_sub="sub/topic",
+        mqtt_topic_status="status/topic",
+        mqtt_username="dev-42",
+        mqtt_password="mpass",
+        api_url=None,
+        api_key=None,
+        ca_cert=None,
+        profile=None,
+        name=None,
+        skip_certs=False,
+    )
+
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["device_name"] == "Kitchen Sensor"
+
+
+def test_provision_defaults_device_name_to_registration_name(tmp_path, mocker):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker,
+        "_provision_device_via_api",
+        return_value={
+            "device_id": "dev-999",
+            "username": "mqtt-user",
+            "password": "mqtt-pass",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+        },
+    )
+
+    tinker.provision(
+        device_name=None,
+        wifi_ssid="MySSID",
+        wifi_password="MyPass",
+        mqtt_broker=None,
+        mqtt_port=None,
+        mqtt_client_id=None,
+        mqtt_topic_pub="pub/topic",
+        mqtt_topic_sub="sub/topic",
+        mqtt_topic_status="status/topic",
+        mqtt_username=None,
+        mqtt_password=None,
+        api_url="http://agnes.local",
+        api_key="test-key",
+        ca_cert=None,
+        profile=None,
+        name="kitchen-sensor",
+        skip_certs=False,
+    )
+
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["device_name"] == "kitchen-sensor"
+
+
 def test_provision_forces_mqtt_ssl_on_for_tls_port(tmp_path, mocker):
     mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
 
     tinker.provision(
+        device_name="Test Device",
         wifi_ssid="MySSID",
         wifi_password="MyPass",
         mqtt_broker="broker.local",
@@ -1984,6 +2060,7 @@ def test_provision_leaves_mqtt_ssl_off_for_plain_port(tmp_path, mocker):
     mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
 
     tinker.provision(
+        device_name="Test Device",
         wifi_ssid="MySSID",
         wifi_password="MyPass",
         mqtt_broker="broker.local",
@@ -2017,6 +2094,7 @@ def test_provision_keeps_mqtt_ssl_on_plain_port_when_local_default_true(
     mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
 
     tinker.provision(
+        device_name="Test Device",
         wifi_ssid="MySSID",
         wifi_password="MyPass",
         mqtt_broker="broker.local",
@@ -2059,6 +2137,7 @@ def test_provision_renew_defaults_mqtt_client_id_to_picked_device_id(tmp_path, m
     mocker.patch.object(tinker, "_provision_device_via_api")
 
     tinker.provision(
+        device_name=None,
         wifi_ssid="MySSID",
         wifi_password="MyPass",
         mqtt_broker="broker.local",
@@ -2111,6 +2190,7 @@ def test_provision_renew_rotates_mqtt_password_when_no_local_creds(tmp_path, moc
     mocker.patch.object(tinker, "_provision_device_via_api")
 
     tinker.provision(
+        device_name=None,
         wifi_ssid="MySSID",
         wifi_password="MyPass",
         mqtt_broker="broker.local",
@@ -2146,11 +2226,16 @@ def test_provision_renew_skips_mqtt_rotation_when_local_creds_exist(tmp_path, mo
     mocker.patch.object(
         tinker, "_list_devices_via_api", return_value=_fake_agnes_device_list()
     )
-    # First call is the device picker ("1" = kitchen-sensor). The remaining
-    # two are the still-missing mqtt_username/mqtt_password prompts -
+    # First call is the device picker ("1" = kitchen-sensor). The rest are
+    # the still-missing device_name/mqtt_username/mqtt_password prompts -
     # simulate the user accepting each shown default (echoing it back for
-    # username, blank for the masked secret, per _prompt_missing_fields).
-    mocker.patch.object(tinker.typer, "prompt", side_effect=["1", "existing-user", ""])
+    # device_name/username, blank for the masked secret, per
+    # _prompt_missing_fields).
+    mocker.patch.object(
+        tinker.typer,
+        "prompt",
+        side_effect=["1", "kitchen-sensor", "existing-user", ""],
+    )
     mocker.patch.object(
         tinker,
         "_renew_device_cert_via_api",
@@ -2166,6 +2251,7 @@ def test_provision_renew_skips_mqtt_rotation_when_local_creds_exist(tmp_path, mo
     mocker.patch.object(tinker, "_provision_device_via_api")
 
     tinker.provision(
+        device_name=None,
         wifi_ssid="MySSID",
         wifi_password="MyPass",
         mqtt_broker="broker.local",
@@ -2216,6 +2302,7 @@ def test_provision_renew_rotation_failure_exits(tmp_path, mocker):
 
     with pytest.raises(tinker.typer.Exit):
         tinker.provision(
+            device_name=None,
             wifi_ssid="MySSID",
             wifi_password="MyPass",
             mqtt_broker="broker.local",
@@ -2240,7 +2327,11 @@ def test_provision_interactive_create_new_from_picker(tmp_path, mocker):
     mocker.patch.object(
         tinker, "_list_devices_via_api", return_value=_fake_agnes_device_list()
     )
-    mocker.patch.object(tinker.typer, "prompt", side_effect=["0", "new-device-name"])
+    mocker.patch.object(
+        tinker.typer,
+        "prompt",
+        side_effect=["0", "new-device-name", "My Device"],
+    )
     mock_register = mocker.patch.object(
         tinker,
         "_provision_device_via_api",
@@ -2256,6 +2347,7 @@ def test_provision_interactive_create_new_from_picker(tmp_path, mocker):
     mock_renew = mocker.patch.object(tinker, "_renew_device_cert_via_api")
 
     tinker.provision(
+        device_name=None,
         wifi_ssid="MySSID",
         wifi_password="MyPass",
         mqtt_broker=None,
@@ -2306,6 +2398,7 @@ def test_provision_device_listing_failure_falls_back_to_name_prompt(mocker):
     )
 
     tinker.provision(
+        device_name=None,
         wifi_ssid="MySSID",
         wifi_password="MyPass",
         mqtt_broker=None,
@@ -2347,6 +2440,7 @@ def test_provision_no_existing_devices_falls_back_to_name_prompt(mocker):
     )
 
     tinker.provision(
+        device_name=None,
         wifi_ssid="MySSID",
         wifi_password="MyPass",
         mqtt_broker=None,
@@ -4067,17 +4161,17 @@ def test_list_serial_ports_found(mocker):
 
 
 # --------------------------------------------------------------------------
-# topics command
+# topic list / topic tree commands
 # --------------------------------------------------------------------------
 
 
-def test_topics_errors_when_no_config_found(tmp_path):
-    result = runner.invoke(tinker.app, ["topics"])
+def test_topic_list_errors_when_no_config_found(tmp_path):
+    result = runner.invoke(tinker.app, ["topic", "list"])
     assert result.exit_code == 1
     assert "config file not found" in result.stderr
 
 
-def test_topics_falls_back_to_example_when_device_config_missing(tmp_path):
+def test_topic_list_falls_back_to_example_when_device_config_missing(tmp_path):
     (tmp_path / "device_config.json.example").write_text(
         json.dumps(
             {
@@ -4088,7 +4182,7 @@ def test_topics_falls_back_to_example_when_device_config_missing(tmp_path):
             }
         )
     )
-    result = runner.invoke(tinker.app, ["topics"])
+    result = runner.invoke(tinker.app, ["topic", "list"])
     assert result.exit_code == 0
     assert "device_config.json.example" in result.stdout
     assert "data/sensor/room/temperature" in result.stdout
@@ -4096,31 +4190,31 @@ def test_topics_falls_back_to_example_when_device_config_missing(tmp_path):
     assert "relay" in result.stdout
 
 
-def test_topics_prefers_device_config_over_example(tmp_path):
+def test_topic_list_prefers_device_config_over_example(tmp_path):
     (tmp_path / "device_config.json.example").write_text(
         json.dumps({"mqtt_topic_pub": "example/pub"})
     )
     (tmp_path / "device_config.json").write_text(
         json.dumps({"mqtt_topic_pub": "real/pub"})
     )
-    result = runner.invoke(tinker.app, ["topics"])
+    result = runner.invoke(tinker.app, ["topic", "list"])
     assert result.exit_code == 0
     assert "real/pub" in result.stdout
     assert "example/pub" not in result.stdout
     assert result.stdout.splitlines()[0] == "Config source: device_config.json"
 
 
-def test_topics_explicit_config_path_outside_root(tmp_path):
+def test_topic_list_explicit_config_path_outside_root(tmp_path):
     external = tmp_path.parent / "external_config.json"
     external.write_text(json.dumps({"mqtt_topic_pub": "outside/pub"}))
-    result = runner.invoke(tinker.app, ["topics", "--config", str(external)])
+    result = runner.invoke(tinker.app, ["topic", "list", "--config", str(external)])
     assert result.exit_code == 0
     assert f"Config source: {external}" in result.stdout
     assert "outside/pub" in result.stdout
     external.unlink()
 
 
-def test_topics_routes_relay_and_oled_to_distinct_composed_topics(tmp_path):
+def test_topic_list_routes_relay_and_oled_to_distinct_composed_topics(tmp_path):
     config_path = tmp_path / "device_config.json"
     config_path.write_text(
         json.dumps(
@@ -4132,7 +4226,7 @@ def test_topics_routes_relay_and_oled_to_distinct_composed_topics(tmp_path):
             }
         )
     )
-    result = runner.invoke(tinker.app, ["topics"])
+    result = runner.invoke(tinker.app, ["topic", "list"])
     assert result.exit_code == 0
     lines = result.stdout.splitlines()
     relay_line = next(line for line in lines if "command/control/room/relay" in line)
@@ -4141,7 +4235,9 @@ def test_topics_routes_relay_and_oled_to_distinct_composed_topics(tmp_path):
     assert "oled" in oled_line
 
 
-def test_topics_routes_multiple_pub_adapters_to_distinct_composed_topics(tmp_path):
+def test_topic_list_routes_multiple_pub_adapters_to_distinct_composed_topics(
+    tmp_path,
+):
     config_path = tmp_path / "device_config.json"
     config_path.write_text(
         json.dumps(
@@ -4155,7 +4251,7 @@ def test_topics_routes_multiple_pub_adapters_to_distinct_composed_topics(tmp_pat
             }
         )
     )
-    result = runner.invoke(tinker.app, ["topics"])
+    result = runner.invoke(tinker.app, ["topic", "list"])
     assert result.exit_code == 0
     lines = result.stdout.splitlines()
     temperature_line = next(
@@ -4172,7 +4268,7 @@ def test_topics_routes_multiple_pub_adapters_to_distinct_composed_topics(tmp_pat
     assert "rotary_angle" in rotary_line
 
 
-def test_topics_uses_configured_topic_suffix_override(tmp_path):
+def test_topic_list_uses_configured_topic_suffix_override(tmp_path):
     config_path = tmp_path / "device_config.json"
     config_path.write_text(
         json.dumps(
@@ -4184,12 +4280,12 @@ def test_topics_uses_configured_topic_suffix_override(tmp_path):
             }
         )
     )
-    result = runner.invoke(tinker.app, ["topics"])
+    result = runner.invoke(tinker.app, ["topic", "list"])
     assert result.exit_code == 0
     assert "command/control/room/pump" in result.stdout
 
 
-def test_topics_notes_override_when_no_subscribe_adapters_enabled(tmp_path):
+def test_topic_list_notes_override_when_no_subscribe_adapters_enabled(tmp_path):
     config_path = tmp_path / "device_config.json"
     config_path.write_text(
         json.dumps(
@@ -4200,27 +4296,207 @@ def test_topics_notes_override_when_no_subscribe_adapters_enabled(tmp_path):
             }
         )
     )
-    result = runner.invoke(tinker.app, ["topics"])
+    result = runner.invoke(tinker.app, ["topic", "list"])
     assert result.exit_code == 0
     assert "no subscribe adapters enabled" in result.stdout
     assert "overrides mqtt_topic_sub to []" in result.stdout
     assert "command/control/room/relay" not in result.stdout
 
 
-def test_topics_no_publish_adapters_enabled(tmp_path):
+def test_topic_list_no_publish_adapters_enabled(tmp_path):
     config_path = tmp_path / "device_config.json"
     config_path.write_text(json.dumps({"dht_enabled": False, "relay_enabled": True}))
-    result = runner.invoke(tinker.app, ["topics"])
+    result = runner.invoke(tinker.app, ["topic", "list"])
     assert result.exit_code == 0
     assert "no publish adapters enabled" in result.stdout
 
 
-def test_topics_rejects_invalid_config(tmp_path):
+def test_topic_list_rejects_invalid_config(tmp_path):
     config_path = tmp_path / "device_config.json"
     config_path.write_text(json.dumps({"mqtt_port": "not-a-number"}))
-    result = runner.invoke(tinker.app, ["topics"])
+    result = runner.invoke(tinker.app, ["topic", "list"])
     assert result.exit_code == 1
     assert "ERROR" in result.stderr
+
+
+def test_topic_list_shows_unified_columns(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "relay_enabled": True,
+                "dht_enabled": True,
+                "mqtt_client_id": "dev-42",
+                "mqtt_publish_qos": 1,
+                "mqtt_topic_pub": "data/sensor/room",
+                "mqtt_topic_sub": "command/control/room",
+            }
+        )
+    )
+    result = runner.invoke(tinker.app, ["topic", "list"])
+    assert result.exit_code == 0
+    header = result.stdout.splitlines()[2]
+    assert all(
+        col in header
+        for col in ["Direction", "Topic", "Device", "Component", "Purpose", "QoS"]
+    )
+    lines = result.stdout.splitlines()
+    pub_line = next(line for line in lines if "data/sensor/room/temperature" in line)
+    assert "telemetry" in pub_line and " 1" in pub_line
+    sub_line = next(line for line in lines if "command/control/room/relay" in line)
+    assert "command" in sub_line and "n/a" in sub_line
+    assert "dev-42" in pub_line and "dev-42" in sub_line
+
+
+def test_topic_list_status_row_purpose_and_qos(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "relay_enabled": True,
+                "mqtt_publish_qos": 1,
+                "mqtt_topic_status": "devices/room/status",
+            }
+        )
+    )
+    result = runner.invoke(tinker.app, ["topic", "list"])
+    assert result.exit_code == 0
+    status_line = next(
+        line for line in result.stdout.splitlines() if "devices/room/status" in line
+    )
+    assert "STATUS" in status_line
+    assert "state" in status_line
+    assert " 1" in status_line
+
+
+def test_topic_list_status_fallback_when_no_status_adapters_enabled(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"relay_enabled": False, "rgb_enabled": False}))
+    result = runner.invoke(tinker.app, ["topic", "list"])
+    assert result.exit_code == 0
+    assert "no status-reporting adapters enabled" in result.stdout
+
+
+def test_topic_list_pub_filter_shows_only_pub_rows(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"relay_enabled": True, "dht_enabled": True}))
+    result = runner.invoke(tinker.app, ["topic", "list", "--pub"])
+    assert result.exit_code == 0
+    rows = result.stdout.splitlines()[4:]
+    assert rows
+    assert all(
+        not row.startswith("SUB") and not row.startswith("STATUS") for row in rows
+    )
+    assert any(row.startswith("PUB") for row in rows)
+
+
+def test_topic_list_sub_filter_shows_only_sub_rows(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"relay_enabled": True, "dht_enabled": True}))
+    result = runner.invoke(tinker.app, ["topic", "list", "--sub"])
+    assert result.exit_code == 0
+    rows = result.stdout.splitlines()[4:]
+    assert rows
+    assert all(row.startswith("SUB") for row in rows)
+
+
+def test_topic_list_rejects_combining_pub_and_sub(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({}))
+    result = runner.invoke(tinker.app, ["topic", "list", "--pub", "--sub"])
+    assert result.exit_code == 1
+    assert "cannot combine" in result.stderr
+
+
+def test_topic_list_component_filter(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"relay_enabled": True, "rgb_enabled": True}))
+    result = runner.invoke(tinker.app, ["topic", "list", "--component", "relay"])
+    assert result.exit_code == 0
+    assert "relay" in result.stdout
+    assert "rgb" not in result.stdout
+
+
+def test_topic_list_purpose_filter_state(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"relay_enabled": True}))
+    result = runner.invoke(tinker.app, ["topic", "list", "--purpose", "state"])
+    assert result.exit_code == 0
+    rows = result.stdout.splitlines()[4:]
+    assert rows
+    assert all(row.startswith("STATUS") for row in rows)
+
+
+def test_topic_list_purpose_filter_rejects_unknown_value(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({}))
+    result = runner.invoke(tinker.app, ["topic", "list", "--purpose", "bogus"])
+    assert result.exit_code == 1
+    assert "unknown purpose" in result.stderr
+
+
+def test_topic_list_device_filter_matches_configured_client_id(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(
+        json.dumps({"relay_enabled": True, "mqtt_client_id": "dev-42"})
+    )
+    matching = runner.invoke(tinker.app, ["topic", "list", "--device", "dev-42"])
+    assert matching.exit_code == 0
+    assert len(matching.stdout.splitlines()) > 4
+
+    non_matching = runner.invoke(
+        tinker.app, ["topic", "list", "--device", "other-device"]
+    )
+    assert non_matching.exit_code == 0
+    assert len(non_matching.stdout.splitlines()) == 4
+
+
+def test_topic_tree_config_not_found_errors(tmp_path):
+    result = runner.invoke(tinker.app, ["topic", "tree"])
+    assert result.exit_code == 1
+    assert "config file not found" in result.stderr
+
+
+def test_topic_tree_shows_hierarchical_structure(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "relay_enabled": True,
+                "dht_enabled": True,
+                "mqtt_topic_pub": "devices/room/sensors",
+                "mqtt_topic_sub": "devices/room/commands",
+                "mqtt_topic_status": "devices/room/status",
+            }
+        )
+    )
+    result = runner.invoke(tinker.app, ["topic", "tree"])
+    assert result.exit_code == 0
+    stdout = result.stdout
+    assert "├── " in stdout or "└── " in stdout
+    assert stdout.count("room") == 1
+    relay_leaf = next(
+        line for line in stdout.splitlines() if "SUB relay (command)" in line
+    )
+    assert "── relay" in relay_leaf
+
+
+def test_topic_tree_zero_adapters_fallback_leaf(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "relay_enabled": False,
+                "rgb_enabled": False,
+                "oled_enabled": False,
+                "dht_enabled": False,
+            }
+        )
+    )
+    result = runner.invoke(tinker.app, ["topic", "tree"])
+    assert result.exit_code == 0
+    assert "no status-reporting adapters enabled" in result.stdout
+    assert "no publish adapters enabled" in result.stdout
 
 
 def test_device_config_errors_when_no_config_found(tmp_path):
