@@ -13,8 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   key - previously always blank unless hand-edited after provisioning,
   even though `RuntimeService._envelope()` already put it in every publish
   payload's `device` field. Defaults to `--name` (the Agnes registration
-  name) when registering a new device via the API and `--device-name`
-  isn't given.
+  name) when registering a new device via the API, or to the picked
+  device's existing Agnes name when renewing one via the device picker,
+  when `--device-name` isn't given.
 - `RGBAdapter` (`app/adapters/actuators/rgb.py`) drives a 3-channel PWM RGB
   LED (`machine.PWM`, 0-1023 duty) with the same `on()`/`off()`/`toggle()`/
   `is_on()` surface as `RelayAdapter`, wired into `main.py` behind

@@ -1634,13 +1634,16 @@ def _require_ca_cert_for_https(api_url: str, ca_cert: Optional[Path]) -> None:
 
 def _prompt_provision_device_choice(
     resolved_api_url: str, resolved_api_key: str, resolved_ca_cert: Optional[Path]
-) -> Optional[str]:
+) -> Optional[tuple[str, str]]:
     """List devices via the API and let the operator pick an existing one
     (to renew its cert) or create a new one instead. Returns the chosen
-    device's id, or None to create new - also None, with a warning, if the
-    listing itself fails or there are no devices yet, since 'create new' is
-    always a safe fallback here (unlike certs_download, which has no
-    fallback path without a device id already in hand)."""
+    device's (id, name) - name comes from the same list response, so
+    device_config.json's device_name can default to it instead of
+    prompting blank for a device the API already knows the name of - or
+    None to create new. Also None, with a warning, if the listing itself
+    fails or there are no devices yet, since 'create new' is always a safe
+    fallback here (unlike certs_download, which has no fallback path
+    without a device id already in hand)."""
     try:
         devices = _list_devices_via_api(
             resolved_api_url, resolved_api_key, resolved_ca_cert
@@ -1650,27 +1653,38 @@ def _prompt_provision_device_choice(
         return None
     if not devices:
         return None
-    return _prompt_device_selection(devices, allow_create=True)
+    device_id = _prompt_device_selection(devices, allow_create=True)
+    if device_id is None:
+        return None
+    device_name = next((d["name"] for d in devices if d["id"] == device_id), "")
+    return device_id, device_name
 
 
 def _resolve_provision_device_identity(
     name, resolved_api_url, resolved_api_key, resolved_ca_cert
 ):
-    """Return (resolved_name, resolved_device_id) - exactly one is set, the
-    other None. Prompts for --name (after offering to pick an existing
-    device to renew instead, see _prompt_provision_device_choice) when name
-    isn't given. Exits the CLI if there's no TTY to prompt on."""
+    """Return (resolved_name, resolved_device_id, resolved_device_name) -
+    resolved_device_id is set only when an existing device was picked to
+    renew, with resolved_device_name as its Agnes display name (for
+    defaulting device_config.json's device_name to it); otherwise
+    resolved_name is the name to register a new device with (also usable
+    as a device_name default - see _resolve_given_fields) and
+    resolved_device_name is None. Prompts for --name (after offering to
+    pick an existing device to renew instead, see
+    _prompt_provision_device_choice) when name isn't given. Exits the CLI
+    if there's no TTY to prompt on."""
     if name is not None:
-        return name, None
+        return name, None, None
     if not sys.stdin.isatty():
         print("ERROR: no TTY to prompt for: --name.", file=sys.stderr)
         raise typer.Exit(code=1)
-    device_id = _prompt_provision_device_choice(
+    picked = _prompt_provision_device_choice(
         resolved_api_url, resolved_api_key, resolved_ca_cert
     )
-    if device_id is not None:
-        return None, device_id
-    return typer.prompt("Device name"), None
+    if picked is not None:
+        device_id, device_name = picked
+        return None, device_id, device_name
+    return typer.prompt("Device name"), None, None
 
 
 def _renew_device_via_api(
@@ -1719,7 +1733,7 @@ def _maybe_register_or_renew_via_api(
     """Register a new device, or renew an existing one's cert, with the
     Agnes API when --api-key was given - see _resolve_provision_device_identity
     for how the choice between the two is made. Returns
-    (mqtt_api_result, cert_bundle):
+    (mqtt_api_result, cert_bundle, resolved_device_name):
     - mqtt_api_result has username/password to fill MQTT credentials, and is
       non-None when: a new device was registered (DeviceProvisionResponse,
       also carries "certificate" - see _resolve_given_fields), or an existing
@@ -1727,9 +1741,13 @@ def _maybe_register_or_renew_via_api(
       _renew_device_via_api).
     - cert_bundle is whichever response carries the fresh certs (either
       one), or None if no API key was given at all.
+    - resolved_device_name is the picked device's existing Agnes name on a
+      renew, or the name a new device was registered with - either way a
+      sensible device_config.json device_name default (see
+      _resolve_given_fields), or None if no API key was given at all.
     Exits the CLI on any resolution/registration/renewal error."""
     if not resolved_api_key:
-        return None, None
+        return None, None, None
     if not resolved_api_url:
         print(
             "ERROR: --api-key given without --api-url (and none saved "
@@ -1739,18 +1757,23 @@ def _maybe_register_or_renew_via_api(
         raise typer.Exit(code=1)
     _require_ca_cert_for_https(resolved_api_url, resolved_ca_cert)
 
-    resolved_name, resolved_device_id = _resolve_provision_device_identity(
+    (
+        resolved_name,
+        resolved_device_id,
+        resolved_device_name,
+    ) = _resolve_provision_device_identity(
         name, resolved_api_url, resolved_api_key, resolved_ca_cert
     )
 
     if resolved_device_id is not None:
-        return _renew_device_via_api(
+        mqtt_creds, cert_bundle = _renew_device_via_api(
             resolved_api_url,
             resolved_api_key,
             resolved_ca_cert,
             resolved_device_id,
             have_local_mqtt_creds,
         )
+        return mqtt_creds, cert_bundle, resolved_device_name
 
     print(f"Registering device '{resolved_name}' with {resolved_api_url}...")
     try:
@@ -1763,17 +1786,21 @@ def _maybe_register_or_renew_via_api(
     print(f"Registered device_id={api_result['device_id']}")
     if api_result.get("warning"):
         print(f"NOTE: {api_result['warning']}")
-    return api_result, api_result
+    return api_result, api_result, resolved_name
 
 
-def _resolve_given_fields(cli_fields, mqtt_api_result, cert_bundle, resolved_api_url):
+def _resolve_given_fields(
+    cli_fields, mqtt_api_result, cert_bundle, resolved_device_name, resolved_api_url
+):
     """Build the CLI-given field overrides, filling MQTT identity/credentials
     from the Agnes API when available.
 
     cert_bundle carries device_id on both register and renew (renew already
     knows which device it's renewing), so mqtt_client_id fills from it either
-    way. mqtt_api_result carries username/password either from a fresh
-    registration (DeviceProvisionResponse) or a renew-time password rotation
+    way - device_name fills from resolved_device_name the same
+    unconditional way (see _maybe_register_or_renew_via_api). mqtt_api_result
+    carries username/password either from a fresh registration
+    (DeviceProvisionResponse) or a renew-time password rotation
     (provision-mqtt response) - both fill username/password the same way,
     but only the registration response also carries "certificate", which is
     how a fresh device also gets a broker host/port guess: provision-mqtt's
@@ -1785,6 +1812,8 @@ def _resolve_given_fields(cli_fields, mqtt_api_result, cert_bundle, resolved_api
     given = dict(cli_fields)
     if cert_bundle is not None:
         given["mqtt_client_id"] = given["mqtt_client_id"] or cert_bundle["device_id"]
+    if resolved_device_name:
+        given["device_name"] = given["device_name"] or resolved_device_name
     if mqtt_api_result is None:
         return given
     if "certificate" in mqtt_api_result:
@@ -1825,7 +1854,8 @@ def provision(
         "--device-name",
         help="Device name written to device_config.json's device_name "
         '(used in every publish envelope\'s "device" field). Defaults to '
-        "--name when registering a new device via the API.",
+        "--name when registering a new device via the API, or to the "
+        "existing device's Agnes name when picking one to renew.",
     ),
     wifi_ssid: Optional[str] = typer.Option(None, help="WiFi SSID"),
     wifi_password: Optional[str] = typer.Option(None, help="WiFi password"),
@@ -1918,7 +1948,7 @@ def provision(
     resolved_ca_cert = resolved["ca_cert"]
 
     cli_fields = {
-        "device_name": device_name or name,
+        "device_name": device_name,
         "wifi_ssid": wifi_ssid,
         "wifi_password": wifi_password,
         "mqtt_broker": mqtt_broker,
@@ -1935,7 +1965,11 @@ def provision(
         cli_fields["mqtt_username"] or defaults.get("mqtt_username")
     ) and bool(cli_fields["mqtt_password"] or defaults.get("mqtt_password"))
 
-    mqtt_api_result, cert_bundle = _maybe_register_or_renew_via_api(
+    (
+        mqtt_api_result,
+        cert_bundle,
+        resolved_device_name,
+    ) = _maybe_register_or_renew_via_api(
         name,
         resolved_api_url,
         resolved_api_key,
@@ -1944,7 +1978,7 @@ def provision(
     )
 
     given = _resolve_given_fields(
-        cli_fields, mqtt_api_result, cert_bundle, resolved_api_url
+        cli_fields, mqtt_api_result, cert_bundle, resolved_device_name, resolved_api_url
     )
 
     missing = [key for key, value in given.items() if value is None]

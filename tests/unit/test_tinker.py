@@ -2029,6 +2029,96 @@ def test_provision_defaults_device_name_to_registration_name(tmp_path, mocker):
     assert written["device_name"] == "kitchen-sensor"
 
 
+def test_provision_renew_defaults_device_name_to_picked_devices_agnes_name(
+    tmp_path, mocker
+):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker, "_list_devices_via_api", return_value=_fake_agnes_device_list()
+    )
+    mocker.patch.object(tinker.typer, "prompt", return_value="1")
+    mocker.patch.object(
+        tinker,
+        "_renew_device_cert_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+            "expires_at": "2027-01-01T00:00:00Z",
+        },
+    )
+    mocker.patch.object(tinker, "_provision_device_via_api")
+
+    tinker.provision(
+        device_name=None,
+        wifi_ssid="MySSID",
+        wifi_password="MyPass",
+        mqtt_broker="broker.local",
+        mqtt_port=1884,
+        mqtt_client_id=None,
+        mqtt_topic_pub="pub/topic",
+        mqtt_topic_sub="sub/topic",
+        mqtt_topic_status="status/topic",
+        mqtt_username="muser",
+        mqtt_password="mpass",
+        api_url="http://agnes.local",
+        api_key="test-key",
+        ca_cert=None,
+        profile=None,
+        name=None,
+        skip_certs=False,
+    )
+
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["device_name"] == "kitchen-sensor"
+
+
+def test_provision_renew_explicit_device_name_wins_over_picked_devices_name(
+    tmp_path, mocker
+):
+    mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
+    mocker.patch.object(
+        tinker, "_list_devices_via_api", return_value=_fake_agnes_device_list()
+    )
+    mocker.patch.object(tinker.typer, "prompt", return_value="1")
+    mocker.patch.object(
+        tinker,
+        "_renew_device_cert_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+            "expires_at": "2027-01-01T00:00:00Z",
+        },
+    )
+    mocker.patch.object(tinker, "_provision_device_via_api")
+
+    tinker.provision(
+        device_name="Custom Name",
+        wifi_ssid="MySSID",
+        wifi_password="MyPass",
+        mqtt_broker="broker.local",
+        mqtt_port=1884,
+        mqtt_client_id=None,
+        mqtt_topic_pub="pub/topic",
+        mqtt_topic_sub="sub/topic",
+        mqtt_topic_status="status/topic",
+        mqtt_username="muser",
+        mqtt_password="mpass",
+        api_url="http://agnes.local",
+        api_key="test-key",
+        ca_cert=None,
+        profile=None,
+        name=None,
+        skip_certs=False,
+    )
+
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["device_name"] == "Custom Name"
+
+
 def test_provision_forces_mqtt_ssl_on_for_tls_port(tmp_path, mocker):
     mocker.patch.object(tinker.sys.stdin, "isatty", return_value=True)
 
@@ -2226,16 +2316,12 @@ def test_provision_renew_skips_mqtt_rotation_when_local_creds_exist(tmp_path, mo
     mocker.patch.object(
         tinker, "_list_devices_via_api", return_value=_fake_agnes_device_list()
     )
-    # First call is the device picker ("1" = kitchen-sensor). The rest are
-    # the still-missing device_name/mqtt_username/mqtt_password prompts -
-    # simulate the user accepting each shown default (echoing it back for
-    # device_name/username, blank for the masked secret, per
-    # _prompt_missing_fields).
-    mocker.patch.object(
-        tinker.typer,
-        "prompt",
-        side_effect=["1", "kitchen-sensor", "existing-user", ""],
-    )
+    # First call is the device picker ("1" = kitchen-sensor). device_name
+    # auto-fills from the picked device's name, so the remaining two are
+    # the still-missing mqtt_username/mqtt_password prompts - simulate the
+    # user accepting each shown default (echoing it back for username,
+    # blank for the masked secret, per _prompt_missing_fields).
+    mocker.patch.object(tinker.typer, "prompt", side_effect=["1", "existing-user", ""])
     mocker.patch.object(
         tinker,
         "_renew_device_cert_via_api",
@@ -2327,11 +2413,9 @@ def test_provision_interactive_create_new_from_picker(tmp_path, mocker):
     mocker.patch.object(
         tinker, "_list_devices_via_api", return_value=_fake_agnes_device_list()
     )
-    mocker.patch.object(
-        tinker.typer,
-        "prompt",
-        side_effect=["0", "new-device-name", "My Device"],
-    )
+    # "0" picks "create new"; device_name then auto-fills from the typed
+    # registration name, no separate device_name prompt needed.
+    mocker.patch.object(tinker.typer, "prompt", side_effect=["0", "new-device-name"])
     mock_register = mocker.patch.object(
         tinker,
         "_provision_device_via_api",
@@ -2373,6 +2457,7 @@ def test_provision_interactive_create_new_from_picker(tmp_path, mocker):
     written = json.loads((tmp_path / "device_config.json").read_text())
     assert written["mqtt_username"] == "mqtt-user"
     assert written["mqtt_password"] == "mqtt-pass"
+    assert written["device_name"] == "new-device-name"
     assert written["mqtt_client_id"] == "dev-999"
 
 
