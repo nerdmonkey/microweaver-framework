@@ -14,6 +14,7 @@ _SCHEMA = {
     "mqtt_port": {"type": "int", "min": 1, "max": 65535},
     "mqtt_topic_pub": {"type": "topics"},
     "mqtt_topic_sub": {"type": "topics"},
+    "mqtt_topic_status": {"type": "topics"},
     "mqtt_username": {"type": str},
     "mqtt_password": {"type": str},
     "wifi_ssid": {"type": str},
@@ -72,10 +73,16 @@ _SCHEMA = {
     "dht_enabled": {"type": bool},
     "dht_sensor_type": {"type": str, "choices": ("dht11", "dht22")},
     "dht_pin": {"type": "int", "min": 0, "max": 39},
-    "dht_topic_suffix": {"type": str},
+    "dht_temperature_topic_suffix": {"type": str},
+    "dht_humidity_topic_suffix": {"type": str},
     "relay_enabled": {"type": bool},
     "relay_pin": {"type": "int", "min": 0, "max": 39},
     "relay_topic_suffix": {"type": str},
+    "rgb_enabled": {"type": bool},
+    "rgb_red_pin": {"type": "int", "min": 0, "max": 39},
+    "rgb_green_pin": {"type": "int", "min": 0, "max": 39},
+    "rgb_blue_pin": {"type": "int", "min": 0, "max": 39},
+    "rgb_topic_suffix": {"type": str},
     "oled_enabled": {"type": bool},
     "oled_sda_pin": {"type": "int", "min": 0, "max": 39},
     "oled_scl_pin": {"type": "int", "min": 0, "max": 39},
@@ -139,13 +146,10 @@ class Setting:
         self.MQTT_BROKER = self._value("mqtt_broker", "localhost")
         self.MQTT_CLIENT_ID = self._value("mqtt_client_id", "microweaver")
         self.MQTT_PORT = self._int("mqtt_port", 1883)
-        self.MQTT_TOPIC_PUB = self._topics(
-            "mqtt_topic_pub", "data/sensor/room/temperature"
-        )
-        self.MQTT_TOPIC_SUB = self._topics(
-            "mqtt_topic_sub", "command/control/room/light"
-        )
         self.MQTT_USERNAME = self._value("mqtt_username", "")
+        self.MQTT_TOPIC_PUB = self._topics("mqtt_topic_pub", "devices/sensors")
+        self.MQTT_TOPIC_SUB = self._topics("mqtt_topic_sub", "devices/commands")
+        self.MQTT_TOPIC_STATUS = self._topics("mqtt_topic_status", "devices/status")
         self.MQTT_PASSWORD = self._value("mqtt_password", "")
         self.WIFI_SSID = self._value("wifi_ssid", "")
         self.WIFI_PASSWORD = self._value("wifi_password", "")
@@ -240,10 +244,20 @@ class Setting:
         self.DHT_ENABLED = self._bool("dht_enabled", True)
         self.DHT_SENSOR_TYPE = self._value("dht_sensor_type", "dht22")
         self.DHT_PIN = self._int_alias(("dht_pin", "dht22_pin"), 4)
-        self.DHT_TOPIC_SUFFIX = self._value("dht_topic_suffix", "dht")
+        self.DHT_TEMPERATURE_TOPIC_SUFFIX = self._value(
+            "dht_temperature_topic_suffix", "temperature"
+        )
+        self.DHT_HUMIDITY_TOPIC_SUFFIX = self._value(
+            "dht_humidity_topic_suffix", "humidity"
+        )
         self.RELAY_ENABLED = self._bool("relay_enabled", True)
         self.RELAY_PIN = self._int("relay_pin", 5)
         self.RELAY_TOPIC_SUFFIX = self._value("relay_topic_suffix", "relay")
+        self.RGB_ENABLED = self._bool("rgb_enabled", False)
+        self.RGB_RED_PIN = self._int("rgb_red_pin", 25)
+        self.RGB_GREEN_PIN = self._int("rgb_green_pin", 26)
+        self.RGB_BLUE_PIN = self._int("rgb_blue_pin", 27)
+        self.RGB_TOPIC_SUFFIX = self._value("rgb_topic_suffix", "rgb")
         self.OLED_ENABLED = self._bool("oled_enabled", False)
         self.OLED_SDA_PIN = self._int("oled_sda_pin", 21)
         self.OLED_SCL_PIN = self._int("oled_scl_pin", 22)

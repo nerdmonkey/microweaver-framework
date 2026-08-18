@@ -1150,6 +1150,24 @@ def _renew_device_cert_via_api(
     )
 
 
+def _provision_mqtt_via_api(
+    api_url: str, api_key: str, ca_cert: Optional[Path], device_id: str
+) -> dict:
+    """POST {api_url}/devices/{device_id}/provision-mqtt to rotate an
+    already-registered device's MQTT password and return it in plaintext
+    (username stays the same; the password hash Agnes stores can't be
+    reversed, so rotate-and-return is the only way to recover working
+    credentials for a device whose local device_config.json was lost).
+    Response: {device_id, username, password, mqtt_provisioned}. The old
+    password stops working the moment this succeeds."""
+    return _post_agnes_api(
+        f"{api_url.rstrip('/')}/devices/{device_id}/provision-mqtt",
+        api_key,
+        ca_cert,
+        {},
+    )
+
+
 HOME_CONFIG_DIR = Path.home() / ".microweaver"
 
 
@@ -1485,8 +1503,24 @@ PROVISION_FIELDS = [
     ("mqtt_broker", "MQTT broker", "localhost", False),
     ("mqtt_port", "MQTT port", 1883, False),
     ("mqtt_client_id", "MQTT client id", "microweaver", False),
-    ("mqtt_topic_pub", "MQTT publish topic", "command/control/room/light", False),
-    ("mqtt_topic_sub", "MQTT subscribe topic", "data/sensor/room/temperature", False),
+    (
+        "mqtt_topic_pub",
+        "MQTT publish topic",
+        "devices/{mqtt_username}/sensors",
+        False,
+    ),
+    (
+        "mqtt_topic_sub",
+        "MQTT subscribe topic",
+        "devices/{mqtt_username}/commands",
+        False,
+    ),
+    (
+        "mqtt_topic_status",
+        "MQTT status topic",
+        "devices/{mqtt_username}/status",
+        False,
+    ),
     ("mqtt_username", "MQTT username", "", False),
     ("mqtt_password", "MQTT password", "", True),
 ]
@@ -1503,6 +1537,17 @@ def _load_provision_defaults() -> dict:
         return {}
     with defaults_path.open() as f:
         return json.load(f)
+
+
+def _resolve_topic_placeholder(topic: str, mqtt_username: str) -> str:
+    """Substitute a "{mqtt_username}" placeholder (from device_config.json.
+    example's default, or a hand-typed value) with the device's actual
+    resolved username, so the device_config.json written to disk holds the
+    real topic rather than an unresolved template - on-device, config/app.py
+    reads it as a literal string with no substitution logic. rstrip cleans
+    up the trailing "/" a template like ".../{mqtt_username}" leaves behind
+    when mqtt_username is still blank."""
+    return topic.replace("{mqtt_username}", mqtt_username or "").rstrip("/")
 
 
 def _prompt_missing_fields(given: dict, defaults: dict) -> None:
@@ -1623,16 +1668,58 @@ def _resolve_provision_device_identity(
     return typer.prompt("Device name"), None
 
 
+def _renew_device_via_api(
+    resolved_api_url,
+    resolved_api_key,
+    resolved_ca_cert,
+    resolved_device_id,
+    have_local_mqtt_creds,
+):
+    """Renew resolved_device_id's cert, and - when have_local_mqtt_creds is
+    False - also rotate its MQTT password via provision-mqtt to recover
+    working credentials (renew-cert itself never reissues them). Returns
+    (mqtt_creds, cert_bundle); mqtt_creds is None when rotation was skipped.
+    Exits the CLI on either API call's failure."""
+    print(
+        f"Renewing cert for device '{resolved_device_id}' via " f"{resolved_api_url}..."
+    )
+    try:
+        cert_bundle = _renew_device_cert_via_api(
+            resolved_api_url, resolved_api_key, resolved_ca_cert, resolved_device_id
+        )
+    except ProvisionApiError as exc:
+        print(f"ERROR: cert renewal failed: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    if have_local_mqtt_creds:
+        return None, cert_bundle
+
+    print(
+        f"No local MQTT credentials for '{resolved_device_id}' - rotating "
+        "password via Agnes (old password stops working now)..."
+    )
+    try:
+        mqtt_creds = _provision_mqtt_via_api(
+            resolved_api_url, resolved_api_key, resolved_ca_cert, resolved_device_id
+        )
+    except ProvisionApiError as exc:
+        print(f"ERROR: MQTT credential rotation failed: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+    return mqtt_creds, cert_bundle
+
+
 def _maybe_register_or_renew_via_api(
-    name, resolved_api_url, resolved_api_key, resolved_ca_cert
+    name, resolved_api_url, resolved_api_key, resolved_ca_cert, have_local_mqtt_creds
 ):
     """Register a new device, or renew an existing one's cert, with the
     Agnes API when --api-key was given - see _resolve_provision_device_identity
     for how the choice between the two is made. Returns
     (mqtt_api_result, cert_bundle):
-    - mqtt_api_result is the DeviceProvisionResponse (has username/password
-      to fill MQTT credentials) when a new device was registered, else None
-      - renew-cert doesn't reissue MQTT credentials, only certs.
+    - mqtt_api_result has username/password to fill MQTT credentials, and is
+      non-None when: a new device was registered (DeviceProvisionResponse,
+      also carries "certificate" - see _resolve_given_fields), or an existing
+      device was renewed with have_local_mqtt_creds=False (see
+      _renew_device_via_api).
     - cert_bundle is whichever response carries the fresh certs (either
       one), or None if no API key was given at all.
     Exits the CLI on any resolution/registration/renewal error."""
@@ -1652,21 +1739,13 @@ def _maybe_register_or_renew_via_api(
     )
 
     if resolved_device_id is not None:
-        print(
-            f"Renewing cert for device '{resolved_device_id}' via "
-            f"{resolved_api_url}..."
+        return _renew_device_via_api(
+            resolved_api_url,
+            resolved_api_key,
+            resolved_ca_cert,
+            resolved_device_id,
+            have_local_mqtt_creds,
         )
-        try:
-            cert_bundle = _renew_device_cert_via_api(
-                resolved_api_url,
-                resolved_api_key,
-                resolved_ca_cert,
-                resolved_device_id,
-            )
-        except ProvisionApiError as exc:
-            print(f"ERROR: cert renewal failed: {exc}", file=sys.stderr)
-            raise typer.Exit(code=1)
-        return None, cert_bundle
 
     print(f"Registering device '{resolved_name}' with {resolved_api_url}...")
     try:
@@ -1682,21 +1761,38 @@ def _maybe_register_or_renew_via_api(
     return api_result, api_result
 
 
-def _resolve_given_fields(cli_fields, api_result, resolved_api_url):
+def _resolve_given_fields(cli_fields, mqtt_api_result, cert_bundle, resolved_api_url):
     """Build the CLI-given field overrides, filling MQTT identity/credentials
-    from an Agnes API registration result when one was returned."""
+    from the Agnes API when available.
+
+    cert_bundle carries device_id on both register and renew (renew already
+    knows which device it's renewing), so mqtt_client_id fills from it either
+    way. mqtt_api_result carries username/password either from a fresh
+    registration (DeviceProvisionResponse) or a renew-time password rotation
+    (provision-mqtt response) - both fill username/password the same way,
+    but only the registration response also carries "certificate", which is
+    how a fresh device also gets a broker host/port guess: provision-mqtt's
+    rotation targets a device that (per _maybe_register_or_renew_via_api)
+    has no locally known broker either, but rotation is a renew of an
+    existing, already-deployed device, so overwriting its real broker with a
+    guess would be wrong - the prompt/local device_config.json default is
+    left to supply it instead."""
     given = dict(cli_fields)
-    if api_result is None:
+    if cert_bundle is not None:
+        given["mqtt_client_id"] = given["mqtt_client_id"] or cert_bundle["device_id"]
+    if mqtt_api_result is None:
         return given
-    # API supplies the broker's identity/credentials; it doesn't return
-    # a broker host/port, so derive the host from --api-url and default
-    # to the plain dynsec port (1883) - mqtt_ssl stays off, matching the
-    # dynsec username/password auth these credentials are for.
-    given["mqtt_broker"] = given["mqtt_broker"] or urlparse(resolved_api_url).hostname
-    given["mqtt_port"] = given["mqtt_port"] or 1883
-    given["mqtt_client_id"] = given["mqtt_client_id"] or api_result["device_id"]
-    given["mqtt_username"] = given["mqtt_username"] or api_result["username"]
-    given["mqtt_password"] = given["mqtt_password"] or api_result["password"]
+    if "certificate" in mqtt_api_result:
+        # API supplies the broker's identity/credentials; it doesn't return
+        # a broker host/port, so derive the host from --api-url and default
+        # to the plain dynsec port (1883) - mqtt_ssl stays off, matching the
+        # dynsec username/password auth these credentials are for.
+        given["mqtt_broker"] = (
+            given["mqtt_broker"] or urlparse(resolved_api_url).hostname
+        )
+        given["mqtt_port"] = given["mqtt_port"] or 1883
+    given["mqtt_username"] = given["mqtt_username"] or mqtt_api_result["username"]
+    given["mqtt_password"] = given["mqtt_password"] or mqtt_api_result["password"]
     return given
 
 
@@ -1726,16 +1822,20 @@ def provision(
     mqtt_client_id: Optional[str] = typer.Option(None, help="MQTT client id"),
     mqtt_topic_pub: Optional[str] = typer.Option(None, help="MQTT publish topic"),
     mqtt_topic_sub: Optional[str] = typer.Option(None, help="MQTT subscribe topic"),
+    mqtt_topic_status: Optional[str] = typer.Option(None, help="MQTT status topic"),
     mqtt_username: Optional[str] = typer.Option(None, help="MQTT username"),
     mqtt_password: Optional[str] = typer.Option(None, help="MQTT password"),
     api_url: Optional[str] = typer.Option(
         None,
         "--api-url",
         help="Agnes API base URL (e.g. https://192.168.1.38/backend). When "
-        "given (or saved in .microweaver), the device is first registered "
-        "with Agnes and mqtt_broker/mqtt_client_id/mqtt_username/"
-        "mqtt_password/device_id/device_cert/device_key are filled in from "
-        "the API response instead of being prompted for.",
+        "given (or saved in .microweaver), the device is registered (or an "
+        "existing one picked to renew) with Agnes: mqtt_client_id/device_id/"
+        "device_cert/device_key are filled in from the API response either "
+        "way; mqtt_broker only on a fresh registration. mqtt_username/"
+        "mqtt_password fill from registration too, or - on a renew, when no "
+        "local device_config.json already has them - by rotating the "
+        "device's MQTT password via Agnes (invalidates the old one).",
     ),
     api_key: Optional[str] = typer.Option(
         None,
@@ -1786,7 +1886,12 @@ def provision(
     picker style, see 'certs download') so you can either pick one to renew
     its cert, or choose to register a brand new device - device details and
     MQTT credentials then come from the Agnes API instead of being typed in
-    by hand. Either way the response's cert bundle is also saved to
+    by hand. Renewing an existing device also rotates its MQTT password via
+    Agnes (invalidating the old one) when neither --mqtt-username/
+    --mqtt-password nor an existing local device_config.json already has
+    them - Agnes only ever returns a device's password once, so rotation is
+    the only way to recover working credentials once the local file is
+    lost. Either way the response's cert bundle is also saved to
     ./certs/ca.pem, client.pem, and private.pem (mirroring the Agnes
     project's own tinker.py cert layout) unless --skip-certs is given,
     since the API only returns a device's certs once, at registration/
@@ -1800,10 +1905,6 @@ def provision(
     resolved_profile = resolved["profile"]
     resolved_ca_cert = resolved["ca_cert"]
 
-    mqtt_api_result, cert_bundle = _maybe_register_or_renew_via_api(
-        name, resolved_api_url, resolved_api_key, resolved_ca_cert
-    )
-
     cli_fields = {
         "wifi_ssid": wifi_ssid,
         "wifi_password": wifi_password,
@@ -1812,21 +1913,51 @@ def provision(
         "mqtt_client_id": mqtt_client_id,
         "mqtt_topic_pub": mqtt_topic_pub,
         "mqtt_topic_sub": mqtt_topic_sub,
+        "mqtt_topic_status": mqtt_topic_status,
         "mqtt_username": mqtt_username,
         "mqtt_password": mqtt_password,
     }
-    given = _resolve_given_fields(cli_fields, mqtt_api_result, resolved_api_url)
+    defaults = _load_provision_defaults()
+    have_local_mqtt_creds = bool(
+        cli_fields["mqtt_username"] or defaults.get("mqtt_username")
+    ) and bool(cli_fields["mqtt_password"] or defaults.get("mqtt_password"))
+
+    mqtt_api_result, cert_bundle = _maybe_register_or_renew_via_api(
+        name,
+        resolved_api_url,
+        resolved_api_key,
+        resolved_ca_cert,
+        have_local_mqtt_creds,
+    )
+
+    given = _resolve_given_fields(
+        cli_fields, mqtt_api_result, cert_bundle, resolved_api_url
+    )
 
     missing = [key for key, value in given.items() if value is None]
     _require_tty_for_missing(missing)
 
-    defaults = _load_provision_defaults()
     if missing:
         _prompt_missing_fields(given, defaults)
 
     config_path = ROOT / "device_config.json"
     merged = dict(defaults)
     merged.update(given)
+    merged["mqtt_topic_pub"] = _resolve_topic_placeholder(
+        merged["mqtt_topic_pub"], merged["mqtt_username"]
+    )
+    merged["mqtt_topic_sub"] = _resolve_topic_placeholder(
+        merged["mqtt_topic_sub"], merged["mqtt_username"]
+    )
+    merged["mqtt_topic_status"] = _resolve_topic_placeholder(
+        merged["mqtt_topic_status"], merged["mqtt_username"]
+    )
+    if int(merged["mqtt_port"]) == 8883:
+        # 8883 is the TLS listener (matches _resolve_given_fields' own
+        # 1883-is-plain-dynsec assumption) - a plaintext connect to it gets
+        # ECONNRESET at the TLS handshake, not a clean auth failure, so this
+        # is easy to end up debugging as a broker/cert issue instead.
+        merged["mqtt_ssl"] = True
     if cert_bundle is not None:
         merged["device_id"] = cert_bundle["device_id"]
         if not skip_certs:
@@ -2013,7 +2144,8 @@ def certs_download(
 # attr). Kept in sync by hand, same as PROVISION_FIELDS above -- update this
 # list whenever main.py gains/removes a publish adapter.
 PUBLISH_ADAPTER_FLAGS = [
-    ("DHT_ENABLED", "DHT_TOPIC_SUFFIX"),
+    ("DHT_ENABLED", "DHT_TEMPERATURE_TOPIC_SUFFIX"),
+    ("DHT_ENABLED", "DHT_HUMIDITY_TOPIC_SUFFIX"),
     ("POTENTIOMETER_ENABLED", "POTENTIOMETER_TOPIC_SUFFIX"),
     ("ROTARY_ANGLE_ENABLED", "ROTARY_ANGLE_TOPIC_SUFFIX"),
 ]
@@ -2023,7 +2155,16 @@ PUBLISH_ADAPTER_FLAGS = [
 # attr).
 SUBSCRIBE_ADAPTER_FLAGS = [
     ("RELAY_ENABLED", "RELAY_TOPIC_SUFFIX"),
+    ("RGB_ENABLED", "RGB_TOPIC_SUFFIX"),
     ("OLED_ENABLED", "OLED_TOPIC_SUFFIX"),
+]
+
+
+# Mirrors main.py's status-topic wiring: only actuators with an is_on() state
+# to report get one (not OLED), a subset of SUBSCRIBE_ADAPTER_FLAGS.
+STATUS_ADAPTER_FLAGS = [
+    ("RELAY_ENABLED", "RELAY_TOPIC_SUFFIX"),
+    ("RGB_ENABLED", "RGB_TOPIC_SUFFIX"),
 ]
 
 
@@ -2075,6 +2216,20 @@ def _build_sub_rows(setting) -> list:
     ]
 
 
+def _build_status_rows(setting) -> list:
+    status_base = list(setting.MQTT_TOPIC_STATUS)
+    rows = [
+        (
+            "STATUS",
+            _topic(status_base, getattr(setting, suffix_attr)),
+            getattr(setting, suffix_attr),
+        )
+        for enabled_attr, suffix_attr in STATUS_ADAPTER_FLAGS
+        if getattr(setting, enabled_attr)
+    ]
+    return rows or [("STATUS", "(none - no status-reporting adapters enabled)", "n/a")]
+
+
 @app.command()
 def topics(
     config_path: Optional[Path] = typer.Option(
@@ -2084,7 +2239,8 @@ def topics(
         "falling back to device_config.json.example if not provisioned yet)",
     ),
 ) -> None:
-    """List configured MQTT pub/sub topics and which adapter(s) each drives."""
+    """List configured MQTT pub/sub/status topics and which adapter(s) each
+    drives."""
     if config_path is None:
         real = ROOT / "device_config.json"
         config_path = real if real.exists() else ROOT / "device_config.json.example"
@@ -2107,6 +2263,8 @@ def topics(
     print_table(["Direction", "Topic", "Driven by"], _build_pub_rows(setting))
     print()
     print_table(["Direction", "Topic", "Routed to"], _build_sub_rows(setting))
+    print()
+    print_table(["Direction", "Topic", "Reported by"], _build_status_rows(setting))
 
 
 def _watched_files() -> list:
@@ -2327,6 +2485,7 @@ def device_config(
 DEVICE_ENABLE_FLAGS = [
     ("dht", "dht_enabled"),
     ("relay", "relay_enabled"),
+    ("rgb", "rgb_enabled"),
     ("oled", "oled_enabled"),
     ("potentiometer", "potentiometer_enabled"),
     ("rotary", "rotary_angle_enabled"),
@@ -2377,7 +2536,7 @@ def _set_device_flags(names: str, config_path: Optional[Path], enabled: bool) ->
 def device_enable(
     names: str = typer.Argument(
         ...,
-        help="Comma-separated device names: dht,relay,oled,potentiometer,rotary",
+        help="Comma-separated device names: dht,relay,rgb,oled,potentiometer,rotary",
     ),
     config_path: Optional[Path] = typer.Option(
         None,
@@ -2393,7 +2552,7 @@ def device_enable(
 def device_disable(
     names: str = typer.Argument(
         ...,
-        help="Comma-separated device names: dht,relay,oled,potentiometer,rotary",
+        help="Comma-separated device names: dht,relay,rgb,oled,potentiometer,rotary",
     ),
     config_path: Optional[Path] = typer.Option(
         None,
