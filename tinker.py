@@ -14,6 +14,7 @@ import tomllib
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, cast
 from urllib.parse import urlparse
@@ -2375,6 +2376,43 @@ def _print_topic_tree(node: dict, prefix: str = "") -> None:
             _print_topic_tree(grandchildren, next_prefix)
 
 
+TOPIC_ACTION_BY_DIRECTION = {"PUB": "publish", "SUB": "subscribe", "STATUS": "publish"}
+
+
+def _build_topic_policies(rows: list) -> list:
+    """Row -> export policy dict. A row's purpose is "-" only for the
+    placeholder rows _build_topic_rows emits when no adapter of that kind is
+    enabled, so that's the enabled/disabled signal."""
+    return [
+        {
+            "topic": topic,
+            "action": TOPIC_ACTION_BY_DIRECTION[direction],
+            "enabled": purpose != "-",
+        }
+        for direction, topic, _device, _component, purpose, _qos in rows
+    ]
+
+
+def _write_topic_export(output_path: Path, setting, rows: list) -> None:
+    if output_path.suffix.lower() != ".json":
+        print("ERROR: --output file must end in .json", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    policies = _build_topic_policies(rows)
+    payload = {
+        "version": "1",
+        "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+        + "Z",
+        "device_id": setting.DEVICE_ID,
+        "device_name": setting.DEVICE_NAME,
+        "policy_count": len(policies),
+        "policies": policies,
+    }
+    output_path.write_text(json.dumps(payload, indent=2) + "\n")
+    noun = "policy" if len(policies) == 1 else "policies"
+    print(f"Wrote {len(policies)} {noun} to {output_path}")
+
+
 def _load_topics_setting(config_path: Optional[Path]) -> tuple:
     if config_path is None:
         real = ROOT / "device_config.json"
@@ -2417,6 +2455,12 @@ def topic_list(
     purpose: Optional[str] = typer.Option(
         None, "--purpose", help="Filter by purpose: telemetry, command, or state"
     ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Export policies as JSON to this file (.json) instead of printing a table",
+    ),
 ) -> None:
     """List configured MQTT topics: direction, topic, device, component,
     purpose, and QoS."""
@@ -2429,7 +2473,6 @@ def topic_list(
         raise typer.Exit(code=1)
 
     setting, source = _load_topics_setting(config_path)
-    print(f"Config source: {source}\n")
 
     rows = _filter_topic_rows(
         _build_topic_rows(setting),
@@ -2439,6 +2482,12 @@ def topic_list(
         component=component,
         purpose=purpose,
     )
+
+    if output is not None:
+        _write_topic_export(output, setting, rows)
+        return
+
+    print(f"Config source: {source}\n")
     print_table(["Direction", "Topic", "Device", "Component", "Purpose", "QoS"], rows)
 
 
