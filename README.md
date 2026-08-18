@@ -69,6 +69,7 @@ Before you can start using Microweaver, ensure you have the following prerequisi
 - `config/app.py` — `Setting` class, reads `device_config.json` with sane defaults if the file is missing.
 - `app/services/` — `WiFiService`, `MqttConnection` (shared reconnect/backoff logic), `RuntimeService` (combined publish+subscribe run loop, also composes OTA/health/metrics/logging), plus the lower-level `PublishService`/`SubscribeService` it's built from.
 - `app/adapters/{sensors,actuators,indicators}/` — extension points for hardware drivers; each should subclass `BaseAdapter` (`app/adapters/base.py`), which defines the frozen adapter contract: an `available` property, and `setup()`/`deinit()` lifecycle hooks.
+- `tinker.py` / `device_transport.py` — host-side CLI and its raw-REPL serial transport for building, deploying, provisioning, and managing devices; see the [`tinker.py` CLI reference](docs/tinker.md).
 - `examples/` — reference device apps you can copy as a starting point; see [`examples/full-device`](examples/full-device/README.md).
 - `scripts/hardware_soak.py` — destructive, backup-protected ESP32 release-gate
   runner for provisioning, OTA rollback, and watchdog/boot-loop recovery; see
@@ -83,15 +84,16 @@ pytest
 
 MicroPython-only modules (`network`, `umqtt.simple`) are stubbed in `tests/conftest.py` so the suite runs on a regular CPython interpreter.
 
-### Building for deployment
+### Building and deploying
 
-`tinker.py` compiles `app/`, `config/`, `_boot.py`, and `main.py` to `.mpy` bytecode into `dist/` (via `mpy-cross-multi`), copies `boot.py` as plaintext (MicroPython requires it uncompiled), and copies `device_config.json` alongside — tests and dev tooling are excluded from the output.
+`tinker.py` (repo root) is the host-side CLI for building, deploying, provisioning, and managing devices — it compiles `app/`, `config/`, `_boot.py`, and `main.py` to `.mpy` bytecode into `dist/` (via `mpy-cross-multi`), copies `boot.py` as plaintext (MicroPython requires it uncompiled), and copies `device_config.json` alongside; tests and dev tooling are excluded from the output.
 
 ```shell
-python tinker.py
+python tinker.py build
+python tinker.py deploy
 ```
 
-Flags: `--micropython` (target MicroPython version, default `1.28`), `--march` (target architecture, default `xtensawin` for ESP32), `--no-clean` (skip wiping `dist/` first).
+Beyond `build`/`deploy`, `tinker.py` also covers `provision` (write `device_config.json`, optionally registering with the Agnes API), `watch` (rebuild+deploy on file change), `backup`/`restore`, `device` (info, ls/tree, config, enable/disable adapters, health, repl, logs, reset), `profile`/`certs` (Agnes API connection + cert management), `fleet push` (multi-device serial deploy), `ota` (build/validate/diff update manifests), and `topic` (inspect configured MQTT topics). Run `python tinker.py --help` or any `<command> --help` for full option lists, or see the [`tinker.py` CLI reference](docs/tinker.md) for a complete command-by-command walkthrough with examples.
 
 We welcome contributions from the community to improve and expand Microweaver. If you have ideas, bug reports, or feature requests, please open an issue on the GitHub repository or submit a pull request.
 
