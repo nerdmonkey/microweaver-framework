@@ -8,6 +8,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `tinker.py provision` gained a `--device-name` flag (and matching
+  `device_name` prompt) to fill in `device_config.json`'s `device_name`
+  key - previously always blank unless hand-edited after provisioning,
+  even though `RuntimeService._envelope()` already put it in every publish
+  payload's `device` field. Defaults to `--name` (the Agnes registration
+  name) when registering a new device via the API, or to the picked
+  device's existing Agnes name when renewing one via the device picker,
+  when `--device-name` isn't given.
+- `RGBAdapter` (`app/adapters/actuators/rgb.py`) drives a 3-channel PWM RGB
+  LED (`machine.PWM`, 0-1023 duty) with the same `on()`/`off()`/`toggle()`/
+  `is_on()` surface as `RelayAdapter`, wired into `main.py` behind
+  `rgb_enabled` (default `false`, matching `relay_enabled`'s pattern) plus
+  `rgb_red_pin`/`rgb_green_pin`/`rgb_blue_pin` (default `25`/`26`/`27`) and
+  `rgb_topic_suffix` (default `rgb`) - composes
+  `devices/{mqtt_username}/commands/rgb` alongside the relay's
+  `.../commands/relay`.
+- `mqtt_topic_status` config key (default `devices/{mqtt_username}/status`,
+  resolved the same way as `mqtt_topic_pub`/`mqtt_topic_sub` at provision
+  time) and a `topics_status` `RuntimeService` constructor param: after a
+  relay/RGB command (`on`/`off`/`toggle`) executes,
+  `RuntimeService._publish_status()` publishes the adapter's resulting
+  `is_on()` state to its own `devices/{mqtt_username}/status/{suffix}`
+  topic - previously nothing reported an actuator's state back after a
+  command, only sensors published anything. Only adapters with an
+  `is_on()` method get a status topic (relay, RGB - not OLED).
+  `tinker.py topics` gained a third STATUS table alongside PUB/SUB for this.
+- `DeviceCertService` (`app/services/device_cert.py`) falls back to the
+  claimed `device_cert`/`device_key` (from the registration/claim flow) as
+  the MQTT client's mTLS certificate when `mqtt_ssl_cert_path`/
+  `mqtt_ssl_key_path` are unset, writing the PEM content to disk
+  (`device_cert_path`/`device_key_path`) since `umqtt.simple`'s `ssl_params`
+  expects file paths. Resolved lazily inside `MqttConnection.connect()` (only
+  when `mqtt_ssl` is on and no explicit cert path is set), so constructing
+  the runtime never touches disk on its own. Fixes
+  `MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE`/`ECONNRESET` connect failures against
+  brokers that enforce client certificates for claimed devices, where the
+  claimed cert was saved to config but never wired into the MQTT TLS
+  handshake.
+- `NtpService` (`app/services/ntp.py`) syncs device clock via NTP before the
+  TLS handshake when `mqtt_ssl` is enabled, fixing repeated
+  `MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE`/`ECONNRESET` connect failures caused
+  by the ESP32's unset RTC failing certificate validity checks. Enabled by
+  default (`ntp_enabled`), configurable via `ntp_host`, `ntp_sync_attempts`,
+  `ntp_retry_delay_seconds`.
 - `tinker.py profile` command group (`create`/`edit`/`delete`/`list`/`show`/
   `use`) for managing named Agnes API connection profiles (`api_url`,
   `api_key`, `port`, `baud`) saved in `.microweaver`, instead of `--profile`
@@ -91,8 +135,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `app/adapters/sensors/rotary_angle.py`) — into `main.py`. Both read a
   variable-resistor voltage divider via `machine.ADC` (`ATTN_11DB`,
   `read_u16()`) and report position as a 0–100 percentage.
+- `tinker.py provision` now writes `mqtt_topic_pub`/`mqtt_topic_sub` with
+  the run's resolved `mqtt_username` substituted into any `{mqtt_username}`
+  placeholder (e.g. `devices/{mqtt_username}/sensors` ->
+  `devices/dev-42/sensors`) instead of an unresolved template, so
+  `device_config.json` on disk always holds the real per-device topic - the
+  device itself does no substitution. Default `mqtt_topic_pub`/
+  `mqtt_topic_sub` (`device_config.json.example`, `PROVISION_FIELDS`,
+  `config/app.py`'s fallback) changed from `data/sensor`/`command/control`
+  to `devices/{mqtt_username}/sensors`/`devices/{mqtt_username}/commands`,
+  matching the Agnes API's own `devices/{id}/...` topic namespace and its
+  already-existing per-device ACL auto-provisioning (`devices/{username}/#`)
+  and `logger_role`'s wildcard `devices/+/commands/#` publish grant, so
+  Agnes's `send_device_command` API can reach a device provisioned this way
+  with no Agnes-side changes.
+- `tinker.py provision` sets `mqtt_ssl: true` automatically when
+  `mqtt_port` is `8883`, since a plaintext connect to Agnes's TLS listener
+  fails as `ECONNRESET` at the handshake rather than a clear auth error -
+  easy to end up debugging as a broker/cert issue instead of the missing
+  flag.
+- `tinker.py provision`, when renewing an existing device's cert
+  (`--api-url`/`--api-key` with an existing device picked, not a fresh
+  registration) and no local `mqtt_username`/`mqtt_password` are already
+  known (CLI flags or existing `device_config.json`), now also rotates the
+  device's MQTT password via the Agnes API's `POST /devices/{device_id}/
+  provision-mqtt` (invalidating the old one) to recover working credentials
+  - previously these were left blank, since `renew-cert` itself never
+  reissues them and Agnes has no way to return the original password (only
+  a hash is stored). Skipped when local credentials are already known, to
+  avoid needlessly invalidating a password already in use.
 
 ### Changed
+- DHT temperature/humidity now publish as two separate messages on two
+  separate topics (`devices/{mqtt_username}/sensors/temperature` and
+  `.../humidity`, one `{"value": ...}` payload each) instead of one
+  combined `{"temperature": ..., "humidity": ...}` payload on a single
+  `dht` topic - `dht_topic_suffix` is replaced by
+  `dht_temperature_topic_suffix`/`dht_humidity_topic_suffix` (defaults
+  `temperature`/`humidity`). Breaking change for any existing DHT
+  subscriber expecting the old combined payload/topic.
+- `RuntimeService._poll_publish_adapters()` (`app/services/runtime.py`) now
+  skips publishing a `PotentiometerAdapter`/`RotaryAngleAdapter` reading
+  unless it has moved by at least `CHANGE_THRESHOLD_PERCENT` (1.0) from the
+  last one published, instead of republishing the same percentage every poll
+  tick regardless of whether the dial moved. A tolerance rather than exact
+  equality, since ESP32 ADC noise jitters `read_u16()` by tens of raw counts
+  even with the wiper stationary - enough to flip the rounded-to-1-decimal
+  percent on every read. Other publish adapters (DHT22/DHT11, etc.) are
+  unaffected and continue to publish every tick as before.
 - `tinker.py provision` no longer pushes `device_config.json` to a device
   over serial (and no longer takes `--port`/`--baud`) - it now only writes
   `device_config.json` (and, via the Agnes API, `./certs/`) on the host.
@@ -115,6 +205,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `app/services/publish.py`) now take the target topic explicitly rather
   than reading a fixed `self.topic`; `tinker.py topics` reports the
   resulting per-adapter pub routing the same way it already does for sub.
+- `tinker.py topics` is replaced by a `tinker.py topic` command group
+  (`topic list`, `topic tree`) - `topic list` now renders one unified
+  PUB/SUB/STATUS table (Direction, Topic, Device, Component, Purpose, QoS)
+  instead of three separate tables, with `--pub`/`--sub`/`--device`/
+  `--component`/`--purpose` filters; `topic tree` renders the same topic
+  set as a hierarchical tree grouped by path segment, matching `device
+  tree`'s rendering style. No backward-compatible `topics` alias.
 
 ### Fixed
 - `boot.py` now claims the `network.WLAN(network.STA_IF)` singleton as its

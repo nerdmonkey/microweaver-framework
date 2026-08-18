@@ -1,4 +1,5 @@
 from app.adapters.actuators.relay import RelayAdapter
+from app.adapters.actuators.rgb import RGBAdapter
 from app.adapters.indicators.led import StatusLEDAdapter
 from app.adapters.indicators.oled import OLEDAdapter
 from app.adapters.sensors.dht11 import DHT11Adapter
@@ -19,13 +20,14 @@ def _make_temperature_adapter():
     adapter_cls = DHT22Adapter
     if setting.DHT_SENSOR_TYPE == "dht11":
         adapter_cls = DHT11Adapter
-    return setting.DHT_TOPIC_SUFFIX, adapter_cls(pin=setting.DHT_PIN)
+    return adapter_cls(pin=setting.DHT_PIN)
 
 
 def _topic(base_topics, suffix):
     """Compose a device's final pub/sub topic from the configured base
     (mqtt_topic_pub/mqtt_topic_sub, first entry) plus its own topic suffix,
-    e.g. base "data/sensor/room" + suffix "oled" -> "data/sensor/room/oled"."""
+    e.g. base "devices/dev-42/sensors" + suffix "oled" ->
+    "devices/dev-42/sensors/oled"."""
     base = base_topics[0] if base_topics else ""
     return "{}/{}".format(base, suffix) if base else suffix
 
@@ -34,9 +36,13 @@ def start():
     publish_adapters = []
     publish_topics = []
     if setting.DHT_ENABLED:
-        name, adapter = _make_temperature_adapter()
-        publish_adapters.append((name, adapter))
-        publish_topics.append(_topic(setting.MQTT_TOPIC_PUB, name))
+        publish_adapters.append(("dht", _make_temperature_adapter()))
+        publish_topics.append(
+            _topic(setting.MQTT_TOPIC_PUB, setting.DHT_TEMPERATURE_TOPIC_SUFFIX)
+        )
+        publish_topics.append(
+            _topic(setting.MQTT_TOPIC_PUB, setting.DHT_HUMIDITY_TOPIC_SUFFIX)
+        )
     if setting.POTENTIOMETER_ENABLED:
         name = setting.POTENTIOMETER_TOPIC_SUFFIX
         publish_adapters.append(
@@ -51,10 +57,26 @@ def start():
         publish_topics.append(_topic(setting.MQTT_TOPIC_PUB, name))
     subscribe_adapters = []
     subscribe_topics = []
+    status_topics = {}
     if setting.RELAY_ENABLED:
         name = setting.RELAY_TOPIC_SUFFIX
         subscribe_adapters.append((name, RelayAdapter(pin=setting.RELAY_PIN)))
         subscribe_topics.append(_topic(setting.MQTT_TOPIC_SUB, name))
+        status_topics[name] = _topic(setting.MQTT_TOPIC_STATUS, name)
+    if setting.RGB_ENABLED:
+        name = setting.RGB_TOPIC_SUFFIX
+        subscribe_adapters.append(
+            (
+                name,
+                RGBAdapter(
+                    red_pin=setting.RGB_RED_PIN,
+                    green_pin=setting.RGB_GREEN_PIN,
+                    blue_pin=setting.RGB_BLUE_PIN,
+                ),
+            )
+        )
+        subscribe_topics.append(_topic(setting.MQTT_TOPIC_SUB, name))
+        status_topics[name] = _topic(setting.MQTT_TOPIC_STATUS, name)
     if setting.OLED_ENABLED:
         name = setting.OLED_TOPIC_SUFFIX
         subscribe_adapters.append(
@@ -76,6 +98,7 @@ def start():
         subscribe_adapters=subscribe_adapters,
         topics=topics,
         topics_pub=publish_topics,
+        topics_status=status_topics,
     )
     runtime.run()
 

@@ -9,14 +9,18 @@ except ImportError:
 from umqtt.simple import MQTTException
 
 from app.adapters.payload import format_local_timestamp, to_payload
+from app.adapters.sensors.potentiometer import PotentiometerAdapter
+from app.adapters.sensors.rotary_angle import RotaryAngleAdapter
 from app.services.bootloop import BootLoopGuard
 from app.services.crash_log import CrashLogService
+from app.services.device_cert import DeviceCertService
 from app.services.error_handler import ErrorHandlerService, format_exception
 from app.services.health import HealthCheckService
 from app.services.logger import LogService
 from app.services.memory_monitor import MemoryMonitorService
 from app.services.metrics import MetricsService
 from app.services.mqtt import MqttConnection
+from app.services.ntp import NtpService
 from app.services.ota import OtaService
 from app.services.poll_scheduler import PollScheduler
 from app.services.registry import ServiceRegistry
@@ -33,6 +37,16 @@ setting = (Setting()).get_settings()
 # only gets a clearer log message, not special-cased retry logic.
 SUBACK_FAILURE_RC = 128
 
+# These adapters produce a slow-moving analog value; publish only when the
+# reading actually moves instead of flooding the broker every poll tick.
+CHANGE_ONLY_ADAPTER_TYPES = (PotentiometerAdapter, RotaryAngleAdapter)
+
+# ESP32 ADC noise jitters read_u16() by tens of raw counts even with the
+# wiper stationary, which is enough to flip the rounded-to-1-decimal percent
+# every poll. An exact-equality change check would never suppress that, so
+# treat readings within this many percentage points as "unchanged".
+CHANGE_THRESHOLD_PERCENT = 1.0
+
 
 class RuntimeService:
     def __init__(
@@ -41,6 +55,7 @@ class RuntimeService:
         subscribe_adapters=None,
         topics=None,
         topics_pub=None,
+        topics_status=None,
     ):
         self.topics_pub = (
             list(topics_pub) if topics_pub is not None else list(setting.MQTT_TOPIC_PUB)
@@ -48,6 +63,9 @@ class RuntimeService:
         self.topics = (
             list(topics) if topics is not None else list(setting.MQTT_TOPIC_SUB)
         )
+        self.topics_status = dict(topics_status) if topics_status else {}
+        self.dht_temperature_topic_suffix = setting.DHT_TEMPERATURE_TOPIC_SUFFIX
+        self.dht_humidity_topic_suffix = setting.DHT_HUMIDITY_TOPIC_SUFFIX
         self.publish_qos = setting.MQTT_PUBLISH_QOS
         self.publish_retain = setting.MQTT_PUBLISH_RETAIN
         self.ota_status_topic = setting.OTA_STATUS_TOPIC
@@ -104,7 +122,11 @@ class RuntimeService:
         self.publish_adapters = list(publish_adapters) if publish_adapters else []
         self.subscribe_adapters = list(subscribe_adapters) if subscribe_adapters else []
         self.subscribe_adapter_map = dict(self.subscribe_adapters)
+        self._subscribe_adapter_names = {
+            id(adapter): name for name, adapter in self.subscribe_adapters
+        }
         self.publish_scheduler = PollScheduler(interval_seconds=1)
+        self._last_published_readings = {}
         self._register_adapters()
         self._register_command_handlers()
         self._init_log_level_override()
@@ -140,6 +162,10 @@ class RuntimeService:
             ssl_params["cert"] = setting.MQTT_SSL_CERT_PATH
         if setting.MQTT_SSL_KEY_PATH:
             ssl_params["key"] = setting.MQTT_SSL_KEY_PATH
+        self.device_cert_service = DeviceCertService(
+            setting.DEVICE_CERT_PATH, setting.DEVICE_KEY_PATH
+        )
+        self._init_ntp_service()
         self.connection = MqttConnection(
             setting.MQTT_CLIENT_ID,
             setting.MQTT_BROKER,
@@ -157,6 +183,10 @@ class RuntimeService:
             setting.MQTT_LWT_MESSAGE or None,
             setting.MQTT_LWT_RETAIN,
             setting.MQTT_LWT_QOS,
+            self.ntp_service,
+            self.device_cert_service,
+            setting.DEVICE_CERT,
+            setting.DEVICE_KEY,
         )
         self.client = None
         self._reconnect_delay_seconds = setting.MQTT_RECONNECT_DELAY_SECONDS
@@ -172,6 +202,15 @@ class RuntimeService:
     def _register_command_handlers(self):
         for topic in self.topics:
             self.message_handlers[topic] = self._handle_command_message
+
+    def _init_ntp_service(self):
+        self.ntp_service = None
+        if setting.NTP_ENABLED:
+            self.ntp_service = NtpService(
+                setting.NTP_HOST,
+                setting.NTP_SYNC_ATTEMPTS,
+                setting.NTP_RETRY_DELAY_SECONDS,
+            )
 
     def _init_log_level_override(self):
         if setting.LOG_LEVEL_OVERRIDE_ENABLED and setting.LOG_LEVEL_TOPIC:
@@ -332,6 +371,20 @@ class RuntimeService:
             adapter.toggle()
         else:
             print("Unsupported command for topic:", topic.decode(), "-", command)
+            return
+        self._publish_status(adapter)
+
+    def _publish_status(self, adapter):
+        name = self._subscribe_adapter_names.get(id(adapter))
+        topic = self.topics_status.get(name)
+        if not topic or not hasattr(adapter, "is_on"):
+            return
+        self.publish_message(
+            topic,
+            self._envelope(
+                "state_report", {"state": "on" if adapter.is_on() else "off"}
+            ),
+        )
 
     def _resolve_command_adapter(self, topic):
         if topic in self.subscribe_adapter_map:
@@ -360,6 +413,14 @@ class RuntimeService:
             reading = self.publish_scheduler.poll(name, adapter.read)
             if reading is None:
                 continue
+            if isinstance(adapter, CHANGE_ONLY_ADAPTER_TYPES):
+                last = self._last_published_readings.get(name)
+                if last is not None and abs(reading - last) < CHANGE_THRESHOLD_PERCENT:
+                    continue
+                self._last_published_readings[name] = reading
+            if self._is_dual_reading(adapter, reading):
+                self._publish_dual_reading(reading)
+                continue
             payload = self._to_publish_payload(name, adapter, reading)
             if payload is None:
                 continue
@@ -369,18 +430,35 @@ class RuntimeService:
                 continue
             self.publish_message(topic, payload)
 
-    def _to_publish_payload(self, name, adapter, reading):
-        if isinstance(reading, dict):
-            return self._envelope("sensor_reading", reading)
-        if (
+    def _is_dual_reading(self, adapter, reading):
+        return (
             isinstance(reading, (list, tuple))
             and len(reading) == 2
             and hasattr(adapter, "temperature")
             and hasattr(adapter, "humidity")
+        )
+
+    def _publish_dual_reading(self, reading):
+        """DHT-shaped (temperature, humidity) readings publish as two
+        separate messages, one per measurement, instead of one combined
+        payload - each measurement gets its own topic
+        (dht_temperature_topic_suffix/dht_humidity_topic_suffix)."""
+        temperature, humidity = reading
+        for suffix, value in (
+            (self.dht_temperature_topic_suffix, temperature),
+            (self.dht_humidity_topic_suffix, humidity),
         ):
-            return self._envelope(
-                "sensor_reading", {"temperature": reading[0], "humidity": reading[1]}
+            topic = self._resolve_publish_topic(suffix)
+            if topic is None:
+                print("No publish topic matched for adapter:", suffix)
+                continue
+            self.publish_message(
+                topic, self._envelope("sensor_reading", {"value": value})
             )
+
+    def _to_publish_payload(self, name, adapter, reading):
+        if isinstance(reading, dict):
+            return self._envelope("sensor_reading", reading)
         if isinstance(reading, bool):
             return self._envelope("state_report", {"state": "on" if reading else "off"})
         if isinstance(reading, (int, float, str)):

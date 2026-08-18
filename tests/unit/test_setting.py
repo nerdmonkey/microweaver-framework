@@ -18,6 +18,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "mqtt_port": 1884,
                 "mqtt_topic_pub": "test/pub",
                 "mqtt_topic_sub": "test/sub",
+                "mqtt_topic_status": "test/status",
                 "mqtt_username": "test_user",
                 "mqtt_password": "test_pass",
                 "wifi_ssid": "test_ssid",
@@ -67,10 +68,16 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "dht_enabled": False,
                 "dht_sensor_type": "dht11",
                 "dht_pin": 21,
-                "dht_topic_suffix": "temperature",
+                "dht_temperature_topic_suffix": "temp",
+                "dht_humidity_topic_suffix": "hum",
                 "relay_enabled": False,
                 "relay_pin": 22,
                 "relay_topic_suffix": "switch",
+                "rgb_enabled": True,
+                "rgb_red_pin": 13,
+                "rgb_green_pin": 14,
+                "rgb_blue_pin": 15,
+                "rgb_topic_suffix": "led",
                 "oled_enabled": True,
                 "oled_sda_pin": 19,
                 "oled_scl_pin": 23,
@@ -105,6 +112,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.MQTT_PORT == 1884
     assert setting.MQTT_TOPIC_PUB == ["test/pub"]
     assert setting.MQTT_TOPIC_SUB == ["test/sub"]
+    assert setting.MQTT_TOPIC_STATUS == ["test/status"]
     assert setting.MQTT_USERNAME == "test_user"
     assert setting.MQTT_PASSWORD == "test_pass"
     assert setting.WIFI_SSID == "test_ssid"
@@ -154,10 +162,16 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.DHT_ENABLED is False
     assert setting.DHT_SENSOR_TYPE == "dht11"
     assert setting.DHT_PIN == 21
-    assert setting.DHT_TOPIC_SUFFIX == "temperature"
+    assert setting.DHT_TEMPERATURE_TOPIC_SUFFIX == "temp"
+    assert setting.DHT_HUMIDITY_TOPIC_SUFFIX == "hum"
     assert setting.RELAY_ENABLED is False
     assert setting.RELAY_PIN == 22
     assert setting.RELAY_TOPIC_SUFFIX == "switch"
+    assert setting.RGB_ENABLED is True
+    assert setting.RGB_RED_PIN == 13
+    assert setting.RGB_GREEN_PIN == 14
+    assert setting.RGB_BLUE_PIN == 15
+    assert setting.RGB_TOPIC_SUFFIX == "led"
     assert setting.OLED_ENABLED is True
     assert setting.OLED_SDA_PIN == 19
     assert setting.OLED_SCL_PIN == 23
@@ -191,8 +205,9 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.MQTT_BROKER == "localhost"
     assert setting.MQTT_CLIENT_ID == "microweaver"
     assert setting.MQTT_PORT == 1883
-    assert setting.MQTT_TOPIC_PUB == ["data/sensor/room/temperature"]
-    assert setting.MQTT_TOPIC_SUB == ["command/control/room/light"]
+    assert setting.MQTT_TOPIC_PUB == ["devices/sensors"]
+    assert setting.MQTT_TOPIC_SUB == ["devices/commands"]
+    assert setting.MQTT_TOPIC_STATUS == ["devices/status"]
     assert setting.WIFI_SSID == ""
     assert setting.WIFI_PASSWORD == ""
     assert setting.WIFI_IP == ""
@@ -240,9 +255,15 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.DHT_ENABLED is True
     assert setting.DHT_SENSOR_TYPE == "dht22"
     assert setting.DHT_PIN == 4
-    assert setting.DHT_TOPIC_SUFFIX == "dht"
+    assert setting.DHT_TEMPERATURE_TOPIC_SUFFIX == "temperature"
+    assert setting.DHT_HUMIDITY_TOPIC_SUFFIX == "humidity"
     assert setting.RELAY_ENABLED is True
     assert setting.RELAY_TOPIC_SUFFIX == "relay"
+    assert setting.RGB_ENABLED is False
+    assert setting.RGB_RED_PIN == 25
+    assert setting.RGB_GREEN_PIN == 26
+    assert setting.RGB_BLUE_PIN == 27
+    assert setting.RGB_TOPIC_SUFFIX == "rgb"
     assert setting.OLED_ENABLED is False
     assert setting.OLED_SDA_PIN == 21
     assert setting.OLED_SCL_PIN == 22

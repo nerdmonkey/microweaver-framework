@@ -3,6 +3,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from app.adapters.sensors.potentiometer import PotentiometerAdapter
+from app.adapters.sensors.rotary_angle import RotaryAngleAdapter
 from app.services.error_handler import ErrorHandlerService
 from app.services.runtime import RuntimeService, setting
 
@@ -118,16 +120,93 @@ def test_poll_publish_adapters_publishes_dht22_payload(mocker):
     _patch_envelope_settings(mocker)
     sensor = MagicMock()
     sensor.read.return_value = (21.5, 55.0)
-    service = RuntimeService(publish_adapters=[("dht22", sensor)])
+    service = RuntimeService(
+        publish_adapters=[("dht22", sensor)],
+        topics_pub=["base/pub/temperature", "base/pub/humidity"],
+    )
     publish_message = mocker.patch.object(service, "publish_message")
 
     service._poll_publish_adapters()
 
-    publish_message.assert_called_once_with(service.topics_pub[0], mocker.ANY)
-    topic, payload = publish_message.call_args[0]
-    assert json.loads(payload) == _envelope(
-        "sensor_reading", temperature=21.5, humidity=55.0
+    assert publish_message.call_args_list == [
+        mocker.call("base/pub/temperature", mocker.ANY),
+        mocker.call("base/pub/humidity", mocker.ANY),
+    ]
+    assert [json.loads(call.args[1]) for call in publish_message.call_args_list] == [
+        _envelope("sensor_reading", value=21.5),
+        _envelope("sensor_reading", value=55.0),
+    ]
+
+
+def _patch_poll_scheduler_clock(mocker, start=1000):
+    """Each PollScheduler.poll() call reads time.time() twice (is_due, then
+    mark_polled); step far past interval_seconds=1 each time so every call
+    in a test is treated as due, regardless of wall-clock speed."""
+    mocker.patch(
+        "app.services.poll_scheduler.time.time",
+        side_effect=(start + n * 10 for n in range(100)),
     )
+
+
+def test_poll_publish_adapters_skips_potentiometer_when_reading_unchanged(mocker):
+    _patch_envelope_settings(mocker)
+    _patch_poll_scheduler_clock(mocker)
+    pot = MagicMock(spec=PotentiometerAdapter)
+    pot.read.return_value = 42.0
+    service = RuntimeService(publish_adapters=[("potentiometer", pot)])
+    publish_message = mocker.patch.object(service, "publish_message")
+
+    service._poll_publish_adapters()
+    publish_message.reset_mock()
+    service._poll_publish_adapters()
+
+    publish_message.assert_not_called()
+
+
+def test_poll_publish_adapters_skips_potentiometer_within_noise_threshold(mocker):
+    _patch_envelope_settings(mocker)
+    _patch_poll_scheduler_clock(mocker)
+    pot = MagicMock(spec=PotentiometerAdapter)
+    pot.read.side_effect = [42.0, 42.6, 41.5]  # ADC jitter, wiper not moved
+    service = RuntimeService(publish_adapters=[("potentiometer", pot)])
+    publish_message = mocker.patch.object(service, "publish_message")
+
+    service._poll_publish_adapters()
+    publish_message.reset_mock()
+    service._poll_publish_adapters()
+    service._poll_publish_adapters()
+
+    publish_message.assert_not_called()
+
+
+def test_poll_publish_adapters_publishes_potentiometer_when_reading_changes(mocker):
+    _patch_envelope_settings(mocker)
+    _patch_poll_scheduler_clock(mocker)
+    pot = MagicMock(spec=PotentiometerAdapter)
+    pot.read.side_effect = [42.0, 55.0]
+    service = RuntimeService(publish_adapters=[("potentiometer", pot)])
+    publish_message = mocker.patch.object(service, "publish_message")
+
+    service._poll_publish_adapters()
+    publish_message.reset_mock()
+    service._poll_publish_adapters()
+
+    publish_message.assert_called_once()
+
+
+def test_poll_publish_adapters_skips_rotary_angle_when_reading_unchanged(mocker):
+    _patch_envelope_settings(mocker)
+    _patch_poll_scheduler_clock(mocker)
+    rotary = MagicMock(spec=RotaryAngleAdapter)
+    rotary.read.return_value = 10.0
+    service = RuntimeService(publish_adapters=[("rotary_angle", rotary)])
+    publish_message = mocker.patch.object(service, "publish_message")
+
+    service._poll_publish_adapters()
+    publish_message.reset_mock()
+    service._poll_publish_adapters()
+
+    publish_message.assert_not_called()
 
 
 def test_run_publishes_and_receives_with_one_connection(mocker):
@@ -158,12 +237,16 @@ def test_run_publishes_and_receives_with_one_connection(mocker):
     assert mock_wifi.ensure_connected.call_count == 2
     mock_client.set_callback.assert_called_once_with(service.on_message)
     mock_client.subscribe.assert_called_once_with(service.topics[0])
-    mock_client.publish.assert_called_once_with(
-        service.topics_pub[0], mocker.ANY, qos=0, retain=False
-    )
-    assert json.loads(mock_client.publish.call_args[0][1]) == _envelope(
-        "sensor_reading", temperature=21.5, humidity=55.0
-    )
+    assert mock_client.publish.call_args_list == [
+        mocker.call(service.topics_pub[0], mocker.ANY, qos=0, retain=False),
+        mocker.call(service.topics_pub[0], mocker.ANY, qos=0, retain=False),
+    ]
+    assert [
+        json.loads(call.args[1]) for call in mock_client.publish.call_args_list
+    ] == [
+        _envelope("sensor_reading", value=21.5),
+        _envelope("sensor_reading", value=55.0),
+    ]
 
 
 def test_run_retries_when_subscribe_fails_during_connect(mocker):
@@ -301,6 +384,86 @@ def test_watchdog_started_and_registered_when_enabled(mocker):
     mock_watchdog_cls.assert_called_once_with(4000)
     mock_watchdog.start.assert_called_once_with()
     assert service.watchdog_service is mock_watchdog
+
+
+# --------------------------------------------------------------------------
+# ntp
+# --------------------------------------------------------------------------
+
+
+def test_ntp_service_built_and_passed_to_mqtt_connection_when_enabled(mocker):
+    mocker.patch("app.services.runtime.setting.NTP_ENABLED", True)
+    mocker.patch("app.services.runtime.setting.NTP_HOST", "time.example.org")
+    mocker.patch("app.services.runtime.setting.NTP_SYNC_ATTEMPTS", 5)
+    mocker.patch("app.services.runtime.setting.NTP_RETRY_DELAY_SECONDS", 2)
+    mock_ntp_cls = mocker.patch("app.services.runtime.NtpService")
+    mock_ntp = mock_ntp_cls.return_value
+    mock_connection_cls = mocker.patch("app.services.runtime.MqttConnection")
+
+    service = RuntimeService()
+
+    mock_ntp_cls.assert_called_once_with("time.example.org", 5, 2)
+    assert service.ntp_service is mock_ntp
+    assert mock_connection_cls.call_args.args[-4] is mock_ntp
+
+
+def test_ntp_service_not_built_when_disabled(mocker):
+    mocker.patch("app.services.runtime.setting.NTP_ENABLED", False)
+    mock_ntp_cls = mocker.patch("app.services.runtime.NtpService")
+    mock_connection_cls = mocker.patch("app.services.runtime.MqttConnection")
+
+    service = RuntimeService()
+
+    mock_ntp_cls.assert_not_called()
+    assert service.ntp_service is None
+    assert mock_connection_cls.call_args.args[-4] is None
+
+
+# --------------------------------------------------------------------------
+# device cert
+# --------------------------------------------------------------------------
+
+
+def test_device_cert_service_built_and_passed_to_mqtt_connection(mocker):
+    mocker.patch("app.services.runtime.setting.DEVICE_CERT_PATH", "device_cert.pem")
+    mocker.patch("app.services.runtime.setting.DEVICE_KEY_PATH", "device_key.pem")
+    mocker.patch("app.services.runtime.setting.DEVICE_CERT", "cert-pem")
+    mocker.patch("app.services.runtime.setting.DEVICE_KEY", "key-pem")
+    mock_cert_cls = mocker.patch("app.services.runtime.DeviceCertService")
+    mock_cert_service = mock_cert_cls.return_value
+    mock_connection_cls = mocker.patch("app.services.runtime.MqttConnection")
+
+    service = RuntimeService()
+
+    mock_cert_cls.assert_called_once_with("device_cert.pem", "device_key.pem")
+    assert service.device_cert_service is mock_cert_service
+    call_args = mock_connection_cls.call_args.args
+    assert call_args[-3] is mock_cert_service
+    assert call_args[-2] == "cert-pem"
+    assert call_args[-1] == "key-pem"
+
+
+def test_ssl_params_include_configured_cert_and_key_paths(mocker):
+    mocker.patch("app.services.runtime.setting.MQTT_SSL_CERT_PATH", "/certs/client.crt")
+    mocker.patch("app.services.runtime.setting.MQTT_SSL_KEY_PATH", "/certs/client.key")
+    mock_connection_cls = mocker.patch("app.services.runtime.MqttConnection")
+
+    RuntimeService()
+
+    assert mock_connection_cls.call_args.args[11] == {
+        "cert": "/certs/client.crt",
+        "key": "/certs/client.key",
+    }
+
+
+def test_ssl_params_omitted_when_no_cert_or_key_path_configured(mocker):
+    mocker.patch("app.services.runtime.setting.MQTT_SSL_CERT_PATH", "")
+    mocker.patch("app.services.runtime.setting.MQTT_SSL_KEY_PATH", "")
+    mock_connection_cls = mocker.patch("app.services.runtime.MqttConnection")
+
+    RuntimeService()
+
+    assert mock_connection_cls.call_args.args[11] is None
 
 
 def test_run_feeds_watchdog_each_tick(mocker):
@@ -913,6 +1076,62 @@ def test_handle_command_message_unsupported_command_prints(capsys):
     relay.toggle.assert_not_called()
 
 
+def test_handle_command_message_publishes_status_when_topic_configured(mocker):
+    _patch_envelope_settings(mocker)
+    relay = MagicMock()
+    relay.is_on.return_value = True
+    service = RuntimeService(
+        subscribe_adapters=[("relay", relay)],
+        topics_status={"relay": "devices/dev-42/status/relay"},
+    )
+    publish_message = mocker.patch.object(service, "publish_message")
+
+    service._handle_command_message(b"devices/relay", b"on")
+
+    relay.on.assert_called_once_with()
+    publish_message.assert_called_once_with("devices/dev-42/status/relay", mocker.ANY)
+    assert json.loads(publish_message.call_args[0][1]) == _envelope(
+        "state_report", state="on"
+    )
+
+
+def test_handle_command_message_skips_status_when_topic_not_configured(mocker):
+    relay = MagicMock()
+    service = RuntimeService(subscribe_adapters=[("relay", relay)])
+    publish_message = mocker.patch.object(service, "publish_message")
+
+    service._handle_command_message(b"devices/relay", b"on")
+
+    publish_message.assert_not_called()
+
+
+def test_handle_command_message_skips_status_for_adapter_without_is_on(mocker):
+    oled = MagicMock(spec=["on", "off", "toggle", "setup", "deinit"])
+    service = RuntimeService(
+        subscribe_adapters=[("oled", oled)],
+        topics_status={"oled": "devices/dev-42/status/oled"},
+    )
+    publish_message = mocker.patch.object(service, "publish_message")
+
+    service._handle_command_message(b"devices/oled", b"on")
+
+    oled.on.assert_called_once_with()
+    publish_message.assert_not_called()
+
+
+def test_handle_command_message_skips_status_on_unsupported_command(mocker):
+    relay = MagicMock()
+    service = RuntimeService(
+        subscribe_adapters=[("relay", relay)],
+        topics_status={"relay": "devices/dev-42/status/relay"},
+    )
+    publish_message = mocker.patch.object(service, "publish_message")
+
+    service._handle_command_message(b"devices/relay", b"blink")
+
+    publish_message.assert_not_called()
+
+
 def test_resolve_command_adapter_matches_full_topic():
     relay = MagicMock()
     service = RuntimeService(subscribe_adapters=[("devices/relay", relay)])
@@ -1041,7 +1260,11 @@ def test_poll_publish_adapters_routes_multiple_adapters_to_matching_topics(mocke
     _patch_envelope_settings(mocker)
     mocker.patch(
         "app.services.runtime.setting.MQTT_TOPIC_PUB",
-        ["data/sensor/room/dht22", "data/sensor/room/potentiometer"],
+        [
+            "data/sensor/room/temperature",
+            "data/sensor/room/humidity",
+            "data/sensor/room/potentiometer",
+        ],
     )
     dht = MagicMock()
     dht.read.return_value = (21.5, 55.0)
@@ -1053,11 +1276,13 @@ def test_poll_publish_adapters_routes_multiple_adapters_to_matching_topics(mocke
     service._poll_publish_adapters()
 
     assert [call.args[0] for call in publish_message.call_args_list] == [
-        "data/sensor/room/dht22",
+        "data/sensor/room/temperature",
+        "data/sensor/room/humidity",
         "data/sensor/room/potentiometer",
     ]
     assert [json.loads(call.args[1]) for call in publish_message.call_args_list] == [
-        _envelope("sensor_reading", temperature=21.5, humidity=55.0),
+        _envelope("sensor_reading", value=21.5),
+        _envelope("sensor_reading", value=55.0),
         _envelope("sensor_reading", value=42),
     ]
 
@@ -1078,6 +1303,25 @@ def test_poll_publish_adapters_skips_and_warns_when_topic_unmatched(mocker, caps
     assert (
         "No publish topic matched for adapter: rotary_angle" in capsys.readouterr().out
     )
+
+
+def test_poll_publish_adapters_dual_reading_warns_when_only_one_topic_matched(
+    mocker, capsys
+):
+    _patch_envelope_settings(mocker)
+    mocker.patch(
+        "app.services.runtime.setting.MQTT_TOPIC_PUB",
+        ["data/sensor/room/temperature", "data/sensor/room/potentiometer"],
+    )
+    dht = MagicMock()
+    dht.read.return_value = (21.5, 55.0)
+    service = RuntimeService(publish_adapters=[("dht22", dht)])
+    publish_message = mocker.patch.object(service, "publish_message")
+
+    service._poll_publish_adapters()
+
+    publish_message.assert_called_once_with("data/sensor/room/temperature", mocker.ANY)
+    assert "No publish topic matched for adapter: humidity" in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------
