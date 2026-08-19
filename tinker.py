@@ -27,7 +27,7 @@ from esptool.util import FatalError
 from serial import SerialException
 from serial.tools import list_ports
 
-from config.app import ConfigError, Setting
+from config.app import SCHEMA, ConfigError, Setting
 from device_transport import DeviceExecError, DeviceTransport, RawReplEntryError
 
 ROOT = Path(__file__).parent
@@ -2679,43 +2679,187 @@ def _format_config_value(key: str, value, reveal: bool):
     return value
 
 
-@device_app.command("config")
-def device_config(
-    config_path: Optional[Path] = typer.Option(
-        None,
-        "--config",
-        help="Path to device_config.json (default: repo's own, "
-        "falling back to device_config.json.example if not provisioned yet)",
-    ),
-    reveal: bool = typer.Option(
-        False, "--reveal", help="Show secret values in full instead of masked"
-    ),
-) -> None:
-    """Show device_config.json contents as a table, Azure CLI-style."""
+CONFIG_PATH_OPTION_HELP = (
+    "Path to device_config.json (default: repo's own, "
+    "falling back to device_config.json.example if not provisioned yet)"
+)
+
+
+def _resolve_readable_config_path(config_path: Optional[Path]) -> Path:
     if config_path is None:
         real = ROOT / "device_config.json"
         config_path = real if real.exists() else ROOT / "device_config.json.example"
     if not config_path.exists():
         print(f"ERROR: config file not found: {config_path}", file=sys.stderr)
         raise typer.Exit(code=1)
+    return config_path
 
+
+def _require_device_config_path(config_path: Optional[Path]) -> Path:
+    if config_path is None:
+        config_path = ROOT / "device_config.json"
+    if not config_path.exists():
+        print(
+            f"ERROR: config file not found: {config_path} "
+            "(run `tinker.py device provision` first)",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    return config_path
+
+
+def _load_config_json(config_path: Path) -> dict:
     try:
         with config_path.open() as f:
-            raw = json.load(f)
+            return json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
         print(f"ERROR: could not read {config_path}: {exc}", file=sys.stderr)
         raise typer.Exit(code=1)
 
+
+def _print_config_table(config_path: Optional[Path], reveal: bool) -> None:
+    resolved = _resolve_readable_config_path(config_path)
+    raw = _load_config_json(resolved)
+
     try:
-        source = config_path.relative_to(ROOT)
+        source = resolved.relative_to(ROOT)
     except ValueError:
-        source = config_path
+        source = resolved
     print(f"Config source: {source}\n")
 
     rows = [
         (key, _format_config_value(key, value, reveal)) for key, value in raw.items()
     ]
     print_table(["Key", "Value"], rows)
+
+
+def _parse_config_value(key: str, raw_value: str):
+    expected = SCHEMA[key]["type"]
+    if expected is bool:
+        lowered = raw_value.strip().lower()
+        if lowered in ("true", "1", "yes", "on"):
+            return True
+        if lowered in ("false", "0", "no", "off"):
+            return False
+        print(
+            f"ERROR: {key} must be a boolean (true/false), got {raw_value!r}",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+    if expected == "int":
+        try:
+            return int(raw_value)
+        except ValueError:
+            print(
+                f"ERROR: {key} must be an integer, got {raw_value!r}",
+                file=sys.stderr,
+            )
+            raise typer.Exit(code=1)
+    return raw_value
+
+
+device_config_app = typer.Typer(
+    no_args_is_help=False, help="Show or edit device_config.json."
+)
+device_app.add_typer(device_config_app, name="config")
+
+
+@device_config_app.callback(invoke_without_command=True)
+def device_config_default(
+    ctx: typer.Context,
+    config_path: Optional[Path] = typer.Option(
+        None, "--config", help=CONFIG_PATH_OPTION_HELP
+    ),
+    reveal: bool = typer.Option(
+        False, "--reveal", help="Show secret values in full instead of masked"
+    ),
+) -> None:
+    """Show device_config.json contents as a table, Azure CLI-style."""
+    if ctx.invoked_subcommand is not None:
+        return
+    _print_config_table(config_path, reveal)
+
+
+@device_config_app.command("show")
+def device_config_show(
+    config_path: Optional[Path] = typer.Option(
+        None, "--config", help=CONFIG_PATH_OPTION_HELP
+    ),
+    reveal: bool = typer.Option(
+        False, "--reveal", help="Show secret values in full instead of masked"
+    ),
+) -> None:
+    """Show device_config.json contents as a table, Azure CLI-style."""
+    _print_config_table(config_path, reveal)
+
+
+@device_config_app.command("get")
+def device_config_get(
+    key: str = typer.Argument(..., help="Config key, e.g. mqtt_broker"),
+    config_path: Optional[Path] = typer.Option(
+        None, "--config", help=CONFIG_PATH_OPTION_HELP
+    ),
+    reveal: bool = typer.Option(
+        False, "--reveal", help="Show secret value in full instead of masked"
+    ),
+) -> None:
+    """Print one device_config.json value."""
+    if key not in SCHEMA:
+        print(f"ERROR: unknown config key: {key}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    resolved = _resolve_readable_config_path(config_path)
+    raw = _load_config_json(resolved)
+    if key not in raw:
+        print(f"{key} not set (falls back to runtime default)")
+        return
+    print(_format_config_value(key, raw[key], reveal))
+
+
+@device_config_app.command("set")
+def device_config_set(
+    key: str = typer.Argument(..., help="Config key, e.g. mqtt_broker"),
+    value: str = typer.Argument(..., help="New value"),
+    config_path: Optional[Path] = typer.Option(
+        None, "--config", help="Path to device_config.json (default: repo's own)"
+    ),
+) -> None:
+    """Set one device_config.json value (schema-validated)."""
+    if key not in SCHEMA:
+        print(f"ERROR: unknown config key: {key}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    resolved = _require_device_config_path(config_path)
+    parsed = _parse_config_value(key, value)
+    try:
+        Setting(config_path=str(resolved)).save(**{key: parsed})
+    except ConfigError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise typer.Exit(code=1)
+    print(f"{key}={parsed}")
+
+
+@device_config_app.command("unset")
+def device_config_unset(
+    key: str = typer.Argument(..., help="Config key, e.g. mqtt_broker"),
+    config_path: Optional[Path] = typer.Option(
+        None, "--config", help="Path to device_config.json (default: repo's own)"
+    ),
+) -> None:
+    """Remove a key from device_config.json, reverting it to the runtime default."""
+    if key not in SCHEMA:
+        print(f"ERROR: unknown config key: {key}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    resolved = _require_device_config_path(config_path)
+    raw = _load_config_json(resolved)
+    if key not in raw:
+        print(f"{key} already unset")
+        return
+    del raw[key]
+    with resolved.open("w") as f:
+        json.dump(raw, f)
+    print(f"unset: {key}")
 
 
 # Device name -> device_config.json enable flag. Mirrors SUBSCRIBE_ADAPTER_FLAGS
@@ -2748,16 +2892,7 @@ def _set_device_flags(names: str, config_path: Optional[Path], enabled: bool) ->
         )
         raise typer.Exit(code=1)
 
-    if config_path is None:
-        config_path = ROOT / "device_config.json"
-    if not config_path.exists():
-        print(
-            f"ERROR: config file not found: {config_path} "
-            "(run `tinker.py device provision` first)",
-            file=sys.stderr,
-        )
-        raise typer.Exit(code=1)
-
+    config_path = _require_device_config_path(config_path)
     updates = {DEVICE_ENABLE_FLAG_MAP[name]: enabled for name in requested}
     try:
         Setting(config_path=str(config_path)).save(**updates)

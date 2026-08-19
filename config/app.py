@@ -5,7 +5,7 @@ except ImportError:
 
 DEVICE_CONFIG_PATH = "device_config.json"
 
-_SCHEMA = {
+SCHEMA = {
     "app_environment": {"type": str},
     "app_version": {"type": str},
     "mqtt_enabled": {"type": bool},
@@ -339,7 +339,7 @@ class Setting:
 
     def _validate(self, config):
         errors = []
-        for key, rules in _SCHEMA.items():
+        for key, rules in SCHEMA.items():
             if key not in config:
                 continue
             errors.extend(self._validate_field(key, config[key], rules))
