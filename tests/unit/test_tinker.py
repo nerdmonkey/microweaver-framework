@@ -4791,3 +4791,192 @@ def test_device_config_rejects_invalid_json(tmp_path):
     result = runner.invoke(tinker.app, ["device", "config"])
     assert result.exit_code == 1
     assert "ERROR" in result.stderr
+
+
+# --------------------------------------------------------------------------
+# device config get/set/unset
+# --------------------------------------------------------------------------
+
+
+def test_device_config_show_subcommand_matches_bare_invocation(tmp_path):
+    (tmp_path / "device_config.json").write_text(
+        json.dumps({"mqtt_broker": "real-broker"})
+    )
+    result = runner.invoke(tinker.app, ["device", "config", "show"])
+    assert result.exit_code == 0
+    assert "real-broker" in result.stdout
+
+
+def test_device_config_get_reads_value(tmp_path):
+    (tmp_path / "device_config.json").write_text(
+        json.dumps({"mqtt_broker": "real-broker"})
+    )
+    result = runner.invoke(tinker.app, ["device", "config", "get", "mqtt_broker"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "real-broker"
+
+
+def test_device_config_get_falls_back_to_example(tmp_path):
+    (tmp_path / "device_config.json.example").write_text(
+        json.dumps({"mqtt_broker": "example-broker"})
+    )
+    result = runner.invoke(tinker.app, ["device", "config", "get", "mqtt_broker"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "example-broker"
+
+
+def test_device_config_get_masks_secret_by_default(tmp_path):
+    (tmp_path / "device_config.json").write_text(
+        json.dumps({"wifi_password": "hunter2"})
+    )
+    result = runner.invoke(tinker.app, ["device", "config", "get", "wifi_password"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "********"
+
+
+def test_device_config_get_reveal_shows_secret(tmp_path):
+    (tmp_path / "device_config.json").write_text(
+        json.dumps({"wifi_password": "hunter2"})
+    )
+    result = runner.invoke(
+        tinker.app, ["device", "config", "get", "wifi_password", "--reveal"]
+    )
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "hunter2"
+
+
+def test_device_config_get_key_not_set(tmp_path):
+    (tmp_path / "device_config.json").write_text(json.dumps({}))
+    result = runner.invoke(tinker.app, ["device", "config", "get", "mqtt_broker"])
+    assert result.exit_code == 0
+    assert "not set" in result.stdout
+
+
+def test_device_config_get_unknown_key(tmp_path):
+    (tmp_path / "device_config.json").write_text(json.dumps({}))
+    result = runner.invoke(tinker.app, ["device", "config", "get", "bogus_key"])
+    assert result.exit_code == 1
+    assert "unknown config key: bogus_key" in result.stderr
+
+
+def test_device_config_get_no_config_found(tmp_path):
+    result = runner.invoke(tinker.app, ["device", "config", "get", "mqtt_broker"])
+    assert result.exit_code == 1
+    assert "config file not found" in result.stderr
+
+
+def test_device_config_set_writes_string_value(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_broker": "localhost"}))
+    result = runner.invoke(
+        tinker.app, ["device", "config", "set", "mqtt_broker", "192.168.1.10"]
+    )
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "mqtt_broker=192.168.1.10"
+    assert json.loads(config_path.read_text())["mqtt_broker"] == "192.168.1.10"
+
+
+def test_device_config_set_parses_int(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({}))
+    result = runner.invoke(tinker.app, ["device", "config", "set", "mqtt_port", "8883"])
+    assert result.exit_code == 0
+    assert json.loads(config_path.read_text())["mqtt_port"] == 8883
+
+
+def test_device_config_set_rejects_non_int(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({}))
+    result = runner.invoke(
+        tinker.app, ["device", "config", "set", "mqtt_port", "not-a-number"]
+    )
+    assert result.exit_code == 1
+    assert "mqtt_port must be an integer" in result.stderr
+    assert "mqtt_port" not in json.loads(config_path.read_text())
+
+
+def test_device_config_set_parses_bool_true(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({}))
+    result = runner.invoke(
+        tinker.app, ["device", "config", "set", "mqtt_enabled", "true"]
+    )
+    assert result.exit_code == 0
+    assert json.loads(config_path.read_text())["mqtt_enabled"] is True
+
+
+def test_device_config_set_parses_bool_false(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({}))
+    result = runner.invoke(
+        tinker.app, ["device", "config", "set", "mqtt_enabled", "false"]
+    )
+    assert result.exit_code == 0
+    assert json.loads(config_path.read_text())["mqtt_enabled"] is False
+
+
+def test_device_config_set_rejects_non_bool(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({}))
+    result = runner.invoke(
+        tinker.app, ["device", "config", "set", "mqtt_enabled", "maybe"]
+    )
+    assert result.exit_code == 1
+    assert "mqtt_enabled must be a boolean" in result.stderr
+
+
+def test_device_config_set_rejects_out_of_range(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({}))
+    result = runner.invoke(
+        tinker.app, ["device", "config", "set", "mqtt_port", "999999"]
+    )
+    assert result.exit_code == 1
+    assert "ERROR: device_config.json failed validation" in result.stderr
+    assert "mqtt_port" not in json.loads(config_path.read_text())
+
+
+def test_device_config_set_unknown_key(tmp_path):
+    (tmp_path / "device_config.json").write_text(json.dumps({}))
+    result = runner.invoke(tinker.app, ["device", "config", "set", "bogus_key", "x"])
+    assert result.exit_code == 1
+    assert "unknown config key: bogus_key" in result.stderr
+
+
+def test_device_config_set_requires_existing_config(tmp_path):
+    result = runner.invoke(
+        tinker.app, ["device", "config", "set", "mqtt_broker", "192.168.1.10"]
+    )
+    assert result.exit_code == 1
+    assert "run `tinker.py device provision` first" in result.stderr
+
+
+def test_device_config_unset_removes_key(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({"mqtt_broker": "192.168.1.10"}))
+    result = runner.invoke(tinker.app, ["device", "config", "unset", "mqtt_broker"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "unset: mqtt_broker"
+    assert "mqtt_broker" not in json.loads(config_path.read_text())
+
+
+def test_device_config_unset_already_unset(tmp_path):
+    config_path = tmp_path / "device_config.json"
+    config_path.write_text(json.dumps({}))
+    result = runner.invoke(tinker.app, ["device", "config", "unset", "mqtt_broker"])
+    assert result.exit_code == 0
+    assert "already unset" in result.stdout
+    assert json.loads(config_path.read_text()) == {}
+
+
+def test_device_config_unset_unknown_key(tmp_path):
+    (tmp_path / "device_config.json").write_text(json.dumps({}))
+    result = runner.invoke(tinker.app, ["device", "config", "unset", "bogus_key"])
+    assert result.exit_code == 1
+    assert "unknown config key: bogus_key" in result.stderr
+
+
+def test_device_config_unset_requires_existing_config(tmp_path):
+    result = runner.invoke(tinker.app, ["device", "config", "unset", "mqtt_broker"])
+    assert result.exit_code == 1
+    assert "run `tinker.py device provision` first" in result.stderr

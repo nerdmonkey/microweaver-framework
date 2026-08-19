@@ -492,20 +492,34 @@ Chip/flash/MAC are read at the ROM bootloader level (same mechanism as `device r
 
 ### `device config`
 
-Show `device_config.json` contents as a table, Azure CLI-style. Host-only — no serial connection.
+Show or edit `device_config.json`. Host-only — no serial connection.
 
 ```shell
 python tinker.py device config [OPTIONS]
+python tinker.py device config show [OPTIONS]
+python tinker.py device config get KEY [OPTIONS]
+python tinker.py device config set KEY VALUE [OPTIONS]
+python tinker.py device config unset KEY [OPTIONS]
 ```
+
+Bare `device config` (no subcommand) is an alias for `show`: prints `device_config.json` contents as a table, Azure CLI-style.
 
 | Option | Default | Description |
 |---|---|---|
-| `--config` | repo's `device_config.json`, falling back to `.example` | Path to config file |
-| `--reveal` | off | Show secret values (passwords, keys) in full instead of masked |
+| `--config` | repo's `device_config.json`, falling back to `.example` (`show`/`get` only) | Path to config file |
+| `--reveal` | off | Show secret values (passwords, keys) in full instead of masked (`show`/`get` only) |
+
+`get`/`show` fall back to `device_config.json.example` when `device_config.json` doesn't exist yet, matching `device info`'s firmware read. `set`/`unset` require a real `device_config.json` (run `device provision` first) and never touch the `.example` file.
+
+`set` validates the value against the same schema `Setting` enforces on-device (type, min/max, choices) and rejects unknown keys or a value that fails validation — nothing is written on error. `unset` removes the key entirely, reverting it to `Setting`'s built-in default at runtime.
 
 ```shell
 python tinker.py device config
 python tinker.py device config --reveal
+python tinker.py device config get mqtt_broker
+python tinker.py device config set mqtt_broker 192.168.1.10
+python tinker.py device config set mqtt_enabled false
+python tinker.py device config unset wifi_dns
 ```
 
 ---

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `tinker.py device config` gained `get`/`set`/`unset` subcommands for
+  reading and editing individual `device_config.json` keys without hand-
+  editing the file - `set` validates against the same schema `Setting`
+  enforces on-device (type, min/max, choices), rejecting unknown keys or
+  invalid values before writing; `unset` removes a key so it reverts to
+  `Setting`'s built-in default. Bare `device config` keeps its previous
+  behaviour as the `show` subcommand's default alias.
 - `tinker.py provision` gained a `--device-name` flag (and matching
   `device_name` prompt) to fill in `device_config.json`'s `device_name`
   key - previously always blank unless hand-edited after provisioning,
