@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   invalid values before writing; `unset` removes a key so it reverts to
   `Setting`'s built-in default. Bare `device config` keeps its previous
   behaviour as the `show` subcommand's default alias.
+- `tinker.py provision` gained an `--id` flag to renew an existing Agnes
+  device by its exact device id, bypassing name lookup and the interactive
+  picker entirely - mutually exclusive with `--name`. Agnes doesn't enforce
+  unique device names, so `--name` alone could register a duplicate device
+  instead of renewing the intended one when names collided; `--id` gives an
+  unambiguous way to target a renew by hand.
 - `tinker.py provision` gained a `--device-name` flag (and matching
   `device_name` prompt) to fill in `device_config.json`'s `device_name`
   key - previously always blank unless hand-edited after provisioning,
