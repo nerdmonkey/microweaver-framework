@@ -1608,6 +1608,60 @@ def test_provision_api_key_without_api_url_errors():
     assert "--api-key given without --api-url" in result.stderr
 
 
+def test_provision_name_and_id_mutually_exclusive():
+    result = runner.invoke(
+        tinker.app,
+        [
+            "provision",
+            "--name",
+            "test-device",
+            "--id",
+            "dev-1",
+            *PROVISION_FLAGS,
+        ],
+    )
+    assert result.exit_code == 1
+    assert "--name and --id are mutually exclusive" in result.stderr
+
+
+def test_provision_id_renews_directly_without_lookup(tmp_path, mocker):
+    mock_list = mocker.patch.object(tinker, "_list_devices_via_api")
+    mock_renew = mocker.patch.object(
+        tinker,
+        "_renew_device_cert_via_api",
+        return_value={
+            "device_id": "dev-1",
+            "certificate": "CERT-PEM",
+            "private_key": "KEY-PEM",
+            "ca_cert": "CA-PEM",
+            "expires_at": "2027-01-01T00:00:00Z",
+        },
+    )
+    mock_register = mocker.patch.object(tinker, "_provision_device_via_api")
+
+    result = runner.invoke(
+        tinker.app,
+        [
+            "provision",
+            "--api-url",
+            "http://agnes.local",
+            "--api-key",
+            "test-key",
+            "--id",
+            "dev-1",
+            *PROVISION_FLAGS,
+        ],
+    )
+
+    assert result.exit_code == 0, result.stderr
+    mock_list.assert_not_called()
+    mock_renew.assert_called_once_with("http://agnes.local", "test-key", None, "dev-1")
+    mock_register.assert_not_called()
+    written = json.loads((tmp_path / "device_config.json").read_text())
+    assert written["device_id"] == "dev-1"
+    assert written["device_cert"] == "CERT-PEM"
+
+
 def test_provision_registration_api_error(mocker):
     mocker.patch.object(
         tinker,
@@ -1660,6 +1714,7 @@ def test_provision_interactive_picked_device_renewal_api_error(mocker):
             ca_cert=None,
             profile=None,
             name=None,
+            device_id=None,
             skip_certs=False,
         )
 
@@ -1714,6 +1769,7 @@ def test_provision_interactive_prompts_fill_only_missing(tmp_path, mocker):
         ca_cert=None,
         profile=None,
         name=None,
+        device_id=None,
         skip_certs=False,
     )
 
@@ -1765,6 +1821,7 @@ def test_provision_masks_existing_secret_default(tmp_path, mocker):
         ca_cert=None,
         profile=None,
         name=None,
+        device_id=None,
         skip_certs=False,
     )
 
@@ -1914,6 +1971,7 @@ def test_provision_interactive_picks_existing_device_and_renews_cert(tmp_path, m
         ca_cert=None,
         profile=None,
         name=None,
+        device_id=None,
         skip_certs=False,
     )
 
@@ -1955,6 +2013,7 @@ def test_provision_writes_resolved_mqtt_username_into_default_topics(tmp_path, m
         ca_cert=None,
         profile=None,
         name=None,
+        device_id=None,
         skip_certs=False,
     )
 
@@ -1983,6 +2042,7 @@ def test_provision_writes_explicit_device_name(tmp_path, mocker):
         ca_cert=None,
         profile=None,
         name=None,
+        device_id=None,
         skip_certs=False,
     )
 
@@ -2022,6 +2082,7 @@ def test_provision_defaults_device_name_to_registration_name(tmp_path, mocker):
         ca_cert=None,
         profile=None,
         name="kitchen-sensor",
+        device_id=None,
         skip_certs=False,
     )
 
@@ -2067,6 +2128,7 @@ def test_provision_renew_defaults_device_name_to_picked_devices_agnes_name(
         ca_cert=None,
         profile=None,
         name=None,
+        device_id=None,
         skip_certs=False,
     )
 
@@ -2112,6 +2174,7 @@ def test_provision_renew_explicit_device_name_wins_over_picked_devices_name(
         ca_cert=None,
         profile=None,
         name=None,
+        device_id=None,
         skip_certs=False,
     )
 
@@ -2139,6 +2202,7 @@ def test_provision_forces_mqtt_ssl_on_for_tls_port(tmp_path, mocker):
         ca_cert=None,
         profile=None,
         name=None,
+        device_id=None,
         skip_certs=False,
     )
 
@@ -2166,6 +2230,7 @@ def test_provision_leaves_mqtt_ssl_off_for_plain_port(tmp_path, mocker):
         ca_cert=None,
         profile=None,
         name=None,
+        device_id=None,
         skip_certs=False,
     )
 
@@ -2200,6 +2265,7 @@ def test_provision_keeps_mqtt_ssl_on_plain_port_when_local_default_true(
         ca_cert=None,
         profile=None,
         name=None,
+        device_id=None,
         skip_certs=False,
     )
 
@@ -2243,6 +2309,7 @@ def test_provision_renew_defaults_mqtt_client_id_to_picked_device_id(tmp_path, m
         ca_cert=None,
         profile=None,
         name=None,
+        device_id=None,
         skip_certs=False,
     )
 
@@ -2296,6 +2363,7 @@ def test_provision_renew_rotates_mqtt_password_when_no_local_creds(tmp_path, moc
         ca_cert=None,
         profile=None,
         name=None,
+        device_id=None,
         skip_certs=False,
     )
 
@@ -2353,6 +2421,7 @@ def test_provision_renew_skips_mqtt_rotation_when_local_creds_exist(tmp_path, mo
         ca_cert=None,
         profile=None,
         name=None,
+        device_id=None,
         skip_certs=False,
     )
 
@@ -2404,6 +2473,7 @@ def test_provision_renew_rotation_failure_exits(tmp_path, mocker):
             ca_cert=None,
             profile=None,
             name=None,
+            device_id=None,
             skip_certs=False,
         )
 
@@ -2447,6 +2517,7 @@ def test_provision_interactive_create_new_from_picker(tmp_path, mocker):
         ca_cert=None,
         profile=None,
         name=None,
+        device_id=None,
         skip_certs=False,
     )
 
@@ -2499,6 +2570,7 @@ def test_provision_device_listing_failure_falls_back_to_name_prompt(mocker):
         ca_cert=None,
         profile=None,
         name=None,
+        device_id=None,
         skip_certs=False,
     )
 
@@ -2541,6 +2613,7 @@ def test_provision_no_existing_devices_falls_back_to_name_prompt(mocker):
         ca_cert=None,
         profile=None,
         name=None,
+        device_id=None,
         skip_certs=False,
     )
 

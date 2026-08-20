@@ -1662,7 +1662,7 @@ def _prompt_provision_device_choice(
 
 
 def _resolve_provision_device_identity(
-    name, resolved_api_url, resolved_api_key, resolved_ca_cert
+    name, device_id, resolved_api_url, resolved_api_key, resolved_ca_cert
 ):
     """Return (resolved_name, resolved_device_id, resolved_device_name) -
     resolved_device_id is set only when an existing device was picked to
@@ -1670,10 +1670,16 @@ def _resolve_provision_device_identity(
     defaulting device_config.json's device_name to it); otherwise
     resolved_name is the name to register a new device with (also usable
     as a device_name default - see _resolve_given_fields) and
-    resolved_device_name is None. Prompts for --name (after offering to
-    pick an existing device to renew instead, see
-    _prompt_provision_device_choice) when name isn't given. Exits the CLI
-    if there's no TTY to prompt on."""
+    resolved_device_name is None. --id renews that exact device id
+    directly, bypassing name lookup entirely - Agnes doesn't enforce unique
+    device names, so matching on a typed --name would risk renewing the
+    wrong device if two share a name; resolved_device_name is left None in
+    this path since the id alone doesn't tell us the device's Agnes name.
+    Otherwise prompts for --name (after offering to pick an existing device
+    to renew instead, see _prompt_provision_device_choice) when neither is
+    given. Exits the CLI if there's no TTY to prompt on."""
+    if device_id is not None:
+        return None, device_id, None
     if name is not None:
         return name, None, None
     if not sys.stdin.isatty():
@@ -1729,11 +1735,17 @@ def _renew_device_via_api(
 
 
 def _maybe_register_or_renew_via_api(
-    name, resolved_api_url, resolved_api_key, resolved_ca_cert, have_local_mqtt_creds
+    name,
+    device_id,
+    resolved_api_url,
+    resolved_api_key,
+    resolved_ca_cert,
+    have_local_mqtt_creds,
 ):
     """Register a new device, or renew an existing one's cert, with the
     Agnes API when --api-key was given - see _resolve_provision_device_identity
-    for how the choice between the two is made. Returns
+    for how the choice between the two is made (device_id, from --id, wins
+    over name and renews directly). Returns
     (mqtt_api_result, cert_bundle, resolved_device_name):
     - mqtt_api_result has username/password to fill MQTT credentials, and is
       non-None when: a new device was registered (DeviceProvisionResponse,
@@ -1763,7 +1775,7 @@ def _maybe_register_or_renew_via_api(
         resolved_device_id,
         resolved_device_name,
     ) = _resolve_provision_device_identity(
-        name, resolved_api_url, resolved_api_key, resolved_ca_cert
+        name, device_id, resolved_api_url, resolved_api_key, resolved_ca_cert
     )
 
     if resolved_device_id is not None:
@@ -1905,7 +1917,16 @@ def provision(
         "--name",
         help="Device name to register with the Agnes API. When omitted "
         "interactively, existing devices are listed first so you can pick "
-        "one to renew instead of registering a new one.",
+        "one to renew instead of registering a new one. Mutually exclusive "
+        "with --id.",
+    ),
+    device_id: Optional[str] = typer.Option(
+        None,
+        "--id",
+        help="Existing Agnes device id to renew directly, bypassing name "
+        "lookup/the interactive picker (Agnes doesn't enforce unique device "
+        "names, so this is the only unambiguous way to target a renew by "
+        "hand). Mutually exclusive with --name.",
     ),
     skip_certs: bool = typer.Option(
         False,
@@ -1938,8 +1959,13 @@ def provision(
     ./certs/ca.pem, client.pem, and private.pem (mirroring the Agnes
     project's own tinker.py cert layout) unless --skip-certs is given,
     since the API only returns a device's certs once, at registration/
-    renewal time.
+    renewal time. --id renews an exact device directly instead, skipping
+    name lookup/the picker entirely.
     """
+    if name is not None and device_id is not None:
+        print("ERROR: --name and --id are mutually exclusive.", file=sys.stderr)
+        raise typer.Exit(code=1)
+
     resolved = _resolve_provision_connection_args(
         None, None, api_url, api_key, profile, ca_cert
     )
@@ -1972,6 +1998,7 @@ def provision(
         resolved_device_name,
     ) = _maybe_register_or_renew_via_api(
         name,
+        device_id,
         resolved_api_url,
         resolved_api_key,
         resolved_ca_cert,
