@@ -4051,6 +4051,29 @@ def test_device_repl_raw_repl_failure_prints_recovery(mocker):
     assert "device reset --port /dev/ttyUSB0" in result.stderr
 
 
+def test_device_repl_stale_port_disconnect_prints_note(mocker):
+    mocker.patch.object(tinker.shutil, "which", return_value="/usr/bin/mpremote")
+    mocker.patch.object(
+        tinker.subprocess,
+        "run",
+        return_value=MagicMock(
+            returncode=1,
+            stderr=(
+                'File ".../mpremote/transport_serial.py", line 118, in close\n'
+                "    raise er\n"
+                'File ".../mpremote/transport_serial.py", line 111, in close\n'
+                "    self.serial.rts = False\n"
+                "OSError: [Errno 6] Device not configured\n"
+            ),
+        ),
+    )
+    result = runner.invoke(tinker.app, ["device", "repl", "--port", "/dev/ttyUSB0"])
+    assert result.exit_code == 1
+    assert "lost /dev/ttyUSB0 while closing" in result.stderr
+    assert "safe to ignore" in result.stderr
+    assert "OSError" not in result.stderr
+
+
 @pytest.mark.parametrize("subcommand", ["logs", "monitor"])
 def test_device_logs_missing_mpremote(subcommand, mocker):
     mocker.patch.object(tinker.shutil, "which", return_value=None)
