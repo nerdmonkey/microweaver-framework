@@ -200,7 +200,7 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     setting = Setting(config_path=str(missing_path))
 
     assert setting.APP_ENVIRONMENT == "local"
-    assert setting.APP_VERSION == "0.1.0"
+    assert setting.APP_VERSION == "0.3.0"
     assert setting.MQTT_ENABLED is True
     assert setting.MQTT_BROKER == "localhost"
     assert setting.MQTT_CLIENT_ID == "microweaver"
