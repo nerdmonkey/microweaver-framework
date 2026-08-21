@@ -256,6 +256,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reset-reason logging now uses MicroPython's supported `machine.reset_cause()`
   API, allowing real ESP32 watchdog resets to be recorded as `watchdog` instead
   of `unknown`.
+- `tinker.py device logs`/`device monitor`/`device repl` no longer dump
+  mpremote's raw Python traceback when the board is unplugged, hard-reset,
+  or the port renumbers while the session is closing - mpremote's
+  `do_disconnect()` toggles the RTS/DTR lines on close, which raises an
+  unhandled `OSError` once the serial node is already gone. The tailed
+  output was already delivered by then, so this now prints a short "safe to
+  ignore" note instead.
 
 ### Added
 - `scripts/hardware_soak.py --ota-local-fixture` now generates and temporarily

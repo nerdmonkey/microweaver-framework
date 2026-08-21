@@ -294,10 +294,36 @@ def _is_raw_repl_failure(output: str) -> bool:
     return MPREMOTE_RAW_REPL_ERROR in output.lower()
 
 
+def _is_stale_port_disconnect_error(output: str) -> bool:
+    """Detect mpremote's known crash closing a port that vanished underneath it.
+
+    mpremote's do_disconnect() toggles the RTS/DTR lines on close; if the
+    board was unplugged, hard-reset, or renumbered while connected, the
+    serial node is already gone and that ioctl raises an unhandled OSError.
+    The tailed session's output was already delivered before this point, so
+    it's cosmetic noise, not a failure worth a raw traceback.
+    """
+    lower = output.lower()
+    return (
+        "transport_serial.py" in lower
+        and ("self.serial.rts" in lower or "self.serial.dtr" in lower)
+        and "oserror" in lower
+    )
+
+
 def _print_mpremote_failure(
     resolved_port: str, *, allow_reset_hint: bool, output: str
 ) -> None:
     """Print a friendlier recovery hint for common mpremote failures."""
+    if _is_stale_port_disconnect_error(output):
+        print(
+            f"NOTE: mpremote lost {resolved_port} while closing the session "
+            "(board unplugged, reset, or the port renumbered) — safe to "
+            "ignore, the session's output was already delivered.",
+            file=sys.stderr,
+        )
+        return
+
     if _is_raw_repl_failure(output):
         print(
             f"ERROR: mpremote could not enter raw REPL on {resolved_port}. "
