@@ -12,6 +12,10 @@ SCHEMA = {
     "mqtt_broker": {"type": str},
     "mqtt_client_id": {"type": str},
     "mqtt_port": {"type": "int", "min": 1, "max": 65535},
+    # mqtt_topic_pub/sub/status: legacy per-adapter topic lists, superseded by the
+    # unified devices/{mqtt_username}/{data,command,state} topics RuntimeService
+    # now derives directly from mqtt_username. Kept for older device_config.json
+    # files that still set them explicitly.
     "mqtt_topic_pub": {"type": "topics"},
     "mqtt_topic_sub": {"type": "topics"},
     "mqtt_topic_status": {"type": "topics"},
@@ -43,6 +47,7 @@ SCHEMA = {
     "mqtt_lwt_qos": {"type": "int", "min": 0, "max": 1},
     "mqtt_publish_retain": {"type": bool},
     "mqtt_publish_qos": {"type": "int", "min": 0, "max": 1},
+    "state_report_interval_seconds": {"type": "int", "min": 0},
     "mqtt_rejection_retry_seconds": {"type": "int", "min": 0},
     "publish_interval_seconds": {"type": "int", "min": 1},
     "watchdog_enabled": {"type": bool},
@@ -73,10 +78,14 @@ SCHEMA = {
     "dht_enabled": {"type": bool},
     "dht_sensor_type": {"type": str, "choices": ("dht11", "dht22")},
     "dht_pin": {"type": "int", "min": 0, "max": 39},
+    # dht_*_topic_suffix values are still read -- they're repurposed as the JSON
+    # key names in the merged devices/{id}/data publish (see RuntimeService),
+    # not as separate topic suffixes anymore.
     "dht_temperature_topic_suffix": {"type": str},
     "dht_humidity_topic_suffix": {"type": str},
     "relay_enabled": {"type": bool},
     "relay_pin": {"type": "int", "min": 0, "max": 39},
+    # relay/rgb/oled_topic_suffix: legacy, superseded by unified devices/{id}/state.
     "relay_topic_suffix": {"type": str},
     "rgb_enabled": {"type": bool},
     "rgb_red_pin": {"type": "int", "min": 0, "max": 39},
@@ -92,6 +101,8 @@ SCHEMA = {
     "oled_topic_suffix": {"type": str},
     "potentiometer_enabled": {"type": bool},
     "potentiometer_pin": {"type": "int", "min": 0, "max": 39},
+    # potentiometer/rotary_angle_topic_suffix are still read as the JSON key name
+    # in the merged devices/{id}/data publish (same repurposing as the DHT ones).
     "potentiometer_topic_suffix": {"type": str},
     "rotary_angle_enabled": {"type": bool},
     "rotary_angle_pin": {"type": "int", "min": 0, "max": 39},
@@ -169,7 +180,7 @@ class Setting:
 
     def _apply_config(self):
         self.APP_ENVIRONMENT = self._value("app_environment", "local")
-        self.APP_VERSION = self._value("app_version", "0.1.0")
+        self.APP_VERSION = self._value("app_version", "0.3.0")
         self.MQTT_ENABLED = self._bool("mqtt_enabled", True)
         self.MQTT_BROKER = self._value("mqtt_broker", "localhost")
         self.MQTT_CLIENT_ID = self._value("mqtt_client_id", "microweaver")
@@ -220,6 +231,9 @@ class Setting:
         self.MQTT_LWT_QOS = self._int("mqtt_lwt_qos", 0)
         self.MQTT_PUBLISH_RETAIN = self._bool("mqtt_publish_retain", False)
         self.MQTT_PUBLISH_QOS = self._int("mqtt_publish_qos", 0)
+        self.STATE_REPORT_INTERVAL_SECONDS = self._int(
+            "state_report_interval_seconds", 60
+        )
         self.MQTT_REJECTION_RETRY_SECONDS = self._int(
             "mqtt_rejection_retry_seconds", 300
         )

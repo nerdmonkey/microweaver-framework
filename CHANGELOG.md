@@ -240,6 +240,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--component`/`--purpose` filters; `topic tree` renders the same topic
   set as a hierarchical tree grouped by path segment, matching `device
   tree`'s rendering style. No backward-compatible `topics` alias.
+- Unified MQTT contract: every device now publishes/subscribes on exactly
+  four fixed topics derived straight from `mqtt_username` -
+  `devices/{mqtt_username}/data` (merged multi-key telemetry publish),
+  `.../command` (multi-key JSON command routing by adapter name, see
+  `RuntimeService._handle_command_message()`), `.../state` (periodic +
+  post-command full-state report, `state_report_interval_seconds`, default
+  `60`), and `.../availability` (birth/LWT) - replacing per-adapter topic
+  composition from `mqtt_topic_pub`/`mqtt_topic_sub`/`mqtt_topic_status`
+  plus each adapter's own `*_topic_suffix`. `main.py`'s `_topic()` composer
+  is removed; adapter names now double as JSON keys instead of being
+  composed into standalone topic strings. `*_topic_suffix` config keys are
+  still read, but repurposed as JSON key names in the merged payloads
+  rather than topic path segments. `StatusLEDAdapter.state()` added so LED
+  participates in the state report the same way relay/RGB do.
+  `RegistrationService` now also saves the registration response's
+  `lwt_topic`/`lwt_payload` into `device_config.json`'s
+  `mqtt_lwt_topic`/`mqtt_lwt_message`. Breaking change for any existing
+  subscriber on the old per-adapter topic layout - see `docs/mqtt.md` for
+  the full contract.
 
 ### Fixed
 - `boot.py` now claims the `network.WLAN(network.STA_IF)` singleton as its

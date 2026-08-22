@@ -47,6 +47,13 @@ class StatusLEDAdapter(BaseAdapter):
     def brightness(self):
         return self._brightness
 
+    def state(self):
+        """Rich state for devices/{id}/state -- "off" (bare string) when
+        fully off, else the current brightness percent."""
+        if not self._on:
+            return "off"
+        return {"brightness": self._brightness}
+
     def is_on(self):
         return self._on
 
