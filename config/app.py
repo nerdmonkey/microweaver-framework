@@ -85,7 +85,9 @@ SCHEMA = {
     "dht_humidity_topic_suffix": {"type": str},
     "relay_enabled": {"type": bool},
     "relay_pin": {"type": "int", "min": 0, "max": 39},
-    # relay/rgb/oled_topic_suffix: legacy, superseded by unified devices/{id}/state.
+    # relay/rgb/oled_topic_suffix are still read -- same JSON-key-name
+    # repurposing as the dht/potentiometer/rotary_angle ones above, used in
+    # both legacy and unified dispatch (see main.py's *_subscribe_adapters).
     "relay_topic_suffix": {"type": str},
     "rgb_enabled": {"type": bool},
     "rgb_red_pin": {"type": "int", "min": 0, "max": 39},
