@@ -1404,7 +1404,9 @@ def test_resolve_command_adapter_single_adapter_fallback():
 
 
 def test_unified_state_topic_resolved_from_mqtt_topic_status(mocker):
-    mocker.patch("app.services.runtime.setting.MQTT_TOPIC_STATUS", ["devices/dev-1/state"])
+    mocker.patch(
+        "app.services.runtime.setting.MQTT_TOPIC_STATUS", ["devices/dev-1/state"]
+    )
 
     service = RuntimeService(unified_mode=True)
 
@@ -1477,7 +1479,9 @@ def test_poll_unified_publish_adapters_respects_change_only_suppression(mocker):
     _patch_poll_scheduler_clock(mocker)
     pot = MagicMock(spec=PotentiometerAdapter)
     pot.read.return_value = 42.0
-    service = RuntimeService(publish_adapters=[("potentiometer", pot)], unified_mode=True)
+    service = RuntimeService(
+        publish_adapters=[("potentiometer", pot)], unified_mode=True
+    )
     publish_message = mocker.patch.object(service, "publish_message")
 
     service._poll_publish_adapters()
@@ -1547,9 +1551,7 @@ def test_handle_unified_command_message_ignores_request_id_key():
     relay = MagicMock(spec=["on", "off", "toggle", "is_on", "setup", "deinit"])
     service = RuntimeService(subscribe_adapters=[("relay", relay)], unified_mode=True)
 
-    service._handle_unified_command_message(
-        b'{"relay":"on","request_id":"cmp_abc123"}'
-    )
+    service._handle_unified_command_message(b'{"relay":"on","request_id":"cmp_abc123"}')
 
     relay.on.assert_called_once_with()
 
@@ -1608,7 +1610,9 @@ def test_handle_unified_command_message_ignores_non_object_json(capsys):
 def test_handle_unified_command_message_publishes_flat_state_for_changed_adapters(
     mocker,
 ):
-    mocker.patch("app.services.runtime.setting.MQTT_TOPIC_STATUS", ["devices/dev-1/state"])
+    mocker.patch(
+        "app.services.runtime.setting.MQTT_TOPIC_STATUS", ["devices/dev-1/state"]
+    )
     relay = MagicMock(spec=["on", "off", "toggle", "is_on", "setup", "deinit"])
     relay.is_on.return_value = True
     service = RuntimeService(subscribe_adapters=[("relay", relay)], unified_mode=True)
@@ -1622,7 +1626,9 @@ def test_handle_unified_command_message_publishes_flat_state_for_changed_adapter
 
 
 def test_handle_unified_command_message_skips_state_for_adapter_without_is_on(mocker):
-    mocker.patch("app.services.runtime.setting.MQTT_TOPIC_STATUS", ["devices/dev-1/state"])
+    mocker.patch(
+        "app.services.runtime.setting.MQTT_TOPIC_STATUS", ["devices/dev-1/state"]
+    )
     lcd = MagicMock(spec=["on", "off", "toggle", "setup", "deinit"])
     service = RuntimeService(subscribe_adapters=[("lcd", lcd)], unified_mode=True)
     publish_message = mocker.patch.object(service, "publish_message")
@@ -1635,7 +1641,18 @@ def test_handle_unified_command_message_skips_state_for_adapter_without_is_on(mo
 
 def test_handle_unified_command_message_dispatches_cw_ccw_bare_verbs():
     fan = MagicMock(
-        spec=["on", "off", "toggle", "is_on", "cw", "ccw", "stop", "direction", "setup", "deinit"]
+        spec=[
+            "on",
+            "off",
+            "toggle",
+            "is_on",
+            "cw",
+            "ccw",
+            "stop",
+            "direction",
+            "setup",
+            "deinit",
+        ]
     )
     fan.direction.return_value = "stop"
     service = RuntimeService(subscribe_adapters=[("fan", fan)], unified_mode=True)
@@ -1650,12 +1667,25 @@ def test_handle_unified_command_message_dispatches_cw_ccw_bare_verbs():
     fan.stop.assert_called_once_with()
 
 
-def test_handle_unified_command_message_reports_direction_in_state_for_directional_adapter(
+def test_handle_unified_command_message_reports_direction_for_directional_adapter(
     mocker,
 ):
-    mocker.patch("app.services.runtime.setting.MQTT_TOPIC_STATUS", ["devices/dev-1/state"])
+    mocker.patch(
+        "app.services.runtime.setting.MQTT_TOPIC_STATUS", ["devices/dev-1/state"]
+    )
     fan = MagicMock(
-        spec=["on", "off", "toggle", "is_on", "cw", "ccw", "stop", "direction", "setup", "deinit"]
+        spec=[
+            "on",
+            "off",
+            "toggle",
+            "is_on",
+            "cw",
+            "ccw",
+            "stop",
+            "direction",
+            "setup",
+            "deinit",
+        ]
     )
     fan.direction.return_value = "ccw"
     service = RuntimeService(subscribe_adapters=[("fan", fan)], unified_mode=True)
@@ -1691,14 +1721,18 @@ def test_adapter_state_value_prefers_state_over_direction_and_is_on():
 
 
 def test_handle_unified_command_message_reports_rgb_state_after_set(mocker):
-    mocker.patch("app.services.runtime.setting.MQTT_TOPIC_STATUS", ["devices/dev-1/state"])
-    rgb = MagicMock(spec=["on", "off", "toggle", "is_on", "set", "state", "setup", "deinit"])
+    mocker.patch(
+        "app.services.runtime.setting.MQTT_TOPIC_STATUS", ["devices/dev-1/state"]
+    )
+    rgb = MagicMock(
+        spec=["on", "off", "toggle", "is_on", "set", "state", "setup", "deinit"]
+    )
     rgb.state.return_value = {"color": {"r": 10, "g": 20, "b": 30}, "brightness": 128}
     service = RuntimeService(subscribe_adapters=[("rgb", rgb)], unified_mode=True)
     publish_message = mocker.patch.object(service, "publish_message")
 
     service._handle_unified_command_message(
-        b'{"rgb": {"command": "set", "color": {"r": 10, "g": 20, "b": 30}, "brightness": 128}}'
+        b'{"rgb":{"command":"set","color":{"r":10,"g":20,"b":30},"brightness":128}}'
     )
 
     rgb.set.assert_called_once_with(color={"r": 10, "g": 20, "b": 30}, brightness=128)

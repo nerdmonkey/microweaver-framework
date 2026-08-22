@@ -2,7 +2,14 @@ from app.adapters.indicators.lcd import LCDAdapter
 
 
 def make_adapter(
-    sda_pin=22, scl_pin=21, i2c_addr=0x3E, rgb_addr=0x62, cols=16, rows=2, i2c_id=0, default_lines=None
+    sda_pin=22,
+    scl_pin=21,
+    i2c_addr=0x3E,
+    rgb_addr=0x62,
+    cols=16,
+    rows=2,
+    i2c_id=0,
+    default_lines=None,
 ):
     return LCDAdapter(
         sda_pin=sda_pin,
@@ -22,7 +29,9 @@ def test_setup_marks_available_builds_i2c_and_turns_backlight_on(mocker):
     mock_lcd_cls = mocker.patch("app.libs.lcd_i2c.LcdI2c")
     mock_backlight_cls = mocker.patch("app.libs.lcd_i2c.GroveRgbBacklight")
 
-    adapter = make_adapter(sda_pin=22, scl_pin=21, i2c_addr=0x3E, rgb_addr=0x62, cols=16, rows=2)
+    adapter = make_adapter(
+        sda_pin=22, scl_pin=21, i2c_addr=0x3E, rgb_addr=0x62, cols=16, rows=2
+    )
     adapter.setup()
 
     assert adapter.available is True

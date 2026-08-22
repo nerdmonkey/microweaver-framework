@@ -37,7 +37,9 @@ def test_move_to_within_bounds_targets_row_offset():
 
     lcd.move_to(3, 1)
 
-    i2c.writeto_mem.assert_called_once_with(lcd.addr, _COMMAND_REG, bytes([0x80 | (0x40 + 3)]))
+    i2c.writeto_mem.assert_called_once_with(
+        lcd.addr, _COMMAND_REG, bytes([0x80 | (0x40 + 3)])
+    )
 
 
 def test_move_to_clamps_row_beyond_known_offsets():
@@ -46,7 +48,9 @@ def test_move_to_clamps_row_beyond_known_offsets():
     lcd.move_to(0, 5)
 
     # 4 known row offsets (indices 0-3) -- row 5 clamps to index 3
-    i2c.writeto_mem.assert_called_once_with(lcd.addr, _COMMAND_REG, bytes([0x80 | 0x54]))
+    i2c.writeto_mem.assert_called_once_with(
+        lcd.addr, _COMMAND_REG, bytes([0x80 | 0x54])
+    )
 
 
 def test_putstr_writes_one_data_byte_per_character():

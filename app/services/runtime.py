@@ -70,9 +70,7 @@ class RuntimeService:
         # In unified mode all adapters share MQTT_TOPIC_STATUS[0] instead of
         # a per-adapter status topic, so topics_status (a name->topic dict)
         # doesn't apply -- resolve the one shared state topic separately.
-        self.unified_state_topic = None
-        if self.unified_mode and setting.MQTT_TOPIC_STATUS:
-            self.unified_state_topic = list(setting.MQTT_TOPIC_STATUS)[0]
+        self.unified_state_topic = self._resolve_unified_state_topic()
         self.dht_temperature_topic_suffix = setting.DHT_TEMPERATURE_TOPIC_SUFFIX
         self.dht_humidity_topic_suffix = setting.DHT_HUMIDITY_TOPIC_SUFFIX
         self.publish_qos = setting.MQTT_PUBLISH_QOS
@@ -82,19 +80,7 @@ class RuntimeService:
         self.watchdog_service = None
         if setting.WATCHDOG_ENABLED:
             self.watchdog_service = WatchdogService(setting.WATCHDOG_TIMEOUT_MS)
-        wifi_static_ip = None
-        if (
-            setting.WIFI_IP
-            and setting.WIFI_SUBNET
-            and setting.WIFI_GATEWAY
-            and setting.WIFI_DNS
-        ):
-            wifi_static_ip = (
-                setting.WIFI_IP,
-                setting.WIFI_SUBNET,
-                setting.WIFI_GATEWAY,
-                setting.WIFI_DNS,
-            )
+        wifi_static_ip = self._resolve_wifi_static_ip()
         # network.WLAN() needs one contiguous internal-DRAM block for its rx/tx
         # buffers, so grab it before the log/crash-log/metrics/error-handler
         # objects below churn and fragment the heap. gc.collect() here prevents
@@ -202,6 +188,26 @@ class RuntimeService:
         self._reconnect_delay_seconds = setting.MQTT_RECONNECT_DELAY_SECONDS
         self._max_reconnect_delay_seconds = setting.MQTT_MAX_RECONNECT_DELAY_SECONDS
         self.registry.start_all()
+
+    def _resolve_unified_state_topic(self):
+        if self.unified_mode and setting.MQTT_TOPIC_STATUS:
+            return list(setting.MQTT_TOPIC_STATUS)[0]
+        return None
+
+    def _resolve_wifi_static_ip(self):
+        if (
+            setting.WIFI_IP
+            and setting.WIFI_SUBNET
+            and setting.WIFI_GATEWAY
+            and setting.WIFI_DNS
+        ):
+            return (
+                setting.WIFI_IP,
+                setting.WIFI_SUBNET,
+                setting.WIFI_GATEWAY,
+                setting.WIFI_DNS,
+            )
+        return None
 
     def _register_adapters(self):
         for name, adapter in self.publish_adapters + self.subscribe_adapters:
@@ -468,7 +474,9 @@ class RuntimeService:
             return
         self.publish_message(
             topic,
-            self._envelope("state_report", {"state": self._adapter_state_value(adapter)}),
+            self._envelope(
+                "state_report", {"state": self._adapter_state_value(adapter)}
+            ),
         )
 
     def _resolve_command_adapter(self, topic):
@@ -559,19 +567,7 @@ class RuntimeService:
                 if last is not None and abs(reading - last) < CHANGE_THRESHOLD_PERCENT:
                     continue
                 self._last_published_readings[name] = reading
-            if self._is_dual_reading(adapter, reading):
-                temperature, humidity = reading
-                batch[self.dht_temperature_topic_suffix] = temperature
-                batch[self.dht_humidity_topic_suffix] = humidity
-                continue
-            if isinstance(reading, dict):
-                batch.update(reading)
-            elif isinstance(reading, bool):
-                batch[name] = "on" if reading else "off"
-            elif isinstance(reading, (int, float, str)):
-                batch[name] = reading
-            else:
-                print("Unsupported publish payload from adapter:", name)
+            self._merge_unified_reading(batch, name, adapter, reading)
         if not batch:
             return
         topic = self.topics_pub[0] if self.topics_pub else None
@@ -579,6 +575,20 @@ class RuntimeService:
             print("No unified publish topic configured")
             return
         self.publish_message(topic, json.dumps(batch))
+
+    def _merge_unified_reading(self, batch, name, adapter, reading):
+        if self._is_dual_reading(adapter, reading):
+            temperature, humidity = reading
+            batch[self.dht_temperature_topic_suffix] = temperature
+            batch[self.dht_humidity_topic_suffix] = humidity
+        elif isinstance(reading, dict):
+            batch.update(reading)
+        elif isinstance(reading, bool):
+            batch[name] = "on" if reading else "off"
+        elif isinstance(reading, (int, float, str)):
+            batch[name] = reading
+        else:
+            print("Unsupported publish payload from adapter:", name)
 
     def _to_publish_payload(self, name, adapter, reading):
         if isinstance(reading, dict):

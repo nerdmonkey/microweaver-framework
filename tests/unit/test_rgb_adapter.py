@@ -188,7 +188,10 @@ def test_set_brightness_scales_color(mocker):
 
     # 255 * (128/255) = 128 -> duty = 128/255 * 1023 = 513
     assert adapter._red.duty.call_args == mocker.call(513)
-    assert adapter.state() == {"color": {"r": 255, "g": 255, "b": 255}, "brightness": 128}
+    assert adapter.state() == {
+        "color": {"r": 255, "g": 255, "b": 255},
+        "brightness": 128,
+    }
 
 
 def test_set_brightness_only_keeps_existing_color(mocker):
@@ -199,7 +202,10 @@ def test_set_brightness_only_keeps_existing_color(mocker):
 
     adapter.set(brightness=255)
 
-    assert adapter.state() == {"color": {"r": 200, "g": 100, "b": 50}, "brightness": 255}
+    assert adapter.state() == {
+        "color": {"r": 200, "g": 100, "b": 50},
+        "brightness": 255,
+    }
 
 
 def test_set_clamps_brightness_to_valid_range(mocker):

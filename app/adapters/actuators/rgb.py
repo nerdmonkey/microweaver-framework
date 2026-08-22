@@ -90,7 +90,10 @@ class RGBAdapter(BaseAdapter):
         if not self._on:
             return "off"
         red, green, blue = self._color
-        return {"color": {"r": red, "g": green, "b": blue}, "brightness": self._brightness}
+        return {
+            "color": {"r": red, "g": green, "b": blue},
+            "brightness": self._brightness,
+        }
 
     def deinit(self):
         for pwm in (self._red, self._green, self._blue):

@@ -89,8 +89,8 @@ class GroveRgbBacklight:
             self._write(_REG_RED, r & 0xFF)
             self._write(_REG_GREEN, g & 0xFF)
             self._write(_REG_BLUE, b & 0xFF)
-        except Exception:
-            pass
+        except Exception as e:
+            print("Failed to set LCD backlight color:", e)
 
     def on(self):
         self.set_color(0xFF, 0xFF, 0xFF)

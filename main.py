@@ -256,7 +256,10 @@ def _build_unified_subscribe_adapters():
         )
     if setting.FAN_ENABLED:
         adapters.append(
-            ("fan", FanAdapter(in1_pin=setting.FAN_IN1_PIN, in2_pin=setting.FAN_IN2_PIN))
+            (
+                "fan",
+                FanAdapter(in1_pin=setting.FAN_IN1_PIN, in2_pin=setting.FAN_IN2_PIN),
+            )
         )
     if setting.OUTDOOR_LIGHT_ENABLED:
         adapters.append(("outdoor_light", RelayAdapter(pin=setting.OUTDOOR_LIGHT_PIN)))
