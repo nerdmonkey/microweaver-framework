@@ -23,6 +23,7 @@ def _mock_base_topics(mocker, pub="base/pub", sub="base/sub", status="base/statu
 
 
 def test_start_wires_and_runs_runtime_service_with_dht22_default(mocker):
+    _disable_existing_devices(mocker)
     mocker.patch("main.setting.DHT_ENABLED", True)
     mocker.patch("main.setting.DHT_PIN", 15)
     mocker.patch("main.setting.RELAY_ENABLED", True)
@@ -50,11 +51,13 @@ def test_start_wires_and_runs_runtime_service_with_dht22_default(mocker):
         topics=["base/sub/relay"],
         topics_pub=["base/pub/temperature", "base/pub/humidity"],
         topics_status={"relay": "base/status/relay"},
+        publish_intervals={},
     )
     mock_runtime_cls.return_value.run.assert_called_once_with()
 
 
 def test_start_wires_and_runs_runtime_service_with_dht11(mocker):
+    _disable_existing_devices(mocker)
     mocker.patch("main.setting.DHT_ENABLED", True)
     mocker.patch("main.setting.DHT_PIN", 15)
     mocker.patch("main.setting.RELAY_ENABLED", True)
@@ -82,11 +85,13 @@ def test_start_wires_and_runs_runtime_service_with_dht11(mocker):
         topics=["base/sub/relay"],
         topics_pub=["base/pub/temperature", "base/pub/humidity"],
         topics_status={"relay": "base/status/relay"},
+        publish_intervals={},
     )
     mock_runtime_cls.return_value.run.assert_called_once_with()
 
 
 def test_start_uses_custom_dht_topic_suffixes(mocker):
+    _disable_existing_devices(mocker)
     mocker.patch("main.setting.DHT_ENABLED", True)
     mocker.patch("main.setting.DHT_PIN", 15)
     mocker.patch("main.setting.RELAY_ENABLED", False)
@@ -112,10 +117,12 @@ def test_start_uses_custom_dht_topic_suffixes(mocker):
         topics=[],
         topics_pub=["base/pub/temp", "base/pub/hum"],
         topics_status={},
+        publish_intervals={},
     )
 
 
 def test_start_skips_dht_adapter_when_disabled(mocker):
+    _disable_existing_devices(mocker)
     mocker.patch("main.setting.DHT_ENABLED", False)
     mocker.patch("main.setting.RELAY_ENABLED", True)
     mocker.patch("main.setting.RELAY_PIN", 16)
@@ -138,10 +145,12 @@ def test_start_skips_dht_adapter_when_disabled(mocker):
         topics=["base/sub/relay"],
         topics_pub=[],
         topics_status={"relay": "base/status/relay"},
+        publish_intervals={},
     )
 
 
 def test_start_skips_relay_adapter_when_disabled(mocker):
+    _disable_existing_devices(mocker)
     mocker.patch("main.setting.DHT_ENABLED", True)
     mocker.patch("main.setting.DHT_PIN", 15)
     mocker.patch("main.setting.DHT_SENSOR_TYPE", "dht22")
@@ -165,10 +174,12 @@ def test_start_skips_relay_adapter_when_disabled(mocker):
         topics=[],
         topics_pub=["base/pub/temperature", "base/pub/humidity"],
         topics_status={},
+        publish_intervals={},
     )
 
 
 def test_start_wires_no_adapters_when_all_disabled(mocker):
+    _disable_existing_devices(mocker)
     mocker.patch("main.setting.DHT_ENABLED", False)
     mocker.patch("main.setting.RELAY_ENABLED", False)
     mocker.patch("main.setting.RGB_ENABLED", False)
@@ -195,10 +206,12 @@ def test_start_wires_no_adapters_when_all_disabled(mocker):
         topics=[],
         topics_pub=[],
         topics_status={},
+        publish_intervals={},
     )
 
 
 def test_start_wires_rgb_adapter_when_enabled(mocker):
+    _disable_existing_devices(mocker)
     mocker.patch("main.setting.DHT_ENABLED", False)
     mocker.patch("main.setting.RELAY_ENABLED", False)
     mocker.patch("main.setting.RGB_ENABLED", True)
@@ -222,10 +235,37 @@ def test_start_wires_rgb_adapter_when_enabled(mocker):
         topics=["base/sub/rgb"],
         topics_pub=[],
         topics_status={"rgb": "base/status/rgb"},
+        publish_intervals={},
+    )
+
+
+def test_start_wires_auto_cycling_rgb_adapter_when_mode_set(mocker):
+    _disable_existing_devices(mocker)
+    mocker.patch("main.setting.RGB_ENABLED", True)
+    mocker.patch("main.setting.RGB_MODE", "auto_cycling")
+    mocker.patch("main.setting.RGB_RED_PIN", 15)
+    _mock_topic_suffixes(mocker)
+    _mock_base_topics(mocker)
+    mock_rgb_cls = mocker.patch("main.RGBAdapter")
+    mock_auto_cycling_cls = mocker.patch("main.AutoCyclingRgbAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_rgb_cls.assert_not_called()
+    mock_auto_cycling_cls.assert_called_once_with(pin=15)
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[],
+        subscribe_adapters=[("rgb", mock_auto_cycling_cls.return_value)],
+        topics=["base/sub/rgb"],
+        topics_pub=[],
+        topics_status={"rgb": "base/status/rgb"},
+        publish_intervals={},
     )
 
 
 def test_start_skips_rgb_adapter_when_disabled(mocker):
+    _disable_existing_devices(mocker)
     mocker.patch("main.setting.DHT_ENABLED", False)
     mocker.patch("main.setting.RELAY_ENABLED", True)
     mocker.patch("main.setting.RELAY_PIN", 16)
@@ -248,10 +288,12 @@ def test_start_skips_rgb_adapter_when_disabled(mocker):
         topics=["base/sub/relay"],
         topics_pub=[],
         topics_status={"relay": "base/status/relay"},
+        publish_intervals={},
     )
 
 
 def test_start_wires_relay_and_rgb_together(mocker):
+    _disable_existing_devices(mocker)
     mocker.patch("main.setting.DHT_ENABLED", False)
     mocker.patch("main.setting.RELAY_ENABLED", True)
     mocker.patch("main.setting.RELAY_PIN", 16)
@@ -279,10 +321,12 @@ def test_start_wires_relay_and_rgb_together(mocker):
         topics=["base/sub/relay", "base/sub/rgb"],
         topics_pub=[],
         topics_status={"relay": "base/status/relay", "rgb": "base/status/rgb"},
+        publish_intervals={},
     )
 
 
 def test_start_wires_oled_adapter_when_enabled(mocker):
+    _disable_existing_devices(mocker)
     mocker.patch("main.setting.DHT_ENABLED", False)
     mocker.patch("main.setting.RELAY_ENABLED", False)
     mocker.patch("main.setting.RGB_ENABLED", False)
@@ -310,10 +354,12 @@ def test_start_wires_oled_adapter_when_enabled(mocker):
         topics=["base/sub/oled"],
         topics_pub=[],
         topics_status={},
+        publish_intervals={},
     )
 
 
 def test_start_skips_oled_adapter_when_disabled(mocker):
+    _disable_existing_devices(mocker)
     mocker.patch("main.setting.DHT_ENABLED", False)
     mocker.patch("main.setting.RELAY_ENABLED", True)
     mocker.patch("main.setting.RELAY_PIN", 16)
@@ -336,10 +382,12 @@ def test_start_skips_oled_adapter_when_disabled(mocker):
         topics=["base/sub/relay"],
         topics_pub=[],
         topics_status={"relay": "base/status/relay"},
+        publish_intervals={},
     )
 
 
 def test_start_wires_relay_and_oled_together(mocker):
+    _disable_existing_devices(mocker)
     mocker.patch("main.setting.DHT_ENABLED", False)
     mocker.patch("main.setting.RELAY_ENABLED", True)
     mocker.patch("main.setting.RELAY_PIN", 16)
@@ -369,10 +417,12 @@ def test_start_wires_relay_and_oled_together(mocker):
         topics=["base/sub/relay", "base/sub/oled"],
         topics_pub=[],
         topics_status={"relay": "base/status/relay"},
+        publish_intervals={},
     )
 
 
 def test_start_wires_potentiometer_adapter_when_enabled(mocker):
+    _disable_existing_devices(mocker)
     mocker.patch("main.setting.DHT_ENABLED", False)
     mocker.patch("main.setting.RELAY_ENABLED", False)
     mocker.patch("main.setting.RGB_ENABLED", False)
@@ -394,10 +444,12 @@ def test_start_wires_potentiometer_adapter_when_enabled(mocker):
         topics=[],
         topics_pub=["base/pub/potentiometer"],
         topics_status={},
+        publish_intervals={},
     )
 
 
 def test_start_wires_rotary_angle_adapter_when_enabled(mocker):
+    _disable_existing_devices(mocker)
     mocker.patch("main.setting.DHT_ENABLED", False)
     mocker.patch("main.setting.RELAY_ENABLED", False)
     mocker.patch("main.setting.RGB_ENABLED", False)
@@ -419,10 +471,12 @@ def test_start_wires_rotary_angle_adapter_when_enabled(mocker):
         topics=[],
         topics_pub=["base/pub/rotary_angle"],
         topics_status={},
+        publish_intervals={},
     )
 
 
 def test_start_skips_potentiometer_and_rotary_angle_when_disabled(mocker):
+    _disable_existing_devices(mocker)
     mocker.patch("main.setting.DHT_ENABLED", True)
     mocker.patch("main.setting.DHT_PIN", 15)
     mocker.patch("main.setting.DHT_SENSOR_TYPE", "dht22")
@@ -448,10 +502,12 @@ def test_start_skips_potentiometer_and_rotary_angle_when_disabled(mocker):
         topics=[],
         topics_pub=["base/pub/temperature", "base/pub/humidity"],
         topics_status={},
+        publish_intervals={},
     )
 
 
 def test_start_wires_potentiometer_and_rotary_angle_together_with_dht(mocker):
+    _disable_existing_devices(mocker)
     mocker.patch("main.setting.DHT_ENABLED", True)
     mocker.patch("main.setting.DHT_PIN", 15)
     mocker.patch("main.setting.DHT_SENSOR_TYPE", "dht22")
@@ -486,7 +542,287 @@ def test_start_wires_potentiometer_and_rotary_angle_together_with_dht(mocker):
             "base/pub/rotary_angle",
         ],
         topics_status={},
+        publish_intervals={},
     )
+
+
+def _disable_existing_devices(mocker):
+    mocker.patch("main.setting.UNIFIED_MQTT_CONTRACT_ENABLED", False)
+    mocker.patch("main.setting.DHT_ENABLED", False)
+    mocker.patch("main.setting.RELAY_ENABLED", False)
+    mocker.patch("main.setting.RGB_ENABLED", False)
+    mocker.patch("main.setting.RGB_MODE", "controllable")
+    mocker.patch("main.setting.OLED_ENABLED", False)
+    mocker.patch("main.setting.POTENTIOMETER_ENABLED", False)
+    mocker.patch("main.setting.ROTARY_ANGLE_ENABLED", False)
+    mocker.patch("main.setting.LCD_ENABLED", False)
+    mocker.patch("main.setting.SERVO_ENABLED", False)
+    mocker.patch("main.setting.PIR_ENABLED", False)
+    mocker.patch("main.setting.FAN_ENABLED", False)
+    mocker.patch("main.setting.OUTDOOR_LIGHT_ENABLED", False)
+    mocker.patch("main.setting.BUZZER_ENABLED", False)
+    mocker.patch("main.setting.CO_SENSOR_ENABLED", False)
+    mocker.patch("main.setting.GAS_SENSOR_ENABLED", False)
+
+
+def test_start_wires_pir_adapter_when_enabled(mocker):
+    _disable_existing_devices(mocker)
+    mocker.patch("main.setting.PIR_ENABLED", True)
+    mocker.patch("main.setting.PIR_PIN", 34)
+    mocker.patch("main.setting.PIR_WARMUP_SECONDS", 10)
+    _mock_topic_suffixes(mocker)
+    _mock_base_topics(mocker)
+    mock_pir_cls = mocker.patch("main.PIRAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_pir_cls.assert_called_once_with(pin=34, warmup_seconds=10)
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[("pir", mock_pir_cls.return_value)],
+        subscribe_adapters=[],
+        topics=[],
+        topics_pub=["base/pub/pir"],
+        topics_status={},
+        publish_intervals={},
+    )
+
+
+def test_start_wires_co_sensor_adapter_with_heartbeat_interval(mocker):
+    _disable_existing_devices(mocker)
+    mocker.patch("main.setting.CO_SENSOR_ENABLED", True)
+    mocker.patch("main.setting.CO_SENSOR_PIN", 35)
+    mocker.patch("main.setting.CO_SENSOR_HEARTBEAT_SECONDS", 30)
+    _mock_topic_suffixes(mocker)
+    _mock_base_topics(mocker)
+    mock_co_cls = mocker.patch("main.CoSensorAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_co_cls.assert_called_once_with(pin=35)
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[("co_sensor", mock_co_cls.return_value)],
+        subscribe_adapters=[],
+        topics=[],
+        topics_pub=["base/pub/co_sensor"],
+        topics_status={},
+        publish_intervals={"co_sensor": 30},
+    )
+
+
+def test_start_wires_gas_sensor_adapter_with_heartbeat_interval(mocker):
+    _disable_existing_devices(mocker)
+    mocker.patch("main.setting.GAS_SENSOR_ENABLED", True)
+    mocker.patch("main.setting.GAS_SENSOR_PIN", 32)
+    mocker.patch("main.setting.GAS_SENSOR_HEARTBEAT_SECONDS", 30)
+    _mock_topic_suffixes(mocker)
+    _mock_base_topics(mocker)
+    mock_gas_cls = mocker.patch("main.GasSensorAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_gas_cls.assert_called_once_with(pin=32)
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[("gas_sensor", mock_gas_cls.return_value)],
+        subscribe_adapters=[],
+        topics=[],
+        topics_pub=["base/pub/gas_sensor"],
+        topics_status={},
+        publish_intervals={"gas_sensor": 30},
+    )
+
+
+def test_start_wires_lcd_adapter_when_enabled(mocker):
+    _disable_existing_devices(mocker)
+    mocker.patch("main.setting.LCD_ENABLED", True)
+    mocker.patch("main.setting.LCD_SDA_PIN", 22)
+    mocker.patch("main.setting.LCD_SCL_PIN", 21)
+    mocker.patch("main.setting.LCD_I2C_ADDR", 0x3E)
+    mocker.patch("main.setting.LCD_RGB_ADDR", 0x62)
+    mocker.patch("main.setting.LCD_COLS", 16)
+    mocker.patch("main.setting.LCD_ROWS", 2)
+    mocker.patch("main.setting.LCD_I2C_ID", 0)
+    mocker.patch("main.setting.MQTT_USERNAME", "dev_fa6648eb")
+    _mock_topic_suffixes(mocker)
+    _mock_base_topics(mocker)
+    mock_lcd_cls = mocker.patch("main.LCDAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_lcd_cls.assert_called_once_with(
+        sda_pin=22,
+        scl_pin=21,
+        i2c_addr=0x3E,
+        rgb_addr=0x62,
+        cols=16,
+        rows=2,
+        i2c_id=0,
+        default_lines=["Agnes Smart Home", "dev_fa6648eb"],
+    )
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[],
+        subscribe_adapters=[("lcd", mock_lcd_cls.return_value)],
+        topics=["base/sub/lcd"],
+        topics_pub=[],
+        topics_status={"lcd": "base/status/lcd"},
+        publish_intervals={},
+    )
+
+
+def test_start_wires_servo_adapter_when_enabled(mocker):
+    _disable_existing_devices(mocker)
+    mocker.patch("main.setting.SERVO_ENABLED", True)
+    mocker.patch("main.setting.SERVO_PIN", 13)
+    mocker.patch("main.setting.SERVO_DEFAULT_ANGLE", 90)
+    _mock_topic_suffixes(mocker)
+    _mock_base_topics(mocker)
+    mock_servo_cls = mocker.patch("main.ServoAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_servo_cls.assert_called_once_with(pin=13, default_angle=90)
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[],
+        subscribe_adapters=[("servo", mock_servo_cls.return_value)],
+        topics=["base/sub/servo"],
+        topics_pub=[],
+        topics_status={"servo": "base/status/servo"},
+        publish_intervals={},
+    )
+
+
+def test_start_wires_fan_adapter_when_enabled(mocker):
+    _disable_existing_devices(mocker)
+    mocker.patch("main.setting.FAN_ENABLED", True)
+    mocker.patch("main.setting.FAN_IN1_PIN", 2)
+    mocker.patch("main.setting.FAN_IN2_PIN", 4)
+    _mock_topic_suffixes(mocker)
+    _mock_base_topics(mocker)
+    mock_fan_cls = mocker.patch("main.FanAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_fan_cls.assert_called_once_with(in1_pin=2, in2_pin=4)
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[],
+        subscribe_adapters=[("fan", mock_fan_cls.return_value)],
+        topics=["base/sub/fan"],
+        topics_pub=[],
+        topics_status={"fan": "base/status/fan"},
+        publish_intervals={},
+    )
+
+
+def test_start_wires_outdoor_light_adapter_when_enabled(mocker):
+    _disable_existing_devices(mocker)
+    mocker.patch("main.setting.OUTDOOR_LIGHT_ENABLED", True)
+    mocker.patch("main.setting.OUTDOOR_LIGHT_PIN", 17)
+    _mock_topic_suffixes(mocker)
+    _mock_base_topics(mocker)
+    mock_relay_cls = mocker.patch("main.RelayAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_relay_cls.assert_called_once_with(pin=17)
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[],
+        subscribe_adapters=[("outdoor_light", mock_relay_cls.return_value)],
+        topics=["base/sub/outdoor_light"],
+        topics_pub=[],
+        topics_status={"outdoor_light": "base/status/outdoor_light"},
+        publish_intervals={},
+    )
+
+
+def test_start_wires_buzzer_adapter_when_enabled(mocker):
+    _disable_existing_devices(mocker)
+    mocker.patch("main.setting.BUZZER_ENABLED", True)
+    mocker.patch("main.setting.BUZZER_PIN", 19)
+    _mock_topic_suffixes(mocker)
+    _mock_base_topics(mocker)
+    mock_relay_cls = mocker.patch("main.RelayAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_relay_cls.assert_called_once_with(pin=19)
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[],
+        subscribe_adapters=[("buzzer", mock_relay_cls.return_value)],
+        topics=["base/sub/buzzer"],
+        topics_pub=[],
+        topics_status={"buzzer": "base/status/buzzer"},
+        publish_intervals={},
+    )
+
+
+def test_start_wires_unified_mode_with_no_topic_kwargs(mocker):
+    _disable_existing_devices(mocker)
+    mocker.patch("main.setting.UNIFIED_MQTT_CONTRACT_ENABLED", True)
+    mocker.patch("main.setting.RELAY_ENABLED", True)
+    mocker.patch("main.setting.RELAY_PIN", 16)
+    mocker.patch("main.setting.POTENTIOMETER_ENABLED", True)
+    mocker.patch("main.setting.POTENTIOMETER_PIN", 34)
+    _mock_topic_suffixes(mocker)
+    mock_relay_cls = mocker.patch("main.RelayAdapter")
+    mock_pot_cls = mocker.patch("main.PotentiometerAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    mock_relay_cls.assert_called_once_with(pin=16)
+    mock_pot_cls.assert_called_once_with(pin=34)
+    mock_runtime_cls.assert_called_once_with(
+        publish_adapters=[("potentiometer", mock_pot_cls.return_value)],
+        subscribe_adapters=[("relay", mock_relay_cls.return_value)],
+        publish_intervals={},
+        unified_mode=True,
+    )
+    mock_runtime_cls.return_value.run.assert_called_once_with()
+
+
+def test_start_unified_mode_wires_co_and_gas_sensor_heartbeat_intervals(mocker):
+    _disable_existing_devices(mocker)
+    mocker.patch("main.setting.UNIFIED_MQTT_CONTRACT_ENABLED", True)
+    mocker.patch("main.setting.CO_SENSOR_ENABLED", True)
+    mocker.patch("main.setting.CO_SENSOR_PIN", 36)
+    mocker.patch("main.setting.CO_SENSOR_HEARTBEAT_SECONDS", 45)
+    mocker.patch("main.setting.GAS_SENSOR_ENABLED", True)
+    mocker.patch("main.setting.GAS_SENSOR_PIN", 39)
+    mocker.patch("main.setting.GAS_SENSOR_HEARTBEAT_SECONDS", 15)
+    mocker.patch("main.CoSensorAdapter")
+    mocker.patch("main.GasSensorAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    assert mock_runtime_cls.call_args.kwargs["publish_intervals"] == {
+        "co_sensor": 45,
+        "gas_sensor": 15,
+    }
+    assert mock_runtime_cls.call_args.kwargs["unified_mode"] is True
+
+
+def test_start_uses_legacy_mode_when_unified_disabled(mocker):
+    _disable_existing_devices(mocker)
+    mocker.patch("main.setting.UNIFIED_MQTT_CONTRACT_ENABLED", False)
+    mocker.patch("main.setting.RELAY_ENABLED", True)
+    mocker.patch("main.setting.RELAY_PIN", 16)
+    _mock_topic_suffixes(mocker)
+    _mock_base_topics(mocker)
+    mocker.patch("main.RelayAdapter")
+    mock_runtime_cls = mocker.patch("main.RuntimeService")
+
+    main.start()
+
+    assert "unified_mode" not in mock_runtime_cls.call_args.kwargs
+    assert mock_runtime_cls.call_args.kwargs["topics_pub"] == []
 
 
 def test_start_safe_mode_wires_and_runs_safe_mode_service(mocker):

@@ -56,6 +56,8 @@ class RuntimeService:
         topics=None,
         topics_pub=None,
         topics_status=None,
+        publish_intervals=None,
+        unified_mode=False,
     ):
         self.topics_pub = (
             list(topics_pub) if topics_pub is not None else list(setting.MQTT_TOPIC_PUB)
@@ -64,6 +66,13 @@ class RuntimeService:
             list(topics) if topics is not None else list(setting.MQTT_TOPIC_SUB)
         )
         self.topics_status = dict(topics_status) if topics_status else {}
+        self.unified_mode = bool(unified_mode)
+        # In unified mode all adapters share MQTT_TOPIC_STATUS[0] instead of
+        # a per-adapter status topic, so topics_status (a name->topic dict)
+        # doesn't apply -- resolve the one shared state topic separately.
+        self.unified_state_topic = None
+        if self.unified_mode and setting.MQTT_TOPIC_STATUS:
+            self.unified_state_topic = list(setting.MQTT_TOPIC_STATUS)[0]
         self.dht_temperature_topic_suffix = setting.DHT_TEMPERATURE_TOPIC_SUFFIX
         self.dht_humidity_topic_suffix = setting.DHT_HUMIDITY_TOPIC_SUFFIX
         self.publish_qos = setting.MQTT_PUBLISH_QOS
@@ -120,6 +129,7 @@ class RuntimeService:
         if self.watchdog_service:
             self.registry.register("watchdog", start=self.watchdog_service.start)
         self.publish_adapters = list(publish_adapters) if publish_adapters else []
+        self.publish_intervals = dict(publish_intervals) if publish_intervals else {}
         self.subscribe_adapters = list(subscribe_adapters) if subscribe_adapters else []
         self.subscribe_adapter_map = dict(self.subscribe_adapters)
         self._subscribe_adapter_names = {
@@ -197,7 +207,7 @@ class RuntimeService:
         for name, adapter in self.publish_adapters + self.subscribe_adapters:
             self.registry.register_adapter(name, adapter)
             if (name, adapter) in self.publish_adapters:
-                self.publish_scheduler.register(name)
+                self.publish_scheduler.register(name, self.publish_intervals.get(name))
 
     def _register_command_handlers(self):
         for topic in self.topics:
@@ -358,6 +368,9 @@ class RuntimeService:
             )
 
     def _handle_command_message(self, topic, message):
+        if self.unified_mode:
+            self._handle_unified_command_message(message)
+            return
         adapter = self._resolve_command_adapter(topic.decode())
         if not adapter:
             self._default_handler(topic, message)
@@ -374,6 +387,80 @@ class RuntimeService:
             return
         self._publish_status(adapter)
 
+    def _handle_unified_command_message(self, message):
+        """Unified contract: one shared command topic, JSON object keyed by
+        subscribe adapter name. Each key's value is either a bare verb
+        string ("on"/"off"/"toggle") or {"command": "<adapter method>",
+        ...params} for structured commands (e.g. RGB set(color, brightness)).
+        A "request_id" key is metadata, not a component -- always skipped."""
+        try:
+            payload = json.loads(message.decode())
+        except Exception:
+            print("Invalid unified command payload:", message)
+            return
+        if not isinstance(payload, dict):
+            print("Unified command payload must be a JSON object:", message)
+            return
+        changed = {}
+        for name, value in payload.items():
+            if name == "request_id":
+                continue
+            adapter = self.subscribe_adapter_map.get(name)
+            if not adapter:
+                print("No subscribe adapter matched for unified command key:", name)
+                continue
+            if self._apply_unified_command(adapter, value):
+                state_value = self._adapter_state_value(adapter)
+                if state_value is not None:
+                    changed[name] = state_value
+        if changed:
+            self._publish_unified_state(changed)
+
+    def _adapter_state_value(self, adapter):
+        """Some actuators report richer state than a plain on/off boolean:
+        state() for structured status (e.g. RGB's {"color":..., "brightness":...}
+        or "off"), direction() for a 2-pin DC motor driver's "cw"/"ccw"/"stop".
+        Prefer the most specific one available, falling back to on/off."""
+        if hasattr(adapter, "state"):
+            return adapter.state()
+        if hasattr(adapter, "direction"):
+            return adapter.direction()
+        if hasattr(adapter, "is_on"):
+            return "on" if adapter.is_on() else "off"
+        return None
+
+    def _apply_unified_command(self, adapter, value):
+        if isinstance(value, dict):
+            command = value.get("command")
+            if not command or not hasattr(adapter, command):
+                print("Unsupported unified command:", value)
+                return False
+            params = dict(value)
+            del params["command"]
+            getattr(adapter, command)(**params)
+            return True
+        command = str(value).strip().lower()
+        if command == "on":
+            adapter.on()
+        elif command == "off":
+            adapter.off()
+        elif command == "toggle":
+            adapter.toggle()
+        elif hasattr(adapter, command):
+            # Bare verb with no params (e.g. "clear") -- call the matching
+            # no-arg adapter method directly, same as the structured
+            # {"command": "<method>"} form but without params to strip.
+            getattr(adapter, command)()
+        else:
+            print("Unsupported unified command:", value)
+            return False
+        return True
+
+    def _publish_unified_state(self, changed):
+        if not self.unified_state_topic:
+            return
+        self.publish_message(self.unified_state_topic, json.dumps(changed))
+
     def _publish_status(self, adapter):
         name = self._subscribe_adapter_names.get(id(adapter))
         topic = self.topics_status.get(name)
@@ -381,9 +468,7 @@ class RuntimeService:
             return
         self.publish_message(
             topic,
-            self._envelope(
-                "state_report", {"state": "on" if adapter.is_on() else "off"}
-            ),
+            self._envelope("state_report", {"state": self._adapter_state_value(adapter)}),
         )
 
     def _resolve_command_adapter(self, topic):
@@ -409,6 +494,9 @@ class RuntimeService:
         return str(value).strip().lower()
 
     def _poll_publish_adapters(self):
+        if self.unified_mode:
+            self._poll_unified_publish_adapters()
+            return
         for name, adapter in self.publish_adapters:
             reading = self.publish_scheduler.poll(name, adapter.read)
             if reading is None:
@@ -455,6 +543,42 @@ class RuntimeService:
             self.publish_message(
                 topic, self._envelope("sensor_reading", {"value": value})
             )
+
+    def _poll_unified_publish_adapters(self):
+        """Unified contract: every publish adapter's reading (that's due
+        this tick and passed the change-only check) merges into ONE flat
+        JSON object, keyed by adapter name, published once to the shared
+        MQTT_TOPIC_PUB[0] topic -- no per-adapter topic, no envelope."""
+        batch = {}
+        for name, adapter in self.publish_adapters:
+            reading = self.publish_scheduler.poll(name, adapter.read)
+            if reading is None:
+                continue
+            if isinstance(adapter, CHANGE_ONLY_ADAPTER_TYPES):
+                last = self._last_published_readings.get(name)
+                if last is not None and abs(reading - last) < CHANGE_THRESHOLD_PERCENT:
+                    continue
+                self._last_published_readings[name] = reading
+            if self._is_dual_reading(adapter, reading):
+                temperature, humidity = reading
+                batch[self.dht_temperature_topic_suffix] = temperature
+                batch[self.dht_humidity_topic_suffix] = humidity
+                continue
+            if isinstance(reading, dict):
+                batch.update(reading)
+            elif isinstance(reading, bool):
+                batch[name] = "on" if reading else "off"
+            elif isinstance(reading, (int, float, str)):
+                batch[name] = reading
+            else:
+                print("Unsupported publish payload from adapter:", name)
+        if not batch:
+            return
+        topic = self.topics_pub[0] if self.topics_pub else None
+        if topic is None:
+            print("No unified publish topic configured")
+            return
+        self.publish_message(topic, json.dumps(batch))
 
     def _to_publish_payload(self, name, adapter, reading):
         if isinstance(reading, dict):

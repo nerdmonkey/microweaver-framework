@@ -19,6 +19,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "mqtt_topic_pub": "test/pub",
                 "mqtt_topic_sub": "test/sub",
                 "mqtt_topic_status": "test/status",
+                "unified_mqtt_contract_enabled": True,
                 "mqtt_username": "test_user",
                 "mqtt_password": "test_pass",
                 "wifi_ssid": "test_ssid",
@@ -74,6 +75,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "relay_pin": 22,
                 "relay_topic_suffix": "switch",
                 "rgb_enabled": True,
+                "rgb_mode": "auto_cycling",
                 "rgb_red_pin": 13,
                 "rgb_green_pin": 14,
                 "rgb_blue_pin": 15,
@@ -98,6 +100,35 @@ def test_setting_reads_values_from_device_config(tmp_path):
                 "device_name": "Test Device",
                 "timezone": "Asia/Manila",
                 "timezone_offset_minutes": 480,
+                "lcd_enabled": True,
+                "lcd_i2c_id": 1,
+                "lcd_sda_pin": 18,
+                "lcd_scl_pin": 19,
+                "lcd_i2c_addr": 39,
+                "lcd_rgb_addr": 48,
+                "lcd_cols": 20,
+                "lcd_rows": 4,
+                "servo_enabled": True,
+                "servo_pin": 16,
+                "servo_default_angle": 45,
+                "pir_enabled": True,
+                "pir_pin": 17,
+                "pir_warmup_seconds": 15,
+                "fan_enabled": True,
+                "fan_in1_pin": 26,
+                "fan_in2_pin": 27,
+                "outdoor_light_enabled": True,
+                "outdoor_light_pin": 12,
+                "buzzer_enabled": True,
+                "buzzer_pin": 14,
+                "co_sensor_enabled": True,
+                "co_sensor_pin": 36,
+                "co_sensor_threshold": 60,
+                "co_sensor_heartbeat_seconds": 45,
+                "gas_sensor_enabled": True,
+                "gas_sensor_pin": 39,
+                "gas_sensor_threshold": 70,
+                "gas_sensor_heartbeat_seconds": 15,
             }
         )
     )
@@ -113,6 +144,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.MQTT_TOPIC_PUB == ["test/pub"]
     assert setting.MQTT_TOPIC_SUB == ["test/sub"]
     assert setting.MQTT_TOPIC_STATUS == ["test/status"]
+    assert setting.UNIFIED_MQTT_CONTRACT_ENABLED is True
     assert setting.MQTT_USERNAME == "test_user"
     assert setting.MQTT_PASSWORD == "test_pass"
     assert setting.WIFI_SSID == "test_ssid"
@@ -168,6 +200,7 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.RELAY_PIN == 22
     assert setting.RELAY_TOPIC_SUFFIX == "switch"
     assert setting.RGB_ENABLED is True
+    assert setting.RGB_MODE == "auto_cycling"
     assert setting.RGB_RED_PIN == 13
     assert setting.RGB_GREEN_PIN == 14
     assert setting.RGB_BLUE_PIN == 15
@@ -192,6 +225,35 @@ def test_setting_reads_values_from_device_config(tmp_path):
     assert setting.DEVICE_NAME == "Test Device"
     assert setting.TIMEZONE == "Asia/Manila"
     assert setting.TIMEZONE_OFFSET_MINUTES == 480
+    assert setting.LCD_ENABLED is True
+    assert setting.LCD_I2C_ID == 1
+    assert setting.LCD_SDA_PIN == 18
+    assert setting.LCD_SCL_PIN == 19
+    assert setting.LCD_I2C_ADDR == 39
+    assert setting.LCD_RGB_ADDR == 48
+    assert setting.LCD_COLS == 20
+    assert setting.LCD_ROWS == 4
+    assert setting.SERVO_ENABLED is True
+    assert setting.SERVO_PIN == 16
+    assert setting.SERVO_DEFAULT_ANGLE == 45
+    assert setting.PIR_ENABLED is True
+    assert setting.PIR_PIN == 17
+    assert setting.PIR_WARMUP_SECONDS == 15
+    assert setting.FAN_ENABLED is True
+    assert setting.FAN_IN1_PIN == 26
+    assert setting.FAN_IN2_PIN == 27
+    assert setting.OUTDOOR_LIGHT_ENABLED is True
+    assert setting.OUTDOOR_LIGHT_PIN == 12
+    assert setting.BUZZER_ENABLED is True
+    assert setting.BUZZER_PIN == 14
+    assert setting.CO_SENSOR_ENABLED is True
+    assert setting.CO_SENSOR_PIN == 36
+    assert setting.CO_SENSOR_THRESHOLD == 60
+    assert setting.CO_SENSOR_HEARTBEAT_SECONDS == 45
+    assert setting.GAS_SENSOR_ENABLED is True
+    assert setting.GAS_SENSOR_PIN == 39
+    assert setting.GAS_SENSOR_THRESHOLD == 70
+    assert setting.GAS_SENSOR_HEARTBEAT_SECONDS == 15
 
 
 def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
@@ -208,6 +270,7 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.MQTT_TOPIC_PUB == ["devices/sensors"]
     assert setting.MQTT_TOPIC_SUB == ["devices/commands"]
     assert setting.MQTT_TOPIC_STATUS == ["devices/status"]
+    assert setting.UNIFIED_MQTT_CONTRACT_ENABLED is False
     assert setting.WIFI_SSID == ""
     assert setting.WIFI_PASSWORD == ""
     assert setting.WIFI_IP == ""
@@ -260,6 +323,7 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.RELAY_ENABLED is True
     assert setting.RELAY_TOPIC_SUFFIX == "relay"
     assert setting.RGB_ENABLED is False
+    assert setting.RGB_MODE == "controllable"
     assert setting.RGB_RED_PIN == 25
     assert setting.RGB_GREEN_PIN == 26
     assert setting.RGB_BLUE_PIN == 27
@@ -280,6 +344,35 @@ def test_setting_falls_back_to_defaults_when_file_missing(tmp_path):
     assert setting.DEVICE_NAME == ""
     assert setting.TIMEZONE == "UTC"
     assert setting.TIMEZONE_OFFSET_MINUTES == 0
+    assert setting.LCD_ENABLED is False
+    assert setting.LCD_I2C_ID == 0
+    assert setting.LCD_SDA_PIN == 22
+    assert setting.LCD_SCL_PIN == 21
+    assert setting.LCD_I2C_ADDR == 0x3E
+    assert setting.LCD_RGB_ADDR == 0x62
+    assert setting.LCD_COLS == 16
+    assert setting.LCD_ROWS == 2
+    assert setting.SERVO_ENABLED is False
+    assert setting.SERVO_PIN == 13
+    assert setting.SERVO_DEFAULT_ANGLE == 90
+    assert setting.PIR_ENABLED is False
+    assert setting.PIR_PIN == 34
+    assert setting.PIR_WARMUP_SECONDS == 10
+    assert setting.FAN_ENABLED is False
+    assert setting.FAN_IN1_PIN == 2
+    assert setting.FAN_IN2_PIN == 4
+    assert setting.OUTDOOR_LIGHT_ENABLED is False
+    assert setting.OUTDOOR_LIGHT_PIN == 17
+    assert setting.BUZZER_ENABLED is False
+    assert setting.BUZZER_PIN == 19
+    assert setting.CO_SENSOR_ENABLED is False
+    assert setting.CO_SENSOR_PIN == 35
+    assert setting.CO_SENSOR_THRESHOLD == 50
+    assert setting.CO_SENSOR_HEARTBEAT_SECONDS == 30
+    assert setting.GAS_SENSOR_ENABLED is False
+    assert setting.GAS_SENSOR_PIN == 32
+    assert setting.GAS_SENSOR_THRESHOLD == 50
+    assert setting.GAS_SENSOR_HEARTBEAT_SECONDS == 30
 
 
 def test_setting_falls_back_to_legacy_dht22_pin_key(tmp_path):

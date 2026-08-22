@@ -122,6 +122,34 @@ SCHEMA = {
     "device_name": {"type": str},
     "timezone": {"type": str},
     "timezone_offset_minutes": {"type": "int", "min": -720, "max": 840},
+    "lcd_enabled": {"type": bool},
+    "lcd_i2c_id": {"type": "int", "min": 0},
+    "lcd_sda_pin": {"type": "int", "min": 0, "max": 39},
+    "lcd_scl_pin": {"type": "int", "min": 0, "max": 39},
+    "lcd_i2c_addr": {"type": "int", "min": 0, "max": 127},
+    "lcd_cols": {"type": "int", "min": 1},
+    "lcd_rows": {"type": "int", "min": 1},
+    "servo_enabled": {"type": bool},
+    "servo_pin": {"type": "int", "min": 0, "max": 39},
+    "servo_default_angle": {"type": "int", "min": 0, "max": 180},
+    "pir_enabled": {"type": bool},
+    "pir_pin": {"type": "int", "min": 0, "max": 39},
+    "pir_warmup_seconds": {"type": "int", "min": 0},
+    "fan_enabled": {"type": bool},
+    "fan_in1_pin": {"type": "int", "min": 0, "max": 39},
+    "fan_in2_pin": {"type": "int", "min": 0, "max": 39},
+    "outdoor_light_enabled": {"type": bool},
+    "outdoor_light_pin": {"type": "int", "min": 0, "max": 39},
+    "buzzer_enabled": {"type": bool},
+    "buzzer_pin": {"type": "int", "min": 0, "max": 39},
+    "co_sensor_enabled": {"type": bool},
+    "co_sensor_pin": {"type": "int", "min": 0, "max": 39},
+    "co_sensor_threshold": {"type": "int", "min": 0, "max": 100},
+    "co_sensor_heartbeat_seconds": {"type": "int", "min": 0},
+    "gas_sensor_enabled": {"type": bool},
+    "gas_sensor_pin": {"type": "int", "min": 0, "max": 39},
+    "gas_sensor_threshold": {"type": "int", "min": 0, "max": 100},
+    "gas_sensor_heartbeat_seconds": {"type": "int", "min": 0},
 }
 
 
@@ -150,6 +178,14 @@ class Setting:
         self.MQTT_TOPIC_PUB = self._topics("mqtt_topic_pub", "devices/sensors")
         self.MQTT_TOPIC_SUB = self._topics("mqtt_topic_sub", "devices/commands")
         self.MQTT_TOPIC_STATUS = self._topics("mqtt_topic_status", "devices/status")
+        # When enabled, every publish adapter shares MQTT_TOPIC_PUB[0] (one
+        # flat batched JSON publish per tick, keyed by adapter name) and every
+        # subscribe adapter shares MQTT_TOPIC_SUB[0] (dispatched by JSON key)
+        # instead of each adapter getting its own base+suffix topic -- see
+        # Agnes's unified devices/{id}/{data,command,state} MQTT contract.
+        self.UNIFIED_MQTT_CONTRACT_ENABLED = self._bool(
+            "unified_mqtt_contract_enabled", False
+        )
         self.MQTT_PASSWORD = self._value("mqtt_password", "")
         self.WIFI_SSID = self._value("wifi_ssid", "")
         self.WIFI_PASSWORD = self._value("wifi_password", "")
@@ -254,6 +290,11 @@ class Setting:
         self.RELAY_PIN = self._int("relay_pin", 5)
         self.RELAY_TOPIC_SUFFIX = self._value("relay_topic_suffix", "relay")
         self.RGB_ENABLED = self._bool("rgb_enabled", False)
+        # "controllable" = real 3-pin (or PWM) RGB LED, full color/brightness
+        # control via RGBAdapter. "auto_cycling" = a self-cycling novelty LED
+        # with no data line -- only on/off (power gate) is possible, via
+        # AutoCyclingRgbAdapter on RGB_RED_PIN alone.
+        self.RGB_MODE = self._value("rgb_mode", "controllable")
         self.RGB_RED_PIN = self._int("rgb_red_pin", 25)
         self.RGB_GREEN_PIN = self._int("rgb_green_pin", 26)
         self.RGB_BLUE_PIN = self._int("rgb_blue_pin", 27)
@@ -310,6 +351,45 @@ class Setting:
         self.DEVICE_NAME = self._value("device_name", "")
         self.TIMEZONE = self._value("timezone", "UTC")
         self.TIMEZONE_OFFSET_MINUTES = self._int("timezone_offset_minutes", 0)
+
+        self.LCD_ENABLED = self._bool("lcd_enabled", False)
+        self.LCD_I2C_ID = self._int("lcd_i2c_id", 0)
+        self.LCD_SDA_PIN = self._int("lcd_sda_pin", 22)
+        self.LCD_SCL_PIN = self._int("lcd_scl_pin", 21)
+        self.LCD_I2C_ADDR = self._int("lcd_i2c_addr", 0x3E)
+        self.LCD_RGB_ADDR = self._int("lcd_rgb_addr", 0x62)
+        self.LCD_COLS = self._int("lcd_cols", 16)
+        self.LCD_ROWS = self._int("lcd_rows", 2)
+
+        self.SERVO_ENABLED = self._bool("servo_enabled", False)
+        self.SERVO_PIN = self._int("servo_pin", 13)
+        self.SERVO_DEFAULT_ANGLE = self._int("servo_default_angle", 90)
+
+        self.PIR_ENABLED = self._bool("pir_enabled", False)
+        self.PIR_PIN = self._int("pir_pin", 34)
+        self.PIR_WARMUP_SECONDS = self._int("pir_warmup_seconds", 10)
+
+        self.FAN_ENABLED = self._bool("fan_enabled", False)
+        self.FAN_IN1_PIN = self._int("fan_in1_pin", 2)
+        self.FAN_IN2_PIN = self._int("fan_in2_pin", 4)
+
+        self.OUTDOOR_LIGHT_ENABLED = self._bool("outdoor_light_enabled", False)
+        self.OUTDOOR_LIGHT_PIN = self._int("outdoor_light_pin", 17)
+
+        self.BUZZER_ENABLED = self._bool("buzzer_enabled", False)
+        self.BUZZER_PIN = self._int("buzzer_pin", 19)
+
+        self.CO_SENSOR_ENABLED = self._bool("co_sensor_enabled", False)
+        self.CO_SENSOR_PIN = self._int("co_sensor_pin", 35)
+        self.CO_SENSOR_THRESHOLD = self._int("co_sensor_threshold", 50)
+        self.CO_SENSOR_HEARTBEAT_SECONDS = self._int("co_sensor_heartbeat_seconds", 30)
+
+        self.GAS_SENSOR_ENABLED = self._bool("gas_sensor_enabled", False)
+        self.GAS_SENSOR_PIN = self._int("gas_sensor_pin", 32)
+        self.GAS_SENSOR_THRESHOLD = self._int("gas_sensor_threshold", 50)
+        self.GAS_SENSOR_HEARTBEAT_SECONDS = self._int(
+            "gas_sensor_heartbeat_seconds", 30
+        )
 
     def _load(self, path):
         try:
