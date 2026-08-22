@@ -12,6 +12,14 @@ class RGBAdapter(BaseAdapter):
         self.green_pin = green_pin
         self.blue_pin = blue_pin
         self.on_color = on_color
+        # Reference color `set(color=...)` last stored, independent of the
+        # brightness-scaled value actually written to the PWM channels --
+        # keeps repeated brightness-only calls from compounding/drifting.
+        self._base_color = on_color
+        # Last brightness explicitly requested via set(brightness=...); only
+        # set() updates this -- on()/off()/toggle() don't touch it, so a bare
+        # on() after a dim reapplies whatever on_color was last computed to.
+        self._brightness = _CHANNEL_MAX
         self._red = None
         self._green = None
         self._blue = None
@@ -56,6 +64,46 @@ class RGBAdapter(BaseAdapter):
         if not self._available:
             return
         self.off() if self._on else self.on()
+
+    def set(self, color=None, brightness=None):
+        """Live-parameterized command (unified devices/{id}/command contract:
+        {"command":"set","color":{"r":...,"g":...,"b":...},"brightness":N}).
+        `color` may be an {r,g,b} dict or an (r,g,b) tuple/list; omit to reuse
+        the last color. `brightness` (0-255) scales that color's channels."""
+        if not self._available:
+            return
+        if color is not None:
+            self._base_color = self._normalize_color(color)
+        if brightness is not None:
+            self._brightness = max(0, min(_CHANNEL_MAX, int(brightness)))
+        red, green, blue = self._base_color
+        scale = self._brightness / _CHANNEL_MAX
+        red, green, blue = (int(red * scale), int(green * scale), int(blue * scale))
+        self.on_color = (red, green, blue)
+        self._set_color(self.on_color)
+        self._on = True
+
+    def state(self):
+        """Rich state for devices/{id}/state -- base color + last brightness,
+        not the brightness-scaled duty values. "off" (bare string) when the
+        LED is off, matching the simple-actuator convention (e.g. relay)."""
+        if not self._on:
+            return "off"
+        red, green, blue = self._base_color
+        return {
+            "color": {"r": red, "g": green, "b": blue},
+            "brightness": self._brightness,
+        }
+
+    def _normalize_color(self, color):
+        if isinstance(color, dict):
+            return (
+                int(color.get("r", 0)),
+                int(color.get("g", 0)),
+                int(color.get("b", 0)),
+            )
+        red, green, blue = color
+        return int(red), int(green), int(blue)
 
     def is_on(self):
         return self._on

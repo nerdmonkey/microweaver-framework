@@ -57,13 +57,29 @@ class RuntimeService:
         topics_pub=None,
         topics_status=None,
     ):
+        # Unified per-device envelope, derived from the MQTT username (which is
+        # the device_id the backend authenticates the client as -- matches
+        # devices/{credential.username}/... on the Agnes side). topics/topics_pub
+        # remain accepted for explicit override/back-compat, but default to this
+        # single set of topics rather than the old per-adapter-suffix lists.
+        self.topic_data = "devices/{}/data".format(setting.MQTT_USERNAME)
+        self.topic_command = "devices/{}/command".format(setting.MQTT_USERNAME)
+        self.topic_state = "devices/{}/state".format(setting.MQTT_USERNAME)
+        self.topic_availability = "devices/{}/availability".format(
+            setting.MQTT_USERNAME
+        )
+
         self.topics_pub = (
-            list(topics_pub) if topics_pub is not None else list(setting.MQTT_TOPIC_PUB)
+            list(topics_pub) if topics_pub is not None else [self.topic_data]
         )
         self.topics = (
-            list(topics) if topics is not None else list(setting.MQTT_TOPIC_SUB)
+            list(topics)
+            if topics is not None
+            else ([self.topic_command] if subscribe_adapters else [])
         )
-        self.topics_status = dict(topics_status) if topics_status else {}
+        # topics_status is no longer used (superseded by the merged topic_state
+        # publish) -- kept as an accepted-but-ignored constructor arg for
+        # back-compat with older call sites.
         self.dht_temperature_topic_suffix = setting.DHT_TEMPERATURE_TOPIC_SUFFIX
         self.dht_humidity_topic_suffix = setting.DHT_HUMIDITY_TOPIC_SUFFIX
         self.publish_qos = setting.MQTT_PUBLISH_QOS
@@ -122,9 +138,6 @@ class RuntimeService:
         self.publish_adapters = list(publish_adapters) if publish_adapters else []
         self.subscribe_adapters = list(subscribe_adapters) if subscribe_adapters else []
         self.subscribe_adapter_map = dict(self.subscribe_adapters)
-        self._subscribe_adapter_names = {
-            id(adapter): name for name, adapter in self.subscribe_adapters
-        }
         self.publish_scheduler = PollScheduler(interval_seconds=1)
         self._last_published_readings = {}
         self._register_adapters()
@@ -157,6 +170,7 @@ class RuntimeService:
         self._init_health_check()
         self._init_service_restart()
         self._init_health_report()
+        self._init_state_report()
         ssl_params = {}
         if setting.MQTT_SSL_CERT_PATH:
             ssl_params["cert"] = setting.MQTT_SSL_CERT_PATH
@@ -264,11 +278,19 @@ class RuntimeService:
             self.health_report_topic, json.dumps(self.health_check_service.report())
         )
 
+    def _init_state_report(self):
+        self.state_report_scheduler = None
+        if setting.MQTT_ENABLED and self.subscribe_adapters:
+            self.state_report_scheduler = PollScheduler(
+                setting.STATE_REPORT_INTERVAL_SECONDS
+            )
+            self.state_report_scheduler.register("state_report")
+
     def _report_ota_status(self, payload):
         payload.setdefault("app_version", setting.APP_VERSION)
         self._publish(self.ota_status_topic, json.dumps(payload))
 
-    def _publish(self, topic, message):
+    def _publish(self, topic, message, retain=None):
         if self.client:
             try:
                 print("Publishing message to topic:", topic)
@@ -276,7 +298,7 @@ class RuntimeService:
                     topic,
                     message.encode(),
                     qos=self.publish_qos,
-                    retain=self.publish_retain,
+                    retain=self.publish_retain if retain is None else retain,
                 )
                 print("Message published")
                 self.metrics_service.record_publish()
@@ -286,25 +308,19 @@ class RuntimeService:
         else:
             print("Not connected to MQTT.")
 
-    def publish_message(self, topic, message):
-        self._publish(topic, message)
-
-    def _resolve_publish_topic(self, name):
-        """Mirrors _resolve_command_adapter's routing, inverted: given a
-        publish adapter's name, pick which configured mqtt_topic_pub entry
-        it publishes to. A single configured topic is shared by every
-        publish adapter (backward compatible with the pre-list default);
-        with more than one, match by exact topic or topic-suffix == name."""
-        if len(self.topics_pub) == 1:
-            return self.topics_pub[0]
-        for topic in self.topics_pub:
-            if topic == name or topic.rsplit("/", 1)[-1] == name:
-                return topic
-        return None
+    def publish_message(self, topic, message, retain=None):
+        self._publish(topic, message, retain=retain)
 
     def connect_to_mqtt(self):
         self.client = self.connection.connect()
         self.client.set_callback(self.on_message)
+        # Birth message: mirrors the LWT's offline payload so the backend can
+        # tell "never connected"/"cleanly reconnected" apart from a stale LWT.
+        # Always retained regardless of MQTT_PUBLISH_RETAIN, matching the LWT's
+        # own retain semantics.
+        self._publish(
+            self.topic_availability, json.dumps({"state": "online"}), retain=True
+        )
         for topic in self.topics:
             print("Subscribing to topic:", topic)
             self._subscribe(topic)
@@ -332,11 +348,7 @@ class RuntimeService:
     def on_message(self, topic, message):
         self.metrics_service.record_message()
         topic_name = topic.decode()
-        handler = self.message_handlers.get(topic_name)
-        if not handler and self._resolve_command_adapter(topic_name):
-            handler = self._handle_command_message
-        if not handler:
-            handler = self._default_handler
+        handler = self.message_handlers.get(topic_name, self._default_handler)
         handler(topic, message)
 
     def _default_handler(self, topic, message):
@@ -358,11 +370,61 @@ class RuntimeService:
             )
 
     def _handle_command_message(self, topic, message):
-        adapter = self._resolve_command_adapter(topic.decode())
-        if not adapter:
+        """Unified devices/{id}/command contract: a flat multi-key JSON
+        payload, routed by JSON key against subscribe_adapter_map (adapter
+        name) -- e.g. {"relay_1":"on","led_1":"off"} commands both adapters
+        from one message. A single-adapter device also accepts a bare
+        command (non-JSON, or a JSON dict/value whose keys don't match any
+        adapter name) as shorthand for that one adapter, so single-adapter
+        setups keep working without needing to know their own adapter name."""
+        raw = message.decode()
+        data = self._parse_command_json(raw)
+        matched = self._match_command_targets(data, raw)
+
+        if not matched:
             self._default_handler(topic, message)
             return
-        command = self._decode_command(message)
+
+        commanded = False
+        for adapter, value in matched:
+            if self._apply_command(adapter, value):
+                commanded = True
+        if commanded:
+            self._publish_state()
+
+    def _parse_command_json(self, raw):
+        try:
+            return json.loads(raw)
+        except Exception:
+            return None
+
+    def _match_command_targets(self, data, raw):
+        matched = []
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if key == "request_id":
+                    continue
+                adapter = self.subscribe_adapter_map.get(key)
+                if adapter is not None:
+                    matched.append((adapter, value))
+
+        if not matched and len(self.subscribe_adapter_map) == 1:
+            only_adapter = next(iter(self.subscribe_adapter_map.values()))
+            matched = [(only_adapter, data if data is not None else raw)]
+
+        return matched
+
+    def _apply_command(self, adapter, value):
+        """Structured {"command": <adapter-method-name>, ...params} values
+        (e.g. {"command":"set","color":{"r":255,"g":0,"b":0},"brightness":128})
+        dispatch to that named method on the adapter with the remaining keys
+        as kwargs. Everything else (bare "on"/"off"/"toggle", or a legacy
+        {"state":...}/{"value":...} dict) goes through the simple on/off/
+        toggle verb path."""
+        if isinstance(value, dict) and "command" in value:
+            return self._apply_structured_command(adapter, value)
+
+        command = self._decode_command_value(value)
         if command == "on":
             adapter.on()
         elif command == "off":
@@ -370,38 +432,49 @@ class RuntimeService:
         elif command == "toggle":
             adapter.toggle()
         else:
-            print("Unsupported command for topic:", topic.decode(), "-", command)
-            return
-        self._publish_status(adapter)
+            print("Unsupported command:", command)
+            return False
+        return True
 
-    def _publish_status(self, adapter):
-        name = self._subscribe_adapter_names.get(id(adapter))
-        topic = self.topics_status.get(name)
-        if not topic or not hasattr(adapter, "is_on"):
-            return
-        self.publish_message(
-            topic,
-            self._envelope(
-                "state_report", {"state": "on" if adapter.is_on() else "off"}
-            ),
-        )
-
-    def _resolve_command_adapter(self, topic):
-        if topic in self.subscribe_adapter_map:
-            return self.subscribe_adapter_map[topic]
-        topic_name = topic.rsplit("/", 1)[-1]
-        if topic_name in self.subscribe_adapter_map:
-            return self.subscribe_adapter_map[topic_name]
-        if len(self.subscribe_adapter_map) == 1:
-            return next(iter(self.subscribe_adapter_map.values()))
-        return None
-
-    def _decode_command(self, message):
-        payload = message.decode().strip()
+    def _apply_structured_command(self, adapter, value):
+        command_name = value.get("command")
+        if (
+            not isinstance(command_name, str)
+            or not command_name
+            or command_name.startswith("_")
+        ):
+            print("Unsupported structured command:", command_name)
+            return False
+        if command_name in ("setup", "deinit"):
+            print("Refusing to dispatch lifecycle method as a command:", command_name)
+            return False
+        method = getattr(adapter, command_name, None)
+        if not callable(method):
+            print("Unsupported structured command:", command_name)
+            return False
+        params = {k: v for k, v in value.items() if k != "command"}
         try:
-            value = json.loads(payload)
-        except Exception:
-            value = payload
+            method(**params)
+        except TypeError as e:
+            print("Bad params for command", command_name, "-", e)
+            return False
+        return True
+
+    def _publish_state(self):
+        """Merged devices/{id}/state snapshot. Adapters with a state() method
+        (RGB color+brightness, LED brightness, ...) report their real
+        parameters; simple binary adapters (relay, ...) fall back to
+        is_on()'s "on"/"off"."""
+        state = {}
+        for name, adapter in self.subscribe_adapters:
+            if hasattr(adapter, "state"):
+                state[name] = adapter.state()
+            elif hasattr(adapter, "is_on"):
+                state[name] = "on" if adapter.is_on() else "off"
+        if state:
+            self.publish_message(self.topic_state, json.dumps(state))
+
+    def _decode_command_value(self, value):
         if isinstance(value, dict):
             value = value.get("state", value.get("command", value.get("value")))
         if isinstance(value, bool):
@@ -409,6 +482,12 @@ class RuntimeService:
         return str(value).strip().lower()
 
     def _poll_publish_adapters(self):
+        """Unified devices/{id}/data contract: every enabled publish adapter's
+        latest reading is collected into one flat dict, keyed by adapter name
+        (DHT's dual reading contributes two keys via its topic-suffix config,
+        repurposed as JSON key names), and published as a single message per
+        tick -- instead of the old one-publish-per-adapter-per-topic loop."""
+        merged = {}
         for name, adapter in self.publish_adapters:
             reading = self.publish_scheduler.poll(name, adapter.read)
             if reading is None:
@@ -419,16 +498,16 @@ class RuntimeService:
                     continue
                 self._last_published_readings[name] = reading
             if self._is_dual_reading(adapter, reading):
-                self._publish_dual_reading(reading)
+                temperature, humidity = reading
+                merged[self.dht_temperature_topic_suffix] = temperature
+                merged[self.dht_humidity_topic_suffix] = humidity
                 continue
-            payload = self._to_publish_payload(name, adapter, reading)
-            if payload is None:
+            value = self._to_publish_value(name, adapter, reading)
+            if value is None:
                 continue
-            topic = self._resolve_publish_topic(name)
-            if topic is None:
-                print("No publish topic matched for adapter:", name)
-                continue
-            self.publish_message(topic, payload)
+            merged[name] = value
+        if merged:
+            self.publish_message(self.topics_pub[0], json.dumps(merged))
 
     def _is_dual_reading(self, adapter, reading):
         return (
@@ -438,31 +517,13 @@ class RuntimeService:
             and hasattr(adapter, "humidity")
         )
 
-    def _publish_dual_reading(self, reading):
-        """DHT-shaped (temperature, humidity) readings publish as two
-        separate messages, one per measurement, instead of one combined
-        payload - each measurement gets its own topic
-        (dht_temperature_topic_suffix/dht_humidity_topic_suffix)."""
-        temperature, humidity = reading
-        for suffix, value in (
-            (self.dht_temperature_topic_suffix, temperature),
-            (self.dht_humidity_topic_suffix, humidity),
-        ):
-            topic = self._resolve_publish_topic(suffix)
-            if topic is None:
-                print("No publish topic matched for adapter:", suffix)
-                continue
-            self.publish_message(
-                topic, self._envelope("sensor_reading", {"value": value})
-            )
-
-    def _to_publish_payload(self, name, adapter, reading):
+    def _to_publish_value(self, name, adapter, reading):
         if isinstance(reading, dict):
-            return self._envelope("sensor_reading", reading)
+            return reading
         if isinstance(reading, bool):
-            return self._envelope("state_report", {"state": "on" if reading else "off"})
+            return "on" if reading else "off"
         if isinstance(reading, (int, float, str)):
-            return self._envelope("sensor_reading", {"value": reading})
+            return reading
         print("Unsupported publish payload from adapter:", name)
         return None
 
@@ -500,6 +561,8 @@ class RuntimeService:
                 )
         if setting.MQTT_ENABLED:
             self._poll_publish_adapters()
+            if self.state_report_scheduler:
+                self.state_report_scheduler.poll("state_report", self._publish_state)
             self.client.check_msg()
 
     def run(self):

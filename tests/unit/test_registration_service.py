@@ -72,10 +72,43 @@ def test_register_posts_claim_code_and_saves_identity(mocker):
         device_id="dev-1",
         device_cert="CERT",
         device_key="KEY",
+        mqtt_lwt_topic="",
+        mqtt_lwt_message="",
         claim_code="",
     )
     assert result == {"device_id": "dev-1", "device_cert": "CERT", "device_key": "KEY"}
     mock_post.return_value.close.assert_called_once_with()
+
+
+def test_register_saves_lwt_topic_and_payload_when_present(mocker):
+    mock_post = mocker.patch("app.services.registration.urequests.post")
+    mock_post.return_value = make_response(
+        200,
+        {
+            "device_id": "dev-1",
+            "device_cert": "CERT",
+            "device_key": "KEY",
+            "lwt_topic": "devices/dev_abc/availability",
+            "lwt_payload": '{"state":"offline"}',
+        },
+    )
+    setting = MagicMock()
+    service = RegistrationService(
+        claim_url="https://api.example.com/devices",
+        claim_code="CODE123",
+        setting=setting,
+    )
+
+    service.register()
+
+    setting.save.assert_called_once_with(
+        device_id="dev-1",
+        device_cert="CERT",
+        device_key="KEY",
+        mqtt_lwt_topic="devices/dev_abc/availability",
+        mqtt_lwt_message='{"state":"offline"}',
+        claim_code="",
+    )
 
 
 def test_register_returns_none_without_setting(mocker):

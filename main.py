@@ -23,46 +23,27 @@ def _make_temperature_adapter():
     return adapter_cls(pin=setting.DHT_PIN)
 
 
-def _topic(base_topics, suffix):
-    """Compose a device's final pub/sub topic from the configured base
-    (mqtt_topic_pub/mqtt_topic_sub, first entry) plus its own topic suffix,
-    e.g. base "devices/dev-42/sensors" + suffix "oled" ->
-    "devices/dev-42/sensors/oled"."""
-    base = base_topics[0] if base_topics else ""
-    return "{}/{}".format(base, suffix) if base else suffix
-
-
 def start():
+    # Adapter names double as the JSON keys RuntimeService uses in the unified
+    # devices/{mqtt_username}/{data,command,state} envelope -- RuntimeService
+    # derives the actual topics itself, no per-adapter topic composition here.
     publish_adapters = []
-    publish_topics = []
     if setting.DHT_ENABLED:
         publish_adapters.append(("dht", _make_temperature_adapter()))
-        publish_topics.append(
-            _topic(setting.MQTT_TOPIC_PUB, setting.DHT_TEMPERATURE_TOPIC_SUFFIX)
-        )
-        publish_topics.append(
-            _topic(setting.MQTT_TOPIC_PUB, setting.DHT_HUMIDITY_TOPIC_SUFFIX)
-        )
     if setting.POTENTIOMETER_ENABLED:
         name = setting.POTENTIOMETER_TOPIC_SUFFIX
         publish_adapters.append(
             (name, PotentiometerAdapter(pin=setting.POTENTIOMETER_PIN))
         )
-        publish_topics.append(_topic(setting.MQTT_TOPIC_PUB, name))
     if setting.ROTARY_ANGLE_ENABLED:
         name = setting.ROTARY_ANGLE_TOPIC_SUFFIX
         publish_adapters.append(
             (name, RotaryAngleAdapter(pin=setting.ROTARY_ANGLE_PIN))
         )
-        publish_topics.append(_topic(setting.MQTT_TOPIC_PUB, name))
     subscribe_adapters = []
-    subscribe_topics = []
-    status_topics = {}
     if setting.RELAY_ENABLED:
         name = setting.RELAY_TOPIC_SUFFIX
         subscribe_adapters.append((name, RelayAdapter(pin=setting.RELAY_PIN)))
-        subscribe_topics.append(_topic(setting.MQTT_TOPIC_SUB, name))
-        status_topics[name] = _topic(setting.MQTT_TOPIC_STATUS, name)
     if setting.RGB_ENABLED:
         name = setting.RGB_TOPIC_SUFFIX
         subscribe_adapters.append(
@@ -75,8 +56,6 @@ def start():
                 ),
             )
         )
-        subscribe_topics.append(_topic(setting.MQTT_TOPIC_SUB, name))
-        status_topics[name] = _topic(setting.MQTT_TOPIC_STATUS, name)
     if setting.OLED_ENABLED:
         name = setting.OLED_TOPIC_SUFFIX
         subscribe_adapters.append(
@@ -91,14 +70,9 @@ def start():
                 ),
             )
         )
-        subscribe_topics.append(_topic(setting.MQTT_TOPIC_SUB, name))
-    topics = subscribe_topics if subscribe_adapters else []
     runtime = RuntimeService(
         publish_adapters=publish_adapters,
         subscribe_adapters=subscribe_adapters,
-        topics=topics,
-        topics_pub=publish_topics,
-        topics_status=status_topics,
     )
     runtime.run()
 

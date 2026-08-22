@@ -202,3 +202,23 @@ def test_deinit_handles_pwm_deinit_failure(mocker):
 
     assert adapter.available is False
     assert adapter._led is None
+
+
+def test_state_returns_off_string_when_off(mocker):
+    mocker.patch("machine.Pin")
+    mocker.patch("machine.PWM")
+    adapter = make_adapter()
+    adapter.setup()
+
+    assert adapter.state() == "off"
+
+
+def test_state_returns_brightness_dict_when_on(mocker):
+    mocker.patch("machine.Pin")
+    mocker.patch("machine.PWM")
+    adapter = make_adapter()
+    adapter.setup()
+
+    adapter.set_brightness(42)
+
+    assert adapter.state() == {"brightness": 42}

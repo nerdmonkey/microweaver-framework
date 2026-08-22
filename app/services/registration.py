@@ -47,6 +47,8 @@ class RegistrationService:
                 device_id=device_id,
                 device_cert=data.get("device_cert", ""),
                 device_key=data.get("device_key", ""),
+                mqtt_lwt_topic=data.get("lwt_topic", ""),
+                mqtt_lwt_message=data.get("lwt_payload", ""),
                 claim_code="",
             )
 

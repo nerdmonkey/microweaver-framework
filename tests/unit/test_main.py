@@ -47,9 +47,6 @@ def test_start_wires_and_runs_runtime_service_with_dht22_default(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[("dht", mock_dht22_cls.return_value)],
         subscribe_adapters=[("relay", mock_relay_cls.return_value)],
-        topics=["base/sub/relay"],
-        topics_pub=["base/pub/temperature", "base/pub/humidity"],
-        topics_status={"relay": "base/status/relay"},
     )
     mock_runtime_cls.return_value.run.assert_called_once_with()
 
@@ -79,9 +76,6 @@ def test_start_wires_and_runs_runtime_service_with_dht11(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[("dht", mock_dht11_cls.return_value)],
         subscribe_adapters=[("relay", mock_relay_cls.return_value)],
-        topics=["base/sub/relay"],
-        topics_pub=["base/pub/temperature", "base/pub/humidity"],
-        topics_status={"relay": "base/status/relay"},
     )
     mock_runtime_cls.return_value.run.assert_called_once_with()
 
@@ -109,9 +103,6 @@ def test_start_uses_custom_dht_topic_suffixes(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[("dht", mock_dht22_cls.return_value)],
         subscribe_adapters=[],
-        topics=[],
-        topics_pub=["base/pub/temp", "base/pub/hum"],
-        topics_status={},
     )
 
 
@@ -135,9 +126,6 @@ def test_start_skips_dht_adapter_when_disabled(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[],
         subscribe_adapters=[("relay", mock_relay_cls.return_value)],
-        topics=["base/sub/relay"],
-        topics_pub=[],
-        topics_status={"relay": "base/status/relay"},
     )
 
 
@@ -162,9 +150,6 @@ def test_start_skips_relay_adapter_when_disabled(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[("dht", mock_dht22_cls.return_value)],
         subscribe_adapters=[],
-        topics=[],
-        topics_pub=["base/pub/temperature", "base/pub/humidity"],
-        topics_status={},
     )
 
 
@@ -192,9 +177,6 @@ def test_start_wires_no_adapters_when_all_disabled(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[],
         subscribe_adapters=[],
-        topics=[],
-        topics_pub=[],
-        topics_status={},
     )
 
 
@@ -219,9 +201,6 @@ def test_start_wires_rgb_adapter_when_enabled(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[],
         subscribe_adapters=[("rgb", mock_rgb_cls.return_value)],
-        topics=["base/sub/rgb"],
-        topics_pub=[],
-        topics_status={"rgb": "base/status/rgb"},
     )
 
 
@@ -245,9 +224,6 @@ def test_start_skips_rgb_adapter_when_disabled(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[],
         subscribe_adapters=[("relay", mock_relay_cls.return_value)],
-        topics=["base/sub/relay"],
-        topics_pub=[],
-        topics_status={"relay": "base/status/relay"},
     )
 
 
@@ -276,9 +252,6 @@ def test_start_wires_relay_and_rgb_together(mocker):
             ("relay", mock_relay_cls.return_value),
             ("rgb", mock_rgb_cls.return_value),
         ],
-        topics=["base/sub/relay", "base/sub/rgb"],
-        topics_pub=[],
-        topics_status={"relay": "base/status/relay", "rgb": "base/status/rgb"},
     )
 
 
@@ -307,9 +280,6 @@ def test_start_wires_oled_adapter_when_enabled(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[],
         subscribe_adapters=[("oled", mock_oled_cls.return_value)],
-        topics=["base/sub/oled"],
-        topics_pub=[],
-        topics_status={},
     )
 
 
@@ -333,9 +303,6 @@ def test_start_skips_oled_adapter_when_disabled(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[],
         subscribe_adapters=[("relay", mock_relay_cls.return_value)],
-        topics=["base/sub/relay"],
-        topics_pub=[],
-        topics_status={"relay": "base/status/relay"},
     )
 
 
@@ -366,9 +333,6 @@ def test_start_wires_relay_and_oled_together(mocker):
             ("relay", mock_relay_cls.return_value),
             ("oled", mock_oled_cls.return_value),
         ],
-        topics=["base/sub/relay", "base/sub/oled"],
-        topics_pub=[],
-        topics_status={"relay": "base/status/relay"},
     )
 
 
@@ -391,9 +355,6 @@ def test_start_wires_potentiometer_adapter_when_enabled(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[("potentiometer", mock_pot_cls.return_value)],
         subscribe_adapters=[],
-        topics=[],
-        topics_pub=["base/pub/potentiometer"],
-        topics_status={},
     )
 
 
@@ -416,9 +377,6 @@ def test_start_wires_rotary_angle_adapter_when_enabled(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[("rotary_angle", mock_rotary_cls.return_value)],
         subscribe_adapters=[],
-        topics=[],
-        topics_pub=["base/pub/rotary_angle"],
-        topics_status={},
     )
 
 
@@ -445,9 +403,6 @@ def test_start_skips_potentiometer_and_rotary_angle_when_disabled(mocker):
     mock_runtime_cls.assert_called_once_with(
         publish_adapters=[("dht", mock_dht22_cls.return_value)],
         subscribe_adapters=[],
-        topics=[],
-        topics_pub=["base/pub/temperature", "base/pub/humidity"],
-        topics_status={},
     )
 
 
@@ -478,14 +433,6 @@ def test_start_wires_potentiometer_and_rotary_angle_together_with_dht(mocker):
             ("rotary_angle", mock_rotary_cls.return_value),
         ],
         subscribe_adapters=[],
-        topics=[],
-        topics_pub=[
-            "base/pub/temperature",
-            "base/pub/humidity",
-            "base/pub/potentiometer",
-            "base/pub/rotary_angle",
-        ],
-        topics_status={},
     )
 
 
