@@ -421,7 +421,7 @@ python tinker.py certs download [OPTIONS]
 
 | Option | Description |
 |---|---|
-| `--device-id` | Existing device's ID to renew. Omitted + interactive → devices are listed from the API, Azure-CLI-picker style |
+| `--device-id` | Existing device's ID to renew. Omitted + interactive → devices are listed from the API, prompted by number |
 | `--api-url`, `--api-key`, `--ca-cert`, `--profile` | Same resolution as `provision` |
 | `--out-dir` | Directory to save `ca.pem`/`client.pem`/`private.pem` into (default: `./certs`) |
 

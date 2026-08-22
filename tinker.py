@@ -2192,8 +2192,7 @@ def certs_download(
 ) -> None:
     """Renew an existing device's cert and save the resulting bundle to
     --out-dir. When --device-id is omitted and running interactively, lists
-    devices from the Agnes API and prompts for one to pick, Azure-CLI-picker
-    style.
+    devices from the Agnes API and prompts for one to pick by number.
 
     Calls POST /devices/{device_id}/renew-cert - this issues a fresh
     certificate for that device and revokes its previously active one, it
