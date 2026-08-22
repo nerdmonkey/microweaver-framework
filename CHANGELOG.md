@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Eight new device adapters wired end-to-end (driver, config keys, `main.py`
+  wiring): LCD (I2C character display), servo, PIR motion sensor, fan
+  (dual-pin H-bridge), outdoor light and buzzer (both reuse `RelayAdapter`),
+  and CO/gas sensors (analog, with a configurable heartbeat publish interval
+  via `RuntimeService`'s new `publish_intervals` param). New
+  `device_config.json.example` keys: `lcd_*`, `servo_*`, `pir_*`, `fan_*`,
+  `outdoor_light_*`, `buzzer_*`, `co_sensor_*`, `gas_sensor_*`, all disabled
+  by default.
 - `tinker.py device config` gained `get`/`set`/`unset` subcommands for
   reading and editing individual `device_config.json` keys without hand-
   editing the file - `set` validates against the same schema `Setting`

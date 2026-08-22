@@ -102,117 +102,6 @@ def test_on_off_toggle_are_noops_when_unavailable(mocker):
     assert adapter.is_on() is False
 
 
-def test_set_applies_given_color(mocker):
-    mocker.patch("machine.Pin")
-    mocker.patch("machine.PWM", side_effect=lambda *a, **k: mocker.MagicMock())
-    adapter = make_adapter()
-    adapter.setup()
-    for pwm in (adapter._red, adapter._green, adapter._blue):
-        pwm.duty.reset_mock()
-
-    adapter.set(color={"r": 255, "g": 0, "b": 128})
-
-    assert adapter.is_on() is True
-    assert adapter._red.duty.call_args == mocker.call(1023)
-    assert adapter._green.duty.call_args == mocker.call(0)
-    assert adapter._blue.duty.call_args == mocker.call(513)
-
-
-def test_set_accepts_tuple_color(mocker):
-    mocker.patch("machine.Pin")
-    mocker.patch("machine.PWM", side_effect=lambda *a, **k: mocker.MagicMock())
-    adapter = make_adapter()
-    adapter.setup()
-
-    adapter.set(color=(0, 255, 0))
-
-    assert adapter._red.duty.call_args == mocker.call(0)
-    assert adapter._green.duty.call_args == mocker.call(1023)
-    assert adapter._blue.duty.call_args == mocker.call(0)
-
-
-def test_set_scales_color_by_brightness(mocker):
-    mocker.patch("machine.Pin")
-    mocker.patch("machine.PWM", side_effect=lambda *a, **k: mocker.MagicMock())
-    adapter = make_adapter()
-    adapter.setup()
-
-    adapter.set(color={"r": 255, "g": 255, "b": 255}, brightness=0)
-
-    assert adapter._red.duty.call_args == mocker.call(0)
-    assert adapter._green.duty.call_args == mocker.call(0)
-    assert adapter._blue.duty.call_args == mocker.call(0)
-
-
-def test_set_brightness_only_reuses_last_color_without_drifting(mocker):
-    mocker.patch("machine.Pin")
-    mocker.patch("machine.PWM", side_effect=lambda *a, **k: mocker.MagicMock())
-    adapter = make_adapter()
-    adapter.setup()
-
-    adapter.set(color={"r": 200, "g": 100, "b": 50})
-    adapter.set(brightness=128)
-    first_red_call = adapter._red.duty.call_args
-    adapter.set(brightness=128)
-    second_red_call = adapter._red.duty.call_args
-
-    assert first_red_call == second_red_call
-
-
-def test_set_is_noop_when_unavailable(mocker):
-    mocker.patch("machine.Pin")
-    mocker.patch("machine.PWM", side_effect=OSError("pwm unavailable"))
-    adapter = make_adapter()
-    adapter.setup()
-
-    adapter.set(color={"r": 1, "g": 2, "b": 3})
-
-    assert adapter.is_on() is False
-
-
-def test_state_returns_off_string_when_off(mocker):
-    mocker.patch("machine.Pin")
-    mocker.patch("machine.PWM", side_effect=lambda *a, **k: mocker.MagicMock())
-    adapter = make_adapter()
-    adapter.setup()
-
-    assert adapter.state() == "off"
-
-
-def test_state_returns_base_color_and_brightness_when_on(mocker):
-    mocker.patch("machine.Pin")
-    mocker.patch("machine.PWM", side_effect=lambda *a, **k: mocker.MagicMock())
-    adapter = make_adapter()
-    adapter.setup()
-
-    adapter.set(color={"r": 255, "g": 0, "b": 0}, brightness=128)
-
-    assert adapter.state() == {"color": {"r": 255, "g": 0, "b": 0}, "brightness": 128}
-
-
-def test_state_reports_base_color_not_brightness_scaled_duty_values(mocker):
-    mocker.patch("machine.Pin")
-    mocker.patch("machine.PWM", side_effect=lambda *a, **k: mocker.MagicMock())
-    adapter = make_adapter()
-    adapter.setup()
-
-    adapter.set(color={"r": 200, "g": 100, "b": 50}, brightness=0)
-
-    assert adapter.state() == {"color": {"r": 200, "g": 100, "b": 50}, "brightness": 0}
-
-
-def test_state_after_off_reverts_to_off_string(mocker):
-    mocker.patch("machine.Pin")
-    mocker.patch("machine.PWM", side_effect=lambda *a, **k: mocker.MagicMock())
-    adapter = make_adapter()
-    adapter.setup()
-    adapter.set(color={"r": 255, "g": 0, "b": 0}, brightness=128)
-
-    adapter.off()
-
-    assert adapter.state() == "off"
-
-
 def test_is_on_defaults_to_false():
     adapter = make_adapter()
 
@@ -245,3 +134,106 @@ def test_deinit_resets_state_after_setup(mocker):
     red.deinit.assert_called_once_with()
     green.deinit.assert_called_once_with()
     blue.deinit.assert_called_once_with()
+
+
+# --------------------------------------------------------------------------
+# set() / state() -- dynamic color + brightness control
+# --------------------------------------------------------------------------
+
+
+def test_state_is_off_when_never_turned_on():
+    adapter = make_adapter()
+
+    assert adapter.state() == "off"
+
+
+def test_set_color_drives_pwm_and_turns_on(mocker):
+    mocker.patch("machine.Pin")
+    mocker.patch("machine.PWM", side_effect=lambda *a, **k: mocker.MagicMock())
+    adapter = make_adapter()
+    adapter.setup()
+    for pwm in (adapter._red, adapter._green, adapter._blue):
+        pwm.duty.reset_mock()
+
+    adapter.set(color={"r": 255, "g": 0, "b": 128})
+
+    assert adapter.is_on() is True
+    assert adapter._red.duty.call_args == mocker.call(1023)
+    assert adapter._green.duty.call_args == mocker.call(0)
+    assert adapter._blue.duty.call_args == mocker.call(513)
+    assert adapter.state() == {"color": {"r": 255, "g": 0, "b": 128}, "brightness": 255}
+
+
+def test_set_accepts_tuple_color(mocker):
+    mocker.patch("machine.Pin")
+    mocker.patch("machine.PWM", side_effect=lambda *a, **k: mocker.MagicMock())
+    adapter = make_adapter()
+    adapter.setup()
+
+    adapter.set(color=(10, 20, 30))
+
+    assert adapter.state() == {"color": {"r": 10, "g": 20, "b": 30}, "brightness": 255}
+
+
+def test_set_brightness_scales_color(mocker):
+    mocker.patch("machine.Pin")
+    mocker.patch("machine.PWM", side_effect=lambda *a, **k: mocker.MagicMock())
+    adapter = make_adapter()
+    adapter.setup()
+    adapter.set(color={"r": 255, "g": 255, "b": 255})
+    for pwm in (adapter._red, adapter._green, adapter._blue):
+        pwm.duty.reset_mock()
+
+    adapter.set(brightness=128)
+
+    # 255 * (128/255) = 128 -> duty = 128/255 * 1023 = 513
+    assert adapter._red.duty.call_args == mocker.call(513)
+    assert adapter.state() == {
+        "color": {"r": 255, "g": 255, "b": 255},
+        "brightness": 128,
+    }
+
+
+def test_set_brightness_only_keeps_existing_color(mocker):
+    mocker.patch("machine.Pin")
+    mocker.patch("machine.PWM", side_effect=lambda *a, **k: mocker.MagicMock())
+    adapter = make_adapter(on_color=(200, 100, 50))
+    adapter.setup()
+
+    adapter.set(brightness=255)
+
+    assert adapter.state() == {
+        "color": {"r": 200, "g": 100, "b": 50},
+        "brightness": 255,
+    }
+
+
+def test_set_clamps_brightness_to_valid_range(mocker):
+    mocker.patch("machine.Pin")
+    mocker.patch("machine.PWM", side_effect=lambda *a, **k: mocker.MagicMock())
+    adapter = make_adapter()
+    adapter.setup()
+
+    adapter.set(brightness=999)
+    assert adapter.state()["brightness"] == 255
+
+    adapter.set(brightness=-50)
+    assert adapter.state()["brightness"] == 0
+
+
+def test_set_is_noop_when_unavailable(mocker):
+    mocker.patch("machine.Pin")
+    mocker.patch("machine.PWM", side_effect=OSError("pwm unavailable"))
+    adapter = make_adapter()
+    adapter.setup()
+
+    adapter.set(color={"r": 1, "g": 2, "b": 3})
+
+    assert adapter.is_on() is False
+    assert adapter.state() == "off"
+
+
+def test_off_reflected_in_state():
+    adapter = make_adapter()
+
+    assert adapter.state() == "off"
